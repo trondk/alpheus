@@ -235,6 +235,14 @@ from Forgejo. They have issues and pull requests turned off; open them
 on Forgejo instead. Until the Forgejo instance is running, this GitHub
 repository is the only copy, and issues can be opened here.
 
+Releases are never published on GitHub. Everything a release consists of
+stays on the project's own infrastructure in the EU, as the Cyber
+Resilience Act requires the project to be able to deliver its releases
+and security updates itself: images and the Helm chart in the registry at
+`registry.alpheus-dev.org`, and binaries, checksums, SBOMs and signatures
+at `https://alpheus-dev.org/releases/`. Everything is signed with the
+project's own cosign key, published at `https://alpheus-dev.org/cosign.pub`.
+
 
 ## Roadmap
 

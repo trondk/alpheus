@@ -279,7 +279,7 @@ func apiError(err error) error {
 	switch {
 	case isNoMatch(err):
 		return hint(fmt.Errorf("the cluster has no StreamRun resource: %w", err),
-			"install Alpheus first: helm install alpheus oci://ghcr.io/alpheus-dev/charts/alpheus -n alpheus-system --create-namespace")
+			"install Alpheus first: helm install alpheus oci://registry.alpheus-dev.org/alpheus-dev/charts/alpheus -n alpheus-system --create-namespace")
 	case isForbidden(err):
 		return hint(err, "ask for RBAC access to streamruns.alpheus-dev.org in this namespace")
 	case strings.Contains(err.Error(), "connection refused"), strings.Contains(err.Error(), "no such host"):

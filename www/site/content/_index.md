@@ -69,13 +69,13 @@ in Go and in Python.
 One Helm chart installs the controller and the CRD. {{% planned %}}The chart is built and tested on the test cluster, but not published yet.{{% /planned %}}
 
 ```console
-$ helm install alpheus oci://ghcr.io/alpheus-dev/charts/alpheus \
+$ helm install alpheus oci://registry.alpheus-dev.org/alpheus-dev/charts/alpheus \
     --namespace alpheus-system --create-namespace
 ```
 
-Images come from GitHub Container Registry unless you set your own
-registry, such as a Zot mirror in an air-gapped cluster, with
-`--set registry=registry.example:5000`.
+Images and the chart come from the project's own registry,
+`registry.alpheus-dev.org`, unless you set your own, such as a Zot mirror
+in an air-gapped cluster, with `--set registry=registry.example:5000`.
 
 {{% ifpage "/docs/getting-started/" %}}[Getting started](/docs/getting-started/) walks through a first flow.{{% /ifpage %}}
 {{% ifpage "/docs/components/" %}}[Writing components](/docs/components/) shows how to write the steps of a flow in Go or Python.{{% /ifpage %}}

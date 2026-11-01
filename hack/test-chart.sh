@@ -30,8 +30,8 @@ reject() {
 if "$HELM" lint --strict "$CHART" "${PINNED[@]}" >/dev/null; then echo "ok    helm lint"; else echo "FAIL  helm lint"; FAILED=1; fi
 
 out=$(render "${PINNED[@]}")
-check "controller from ghcr.io by digest" "image: ghcr.io/alpheus-dev/controller@$D2" "$out"
-check "agent from ghcr.io by digest" "-agent-image=ghcr.io/alpheus-dev/agent@$D1" "$out"
+check "controller from registry.alpheus-dev.org by digest" "image: registry.alpheus-dev.org/alpheus-dev/controller@$D2" "$out"
+check "agent from registry.alpheus-dev.org by digest" "-agent-image=registry.alpheus-dev.org/alpheus-dev/agent@$D1" "$out"
 check "hub in the release's namespace" "-hub-address=alpheus-signal-hub.flows.svc:7070" "$out"
 check "hub Service" "name: alpheus-signal-hub" "$out"
 check "CRD" "name: streamruns.alpheus-dev.org" "$out"
@@ -43,14 +43,14 @@ reject "no tags allowed" "-allow-tags" "$out"
 out=$(render "${PINNED[@]}" --set registry=registry.example:5000/)
 check "registry value for the controller" "image: registry.example:5000/alpheus-dev/controller@$D2" "$out"
 check "registry value for the agent" "-agent-image=registry.example:5000/alpheus-dev/agent@$D1" "$out"
-reject "nothing from ghcr.io" "ghcr.io" "$out"
+reject "nothing from registry.alpheus-dev.org" "registry.alpheus-dev.org" "$out"
 
 out=$(render --set "controller.image.digest=$D2")
 check "agent digest required" "agent.image.digest is required" "$out"
 
 out=$(render --set controller.allowTags=true --set agent.image.tag=dev)
-check "tags when allowed" "-agent-image=ghcr.io/alpheus-dev/agent:dev" "$out"
-check "controller tag from appVersion" "image: ghcr.io/alpheus-dev/controller:v0.1.0" "$out"
+check "tags when allowed" "-agent-image=registry.alpheus-dev.org/alpheus-dev/agent:dev" "$out"
+check "controller tag from appVersion" "image: registry.alpheus-dev.org/alpheus-dev/controller:v0.1.0" "$out"
 check "allow-tags flag" "-allow-tags" "$out"
 
 out=$(render "${PINNED[@]}" --set signalHub.enabled=false --set crds.install=false)

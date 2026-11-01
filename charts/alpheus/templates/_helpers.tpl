@@ -1,6 +1,6 @@
 {{/* The registry images are pulled from (SPEC 14). */}}
 {{- define "alpheus.registry" -}}
-{{- .Values.registry | default "ghcr.io" | trimSuffix "/" -}}
+{{- .Values.registry | default "registry.alpheus-dev.org" | trimSuffix "/" -}}
 {{- end -}}
 
 {{/* An image reference from a values block: pinned by digest when one is set. */}}

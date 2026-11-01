@@ -1,6 +1,6 @@
-# Where images are pulled from. Empty means GitHub Container Registry
-# (ghcr.io). Set it to a mirror, such as Zot in an air-gapped cluster; the
-# repositories keep their paths there (SPEC 14).
+# Where images are pulled from. Empty means the project's own registry,
+# registry.alpheus-dev.org. Set it to a mirror, such as Zot in an
+# air-gapped cluster; the repositories keep their paths there (SPEC 14).
 registry: ""
 
 # Secrets for pulling the controller's image. The agent runs in each run's

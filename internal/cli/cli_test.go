@@ -484,7 +484,7 @@ func TestVersion(t *testing.T) {
 			Selector: &metav1.LabelSelector{MatchLabels: labels},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
-				Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "controller", Image: "ghcr.io/alpheus-dev/controller:v0.1.0"}}},
+				Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "controller", Image: "registry.alpheus-dev.org/alpheus-dev/controller:v0.1.0"}}},
 			},
 		},
 	}

@@ -90,7 +90,7 @@ With the cluster running:
 `make e2e` runs {{< repolink "hack/e2e.sh" >}}. It builds the agent, the
 controller and the test components as static binaries, each in an image
 with nothing else in it, and pushes them to Zot under the same paths as
-on GitHub Container Registry. It installs the CRD and the controller with
+in the project's registry, `registry.alpheus-dev.org`. It installs the CRD and the controller with
 the Helm chart in {{< repolink "charts/alpheus/" >}}, the way a user
 does, with the `registry` value set to Zot and the images pinned by
 digest. Then it runs the

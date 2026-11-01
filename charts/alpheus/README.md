@@ -5,7 +5,7 @@ hub, and the RBAC they need. One release per cluster, since the CRD and the
 ClusterRole are cluster-wide.
 
 ```console
-$ helm install alpheus oci://ghcr.io/alpheus-dev/charts/alpheus \
+$ helm install alpheus oci://registry.alpheus-dev.org/alpheus-dev/charts/alpheus \
     --namespace alpheus-system --create-namespace
 ```
 
@@ -17,7 +17,7 @@ shows.
 
 | Value | Default | What it does |
 |---|---|---|
-| `registry` | `""` (ghcr.io) | Where images are pulled from. Set it to a mirror, such as Zot in an air-gapped cluster; the repositories keep their paths there. |
+| `registry` | `""` (registry.alpheus-dev.org) | Where images are pulled from. Set it to a mirror, such as Zot in an air-gapped cluster; the repositories keep their paths there. |
 | `imagePullSecrets` | `[]` | Secrets for pulling the controller's image. A private registry also needs a pull secret in each run's namespace. |
 | `controller.image.repository` | `alpheus-dev/controller` | The controller's repository in the registry |
 | `controller.image.tag` | the chart's appVersion | Used when no digest is set |

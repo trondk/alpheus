@@ -54,9 +54,9 @@ Alpheus består af fire programmer og ét bibliotek, alle i ét Go-modul:
 | GO-4 | SKAL | Byggeriet er reproducerbart: binærer bygges med `-trimpath` og `-buildvcs=true`, og image-lag og arkiver bruger fast `SOURCE_DATE_EPOCH` (commit-tidspunktet). To byggerier af samme commit giver samme binær og samme image-digest. |
 | GO-5 | SKAL | Container-images bygges på `gcr.io/distroless/static` eller `scratch`, kører som non-root (UID 65532) og har read-only rodfilsystem. |
 | GO-6 | SKAL | Images bygges til `linux/amd64` og `linux/arm64`. |
-| GO-7 | SKAL | Hver udgivelse har en SBOM (SPDX) og signerede images (cosign, keyless via OIDC i CI). |
+| GO-7 | SKAL | Hver udgivelse har en SBOM (SPDX) og signerede images, binærer og chart. Der signeres med cosign og projektets egen nøgle, ikke keyless, så ingen signatur afhænger af Sigstores offentlige tjenester uden for EU (se 14). |
 | GO-8 | SKAL | Versionering følger SemVer. CRD-versionen (`v1alpha1`, `v1beta1`, `v1`) er uafhængig af programversionen. |
-| GO-9 | BØR | `goreleaser` bygger binærer, images, SBOM og checksums i én konfiguration. |
+| GO-9 | BØR | Ét script i repo'et bygger binærer, images, SBOM og checksums, så en udgivelse kan genskabes uden for CI. |
 | GO-88 | SKAL | `go.mod` ligger i repo'ets rod, så modulstien `alpheus-dev.org/alpheus` peger på roden af repo'et. |
 | GO-89 | SKAL | Udgivelser tagges `vX.Y.Z` på `main`. CI kontrollerer efter hver udgivelse, at `go list -m alpheus-dev.org/alpheus@vX.Y.Z` finder den. |
 
@@ -892,25 +892,43 @@ host-only/NAT-netværk og ikke kan nås udefra. Det står i
 
 ## 14. Udgivelse
 
-1. Tag `vX.Y.Z` på `main`.
-2. CI bygger binærer og images, genererer SBOM og signerer.
-3. Images skubbes til GitHub Container Registry (`ghcr.io/alpheus-dev/…`).
-   Registryet er en indstilling (Helm-værdien `registry` og byggeriets
-   `REGISTRY`): er den ikke sat, bruges GitHub Container Registry. Er den
-   sat, fx til Zot som i testmiljøet (12.2) og i de andre projekter,
-   hentes og skubbes images og chart der i stedet.
+Alt, hvad en udgivelse består af, ligger på projektets egen infrastruktur
+i EU: kildekoden på Forgejo, byggeriet på egne runners, images og chart i
+eget registry og filerne på hjemmesiden. Det skyldes Cyber Resilience Act
+(CRA): projektet skal selv kunne stå inde for og levere sine udgivelser,
+SBOM'er og sikkerhedsopdateringer, uden at de afhænger af tjenester uden
+for EU. GitHub er kun et spejl af kildekoden, der læses fra (`www/SPEC.md`
+WWW-44), og ingen udgivelse lægges der.
+
+1. Tag `vX.Y.Z` på `main` på Forgejo.
+2. Forgejo Actions bygger på projektets egne runners: binærer, images,
+   SBOM og checksums, og signerer dem.
+3. Images skubbes til projektets Zot på `registry.alpheus-dev.org`, som
+   alle kan hente fra, men kun CI kan skubbe til. Registryet er en
+   indstilling (Helm-værdien `registry` og byggeriets `REGISTRY`): er den
+   ikke sat, bruges `registry.alpheus-dev.org`. Er den sat, fx til et
+   spejl i en lukket klynge eller Zot i testmiljøet (12.2), hentes og
+   skubbes images og chart der i stedet.
 4. Helm-chartet udgives som OCI-artefakt samme sted
-   (`oci://ghcr.io/alpheus-dev/charts/alpheus`). CI skriver agentens og
-   controllerens digests ind i chartets `values.yaml`, før det pakkes, så
-   et udgivet chart altid installerer images pinned ved digest (GO-24).
-   Images har samme stier i alle registries (`alpheus-dev/agent` og
-   `alpheus-dev/controller`), så et spejl kun kræver `registry`.
-5. Hjemmesiden genbygges med dokumentation for den nye version.
+   (`oci://registry.alpheus-dev.org/alpheus-dev/charts/alpheus`). CI
+   skriver agentens og controllerens digests ind i chartets `values.yaml`,
+   før det pakkes, så et udgivet chart altid installerer images pinned ved
+   digest (GO-24). Images har samme stier i alle registries
+   (`alpheus-dev/agent` og `alpheus-dev/controller`), så et spejl kun
+   kræver `registry`.
+5. Binærer, checksums, SBOM'er, signaturer og release notes lægges under
+   `https://alpheus-dev.org/releases/vX.Y.Z/`, og hjemmesiden genbygges
+   med dokumentationen for den nye version.
 
 | ID | Niveau | Krav |
 |---|---|---|
 | GO-65 | SKAL | Hver udgivelse har release notes med ændringer, opgraderingsnoter og eventuelle CRD-ændringer. |
 | GO-66 | SKAL | CRD-opgraderinger er bagudkompatible inden for samme API-version. En ny API-version leveres med en conversion webhook. |
+| GO-130 | SKAL | Ingen udgivelse, intet image, ingen signatur og ingen SBOM hentes fra eller lægges på tjenester uden for projektets egen infrastruktur i EU. Byggeriet kører på egne runners, ikke på GitHub Actions. |
+| GO-131 | SKAL | Signeringsnøglen er projektets egen cosign-nøgle. Den private nøgle findes kun i release-runnerens hemmeligheder, og den offentlige nøgle ligger på `https://alpheus-dev.org/cosign.pub` og i repo'et. Signaturer lægges i registryet ved siden af images og chart og som filer ved siden af binærer og SBOM'er. Der bruges ingen offentlig transparency log (`--tlog-upload=false`). |
+| GO-132 | SKAL | Hver udgivelse har en SBOM i SPDX-format for hver binær og hvert image, med på `https://alpheus-dev.org/releases/vX.Y.Z/` og vedhæftet hvert image i registryet. |
+| GO-133 | SKAL | `https://alpheus-dev.org/releases/vX.Y.Z/` har en `SHA256SUMS`-fil over alle filer i udgivelsen, signeret med projektets nøgle. Dokumentationen viser, hvordan man kontrollerer den, et image og chartet med `cosign verify` og den offentlige nøgle. |
+| GO-134 | SKAL | Hver udgivelses side oplyser, hvor længe versionen får sikkerhedsopdateringer, og hvor sårbarheder rapporteres (`/security/`). |
 
 
 ## 15. Rækkefølge for implementeringen
@@ -1044,10 +1062,19 @@ CRD'en har derfor kun værdien `builtin`.
 
 ## 16. Åbne spørgsmål
 
-Ingen lige nu. Afgjort 2026-10-30: GitHub Container Registry til
-udgivelser (14), Python via gRPC-kontrakten og en referencekomponent
+- Hvilket værktøj laver SBOM'erne (GO-132)? Foreslået: syft, som kører
+  lokalt på runneren uden at kontakte nogen tjeneste.
+- Hvor kører Forgejo, runnerne og Zot på `registry.alpheus-dev.org`, og
+  hvem driver dem? Se også `www/SPEC.md` afsnit 11.
+- Hvor længe får en version sikkerhedsopdateringer (GO-134)?
+
+Afgjort 2026-11-01: udgivelser kun på egen infrastruktur i EU (14): Zot
+på `registry.alpheus-dev.org`, cosign med projektets egen nøgle og
+Forgejo Actions på egne runners. Det afløser beslutningen fra 2026-10-30
+om GitHub Container Registry.
+
+Afgjort 2026-10-30: Python via gRPC-kontrakten og en referencekomponent
 (15, trin 9), manifest-segmenter for hver 1.000 chunks (GO-32), egen
 bucket til resultater (GO-129), tællere i commit'et (GO-115), lukning af
 fejlede replikaers ack-filer (GO-97), en finalizer på storage-Secret'en
-(GO-20) og fejlloggen under `_errors/`
-(GO-118).
+(GO-20) og fejlloggen under `_errors/` (GO-118).
