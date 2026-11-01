@@ -13,7 +13,7 @@ chunk is a file in any format, and Alpheus never opens it.
 
 > **Status: design phase.** The API, the chunk format, the component
 > SDK, the agent, the controller, the `alpheus` CLI and the Helm chart
-> exist, and seven test flows run end to end on a test cluster, including
+> exist, and eight test flows run end to end on a test cluster, including
 > restarts and pods killed at random. Nothing is released and no images
 > are published. Nothing here is ready for use, and everything may change.
 
@@ -92,7 +92,7 @@ walk-through and the first results.
 |---|---|---|---|---|
 | **Alpheus** | Yes, chunk by chunk | Files of any format and size, in object storage | Nothing | A run, which starts and ends |
 | [Argo Workflows](https://argoproj.github.io/workflows/) | No: a step starts when the steps before it have finished | Artifacts in object storage | Argo's controller | A workflow run |
-| [Pachyderm](https://www.pachyderm.com/) | A pipeline starts on its input's finished commits | Versioned files in object storage | Pachyderm's services and a database | Long-lived pipelines over versioned data |
+| [Pachyderm](https://github.com/pachyderm/pachyderm) | A pipeline starts on its input's finished commits | Versioned files in object storage | Pachyderm's services and a database | Long-lived pipelines over versioned data |
 | [Numaflow](https://numaflow.numaproj.io/) | Yes, message by message | Messages in an inter-step buffer | Numaflow's controller and a JetStream cluster | Long-running pipelines |
 | Diskless Kafka | Producers and consumers run at the same time | Records in a log kept in object storage | Brokers or agents and a metadata store | Long-lived topics |
 
@@ -110,7 +110,9 @@ Use one of them instead when it fits better:
   and approvals. Alpheus only streams; it has none of that.
 - **Pachyderm**, when you need versioned data and lineage: which version
   of which input made which output, and reprocessing only what changed
-  when an input changes. Alpheus keeps no history between runs.
+  when an input changes. Alpheus keeps no history between runs. Its last
+  release, v2.12.2, came out in January 2025, and its website no longer
+  answers, so check that it is still maintained.
 - **Numaflow**, when your data is a stream of small events rather than
   files, and you need low latency, windowed aggregation or pipelines that
   scale with their load and run for ever. Alpheus moves chunks of
@@ -125,8 +127,8 @@ Use one of them instead when it fits better:
 Use Alpheus when large files should flow through a pipeline of
 containers as they are produced, each chunk processed exactly once even
 when pods die, and object storage is the only shared service you want to
-run. Alpheus is also young: it is in its design phase, and the tools
-above are in production use.
+run. Alpheus is also young: it is in its design phase, and the other
+tools above are in production use.
 
 
 ## What it looks like
@@ -215,11 +217,11 @@ The Go module `alpheus-dev.org/alpheus` is the repository root.
 | [`config/`](config/) | Generated CRD and RBAC, and samples |
 | [`charts/alpheus/`](charts/alpheus/) | The Helm chart: CRD, RBAC, controller and signal hub |
 | [`templates/`](templates/) | Component templates in Go and Python |
-| [`examples/`](examples/) | The log-report example from the component guide, in Go and Python |
+| [`examples/`](examples/) | The log-report example from the component guide, in Go and Python, and the flagship, large-file ETL |
 | [`test/`](test/) | Test components, fixtures and end-to-end tests |
-| [`hack/`](hack/) | Scripts: CRD and chart tests, image builds and end-to-end tests |
+| [`hack/`](hack/) | Scripts: CRD and chart tests, image builds, end-to-end tests, benchmarks and releases |
 | [`vagrant/`](vagrant/) | Local test cluster: Talos in a VM with Garage and Zot |
-| [`www/`](www/) | Specification and Hugo site for the website at [alpheus-dev.org](https://alpheus-dev.org) |
+| [`docs/`](docs/) | The documentation pages of [alpheus-dev.org](https://alpheus-dev.org); the website's own repository, with its specification and the logo, fetches them when it builds |
 
 The specifications are currently written in Danish. English versions
 will follow before the first release.

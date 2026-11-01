@@ -13,7 +13,7 @@ generate:
 	cp config/crd/bases/alpheus-dev.org_streamruns.yaml charts/alpheus/files/crd.yaml
 	cp config/rbac/role.yaml charts/alpheus/files/role.yaml
 	cp proto/component.proto templates/component-python/alpheus/component.proto
-	go run ./hack/clireference > www/site/content/docs/cli.md
+	go run ./hack/clireference > docs/cli.md
 	$(MAKE) proto
 
 # Go code for proto/ in internal/pb, with buf and the generators in go.mod.
@@ -22,7 +22,7 @@ proto:
 
 # Fails when generated code is not up to date (GO-63).
 check-generated: generate
-	git diff --exit-code -- api config internal/pb charts/alpheus/files templates/component-python/alpheus/component.proto www/site/content/docs/cli.md
+	git diff --exit-code -- api config internal/pb charts/alpheus/files templates/component-python/alpheus/component.proto docs/cli.md
 
 vet:
 	go vet ./...

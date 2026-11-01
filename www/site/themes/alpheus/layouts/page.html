@@ -1,5 +1,0 @@
-{{ define "main" }}
-<h1>{{ .Title }}</h1>
-{{ .Content }}
-{{ with .Lastmod }}<p class="updated">Last updated <time datetime="{{ .Format "2006-01-02" }}">{{ .Format "2 January 2006" }}</time>.</p>{{ end }}
-{{ end }}

@@ -1,12 +1,13 @@
 # Alpheus — implementeringsspecifikation (Go)
 
-Status: udkast, 2026-10-31. Trin 1–8 i afsnit 15 er bygget: API-typer og
+Status: udkast, 2026-11-01. Trin 1–8 i afsnit 15 er bygget: API-typer og
 CRD, chunks og lager, komponent-SDK'et, agenten, controlleren og
 end-to-end-tests på Kubernetes (Talos i en VM) med fan-out, fan-in,
 replikaer, genstart, backpressure og kaos. Af trin 9 er CLI, Helm-chart,
 skabeloner til komponenter i Go og Python og en guide til at skrive
-komponenter bygget; tilbage er første udgivelse. Åbne spørgsmål står i
-afsnit 16.
+komponenter, flagskibet (ETL af store filer) og udgivelsesscriptet
+bygget; tilbage er infrastrukturen og første udgivelse. Åbne spørgsmål
+står i afsnit 16.
 
 Kravene GO-88 til GO-124 gør Alpheus formatuafhængigt: chunks er filer,
 som Alpheus flytter uden at læse dem, og Parquet og Arrow er ude af
@@ -48,7 +49,7 @@ Alpheus består af fire programmer og ét bibliotek, alle i ét Go-modul:
 
 | ID | Niveau | Krav |
 |---|---|---|
-| GO-1 | SKAL | Ét Go-modul med stien `alpheus-dev.org/alpheus`. Stien serveres som vanity import fra hjemmesiden (se `www/SPEC.md`), så modulet ikke er bundet til GitHub eller Forgejo. |
+| GO-1 | SKAL | Ét Go-modul med stien `alpheus-dev.org/alpheus`. Stien serveres som vanity import fra hjemmesiden (se `SPEC.md` i hjemmesidens repo), så modulet ikke er bundet til GitHub eller Forgejo. |
 | GO-2 | SKAL | Go-versionen fastlåses i `go.mod` (`go` og `toolchain`). Projektet følger den seneste stabile Go-udgivelse og understøtter den forrige. |
 | GO-3 | SKAL | Alle binærer bygges med `CGO_ENABLED=0` som statiske binærer. |
 | GO-4 | SKAL | Byggeriet er reproducerbart: binærer bygges med `-trimpath` og `-buildvcs=true`, og image-lag og arkiver bruger fast `SOURCE_DATE_EPOCH` (commit-tidspunktet). To byggerier af samme commit giver samme binær, samme arkiver, SBOM'er og chart og samme digests for images og chart. |
@@ -65,13 +66,15 @@ Alpheus består af fire programmer og ét bibliotek, alle i ét Go-modul:
 
 Go-modulet ligger i repo'ets rod (`go.mod` i roden), så modulstien
 `alpheus-dev.org/alpheus` svarer direkte til repo'et. Testklyngen ligger i
-`vagrant/` og hjemmesiden i `www/`; Go ignorerer mapper uden Go-filer.
+`vagrant/` og dokumentationen i `docs/`; Go ignorerer mapper uden Go-filer.
+Hjemmesiden, dens specifikation og logoet ligger i sit eget repo,
+`alpheus-dev.org`, som henter `docs/` herfra ved byg (WWW-22).
 Mapper markeret *(findes)* er bygget; resten er planlagt.
 
 ```
 alpheus/
 ├── SPEC.md                denne specifikation (findes)
-├── Makefile               generate, proto, test, test-crd, test-chart, cli, test-s3, test-agent-s3, e2e (findes)
+├── Makefile               generate, test, test-crd, test-chart, cli, e2e, bench, bench-etl, release og flere (findes)
 ├── buf.gen.yaml           kodegenerering fra proto/ (findes)
 ├── api/v1alpha1/          StreamRun-typer med kubebuilder-markører (findes)
 ├── cmd/
@@ -102,12 +105,11 @@ alpheus/
 │   ├── components/        testkomponenter: bench (findes), filter og sum i CSV (findes)
 │   ├── e2e/               testcase01 til testcase08 (findes), og fejltests
 │   └── internal/table/    CSV og decimaltal for testkomponenterne (findes)
-├── docs/                  kilde til dokumentationen på hjemmesiden
 ├── vagrant/               testklyngen: Talos i en VM med Garage og Zot (findes)
-├── www/                   hjemmesidens specifikation og Hugo-site (findes)
+├── docs/                  dokumentationen, som hjemmesiden henter ved byg (findes)
 ├── GOVERNANCE.md
 ├── SECURITY.md
-└── LICENSE                Apache 2.0
+└── LICENSE                Apache 2.0 (findes)
 ```
 
 Alt under `internal/` er privat. Kun `api/` og `sdk/` er offentlig API og
@@ -897,8 +899,8 @@ i EU: kildekoden på Forgejo, byggeriet på egne runners, images og chart i
 eget registry og filerne på hjemmesiden. Det skyldes Cyber Resilience Act
 (CRA): projektet skal selv kunne stå inde for og levere sine udgivelser,
 SBOM'er og sikkerhedsopdateringer, uden at de afhænger af tjenester uden
-for EU. GitHub er kun et spejl af kildekoden, der læses fra (`www/SPEC.md`
-WWW-44), og ingen udgivelse lægges der.
+for EU. GitHub er kun et spejl af kildekoden, der læses fra (hjemmesidens
+`SPEC.md` WWW-44), og ingen udgivelse lægges der.
 
 1. Tag `vX.Y.Z` på `main` på Forgejo.
 2. Forgejo Actions bygger på projektets egne runners: binærer, images,
@@ -1070,7 +1072,7 @@ CRD'en har derfor kun værdien `builtin`.
 ## 16. Åbne spørgsmål
 
 - Hvor kører Forgejo, runnerne og Zot på `registry.alpheus-dev.org`, og
-  hvem driver dem? Se også `www/SPEC.md` afsnit 11.
+  hvem driver dem? Se også hjemmesidens `SPEC.md` afsnit 11.
 - Hvor længe får en version sikkerhedsopdateringer (GO-134)?
 
 Afgjort 2026-11-01: udgivelser kun på egen infrastruktur i EU (14): Zot

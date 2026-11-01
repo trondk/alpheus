@@ -6,6 +6,6 @@ version: 0.1.0
 appVersion: v0.1.0
 home: https://alpheus-dev.org
 sources:
-  - https://github.com/alpheus-dev/alpheus
+  - https://github.com/trondk/alpheus
 license: Apache-2.0
 kubeVersion: ">=1.29.0-0"

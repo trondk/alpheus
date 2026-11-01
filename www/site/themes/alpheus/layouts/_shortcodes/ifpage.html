@@ -1,3 +1,0 @@
-{{- /* Text that links to a page on this site, shown only once that page
-       exists: {{% ifpage "/docs/getting-started/" %}}...{{% /ifpage %}} */ -}}
-{{- if partial "page-exists.html" (.Get 0) }}{{ .Inner }}{{ end -}}

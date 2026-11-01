@@ -1,4 +1,0 @@
-# Public packages under the Go module (WWW-17). Each gets a vanity import page.
-# CI regenerates this file from `go list ./...` in the main repository,
-# leaving out internal/ and test/ packages.
-packages = ["sdk", "api/v1alpha1"]

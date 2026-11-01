@@ -1,4 +1,0 @@
-{{- /* A link to a file or folder in the primary repository (WWW-19):
-       {{< repolink "vagrant/" >}}, shown as the path in code. */ -}}
-{{- $path := .Get 0 -}}
-<a href="{{ partial "repo-url.html" $path }}"><code>{{ $path }}</code></a>

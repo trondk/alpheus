@@ -2,7 +2,7 @@
 title: How it compares
 description: Alpheus next to Argo Workflows, Pachyderm, Numaflow and diskless Kafka, and when to use one of them instead.
 weight: 3
-lastmod: 2026-10-31
+lastmod: 2026-11-01
 ---
 
 Alpheus is a file mover, not a data engine: a chunk is a file in any
@@ -12,7 +12,7 @@ format, and Alpheus never opens it. That puts it next to these tools:
 |---|---|---|---|---|
 | **Alpheus** | Yes, chunk by chunk | Files of any format and size, in object storage | Nothing | A run, which starts and ends |
 | [Argo Workflows](https://argoproj.github.io/workflows/) | No: a step starts when the steps before it have finished | Artifacts in object storage | Argo's controller | A workflow run |
-| [Pachyderm](https://www.pachyderm.com/) | A pipeline starts on its input's finished commits | Versioned files in object storage | Pachyderm's services and a database | Long-lived pipelines over versioned data |
+| [Pachyderm](https://github.com/pachyderm/pachyderm) | A pipeline starts on its input's finished commits | Versioned files in object storage | Pachyderm's services and a database | Long-lived pipelines over versioned data |
 | [Numaflow](https://numaflow.numaproj.io/) | Yes, message by message | Messages in an inter-step buffer | Numaflow's controller and a JetStream cluster | Long-running pipelines |
 | Diskless Kafka | Producers and consumers run at the same time | Records in a log kept in object storage | Brokers or agents and a metadata store | Long-lived topics |
 
@@ -30,7 +30,9 @@ Use one of them instead when it fits better:
   and approvals. Alpheus only streams; it has none of that.
 - **Pachyderm**, when you need versioned data and lineage: which version
   of which input made which output, and reprocessing only what changed
-  when an input changes. Alpheus keeps no history between runs.
+  when an input changes. Alpheus keeps no history between runs. Its last
+  release, v2.12.2, came out in January 2025, and its website no longer
+  answers, so check that it is still maintained.
 - **Numaflow**, when your data is a stream of small events rather than
   files, and you need low latency, windowed aggregation or pipelines that
   scale with their load and run for ever. Alpheus moves chunks of
@@ -45,5 +47,5 @@ Use one of them instead when it fits better:
 Use Alpheus when large files should flow through a pipeline of
 containers as they are produced, each chunk processed exactly once even
 when pods die, and object storage is the only shared service you want to
-run. Alpheus is also young: it is in its design phase, and the tools
-above are in production use.
+run. Alpheus is also young: it is in its design phase, and the other
+tools above are in production use.

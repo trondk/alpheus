@@ -2,7 +2,7 @@
 title: "Large-file ETL on-prem"
 description: The flagship use case, run step by step on the test cluster, and what it measures.
 weight: 7
-lastmod: 2026-10-31
+lastmod: 2026-11-01
 ---
 
 This is the use case Alpheus is built and measured around: large files,
