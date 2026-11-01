@@ -84,6 +84,8 @@ With the cluster running:
 | `make e2e` | Builds the images, pushes them to Zot, installs the controller and runs the end-to-end tests |
 | `make bench` | Runs testcase01, testcase02 and testcase03 and saves their measurements |
 | `make bench-etl` | Runs the flagship ETL flow with 1, 2, 4 and 8 replicas of export, split and clean, and prints a table of the results |
+| `make release` | Builds, pushes and signs a release of the tagged commit; see [Releases](#releases) |
+| `make verify-release VERSION=vX.Y.Z` | Checks a release's signatures, checksums and SBOMs with its public key |
 
 ## End-to-end tests
 
@@ -248,3 +250,53 @@ even when its storage keys are deleted with it.
 Run every end-to-end test again without rebuilding the images with
 `SKIP_IMAGES=1 hack/e2e.sh`. Go images are built with fixed timestamps,
 so unchanged code gives the same digests.
+
+## Releases
+
+{{< repolink "hack/release.sh" >}} builds a release of the tagged commit
+into `_out/release/<version>/`: the `alpheus` CLI for Linux and macOS on
+amd64 and arm64, the agent and controller images for `linux/amd64` and
+`linux/arm64`, the Helm chart with the images' digests in it, an SPDX SBOM
+for every binary and image, and `SHA256SUMS`. It pushes the images and the
+chart to the registry, and signs them and `SHA256SUMS` with the project's
+cosign key, attaching each image's SBOM to it.
+{{< repolink "hack/verify-release.sh" >}} checks the result with the
+public key, the way [Verify a release](/docs/verify/) describes.
+
+It needs podman, skopeo, [Helm](https://helm.sh/docs/intro/install/),
+[syft](https://github.com/anchore/syft) and
+[cosign](https://docs.sigstore.dev/cosign/system_config/installation/)
+version 3. cosign and syft run behind a proxy that does not exist, with
+only the registry let through, so a release fails instead of quietly
+calling Sigstore's public services or checking for updates. Signatures
+use the key alone, with no transparency log.
+
+| Setting | Default | What it is |
+|---|---|---|
+| `VERSION` | the tag on `HEAD` | The version released; the tree must be clean and `HEAD` tagged with it |
+| `REGISTRY` | `registry.alpheus-dev.org` | The registry name images are pulled by |
+| `PUSH_REGISTRY` | `REGISTRY` | Where images are pushed from the machine running the script |
+| `CA_FILE` | none | The CA of the registry's certificate, if it is not a public one |
+| `COSIGN_KEY`, `COSIGN_PUB` | `cosign.key`, `cosign.pub` | The key pair; `COSIGN_PASSWORD` unlocks the private key |
+| `ALLOW_DIRTY` | none | `1` builds from uncommitted changes and without the tag, for testing |
+
+The build is reproducible: binaries, archives, SBOMs, the chart and the
+image digests carry the commit's time, so two runs on the same commit give
+the same result. To try it on the test cluster, with a key made by
+`cosign generate-key-pair`:
+
+```console
+$ IP=$(vagrant/talos.sh ip)
+$ VERSION=v0.0.0-test.1 ALLOW_DIRTY=1 \
+    REGISTRY=registry.alpheus.test:30500 PUSH_REGISTRY=$IP:30500 \
+    CA_FILE=vagrant/_out/ca.crt COSIGN_PASSWORD=… hack/release.sh
+$ PULL_REGISTRY=$IP:30500 CA_FILE=vagrant/_out/ca.crt \
+    hack/verify-release.sh _out/release/v0.0.0-test.1
+```
+
+Then run the end-to-end tests against the released chart and its images:
+
+```console
+$ CHART=oci://$IP:30500/alpheus-dev/charts/alpheus CHART_VERSION=0.0.0-test.1 \
+    SKIP_IMAGES=1 hack/e2e.sh -run 'TestTestcase0[1-3]$'
+```

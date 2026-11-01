@@ -51,7 +51,7 @@ Alpheus består af fire programmer og ét bibliotek, alle i ét Go-modul:
 | GO-1 | SKAL | Ét Go-modul med stien `alpheus-dev.org/alpheus`. Stien serveres som vanity import fra hjemmesiden (se `www/SPEC.md`), så modulet ikke er bundet til GitHub eller Forgejo. |
 | GO-2 | SKAL | Go-versionen fastlåses i `go.mod` (`go` og `toolchain`). Projektet følger den seneste stabile Go-udgivelse og understøtter den forrige. |
 | GO-3 | SKAL | Alle binærer bygges med `CGO_ENABLED=0` som statiske binærer. |
-| GO-4 | SKAL | Byggeriet er reproducerbart: binærer bygges med `-trimpath` og `-buildvcs=true`, og image-lag og arkiver bruger fast `SOURCE_DATE_EPOCH` (commit-tidspunktet). To byggerier af samme commit giver samme binær og samme image-digest. |
+| GO-4 | SKAL | Byggeriet er reproducerbart: binærer bygges med `-trimpath` og `-buildvcs=true`, og image-lag og arkiver bruger fast `SOURCE_DATE_EPOCH` (commit-tidspunktet). To byggerier af samme commit giver samme binær, samme arkiver, SBOM'er og chart og samme digests for images og chart. |
 | GO-5 | SKAL | Container-images bygges på `gcr.io/distroless/static` eller `scratch`, kører som non-root (UID 65532) og har read-only rodfilsystem. |
 | GO-6 | SKAL | Images bygges til `linux/amd64` og `linux/arm64`. |
 | GO-7 | SKAL | Hver udgivelse har en SBOM (SPDX) og signerede images, binærer og chart. Der signeres med cosign og projektets egen nøgle, ikke keyless, så ingen signatur afhænger af Sigstores offentlige tjenester uden for EU (se 14). |
@@ -93,7 +93,7 @@ alpheus/
 ├── config/                genererede CRD-, RBAC- og webhook-manifester (CRD og RBAC findes)
 │   ├── crd/bases/         StreamRun-CRD'en (findes)
 │   └── samples/           eksempler, bl.a. testcase03 (findes)
-├── hack/                  boilerplate, test-crd.sh, test-chart.sh, images.sh, e2e.sh og clireference (findes)
+├── hack/                  boilerplate, test-crd.sh, test-chart.sh, images.sh, e2e.sh, release.sh, verify-release.sh og clireference (findes)
 ├── charts/alpheus/        Helm-chart: CRD, RBAC, controller og hub-Service (findes)
 ├── templates/             skabeloner til komponenter: component-go og component-python (findes)
 ├── examples/log-report/   eksemplet fra komponent-guiden, i Go og Python (findes)
@@ -925,10 +925,11 @@ WWW-44), og ingen udgivelse lægges der.
 | GO-65 | SKAL | Hver udgivelse har release notes med ændringer, opgraderingsnoter og eventuelle CRD-ændringer. |
 | GO-66 | SKAL | CRD-opgraderinger er bagudkompatible inden for samme API-version. En ny API-version leveres med en conversion webhook. |
 | GO-130 | SKAL | Ingen udgivelse, intet image, ingen signatur og ingen SBOM hentes fra eller lægges på tjenester uden for projektets egen infrastruktur i EU. Byggeriet kører på egne runners, ikke på GitHub Actions. |
-| GO-131 | SKAL | Signeringsnøglen er projektets egen cosign-nøgle. Den private nøgle findes kun i release-runnerens hemmeligheder, og den offentlige nøgle ligger på `https://alpheus-dev.org/cosign.pub` og i repo'et. Signaturer lægges i registryet ved siden af images og chart og som filer ved siden af binærer og SBOM'er. Der bruges ingen offentlig transparency log (`--tlog-upload=false`). |
+| GO-131 | SKAL | Signeringsnøglen er projektets egen cosign-nøgle. Den private nøgle findes kun i release-runnerens hemmeligheder, og den offentlige nøgle ligger på `https://alpheus-dev.org/cosign.pub` og i repo'et. Signaturer lægges i registryet ved siden af images og chart og filerne er dækket af den signerede `SHA256SUMS` (GO-133). cosign signerer med en signing config uden tjenester, så der bruges ingen transparency log, tidsstempel-tjeneste eller certifikat-udsteder. |
 | GO-132 | SKAL | Hver udgivelse har en SBOM i SPDX-format for hver binær og hvert image, med på `https://alpheus-dev.org/releases/vX.Y.Z/` og vedhæftet hvert image i registryet. |
-| GO-133 | SKAL | `https://alpheus-dev.org/releases/vX.Y.Z/` har en `SHA256SUMS`-fil over alle filer i udgivelsen, signeret med projektets nøgle. Dokumentationen viser, hvordan man kontrollerer den, et image og chartet med `cosign verify` og den offentlige nøgle. |
+| GO-133 | SKAL | `https://alpheus-dev.org/releases/vX.Y.Z/` har en `SHA256SUMS`-fil over alle filer i udgivelsen, signeret med projektets nøgle (`SHA256SUMS.bundle`). Dokumentationen viser, hvordan man kontrollerer den, et image og chartet med `cosign verify` og den offentlige nøgle. |
 | GO-134 | SKAL | Hver udgivelses side oplyser, hvor længe versionen får sikkerhedsopdateringer, og hvor sårbarheder rapporteres (`/security/`). |
+| GO-135 | SKAL | `hack/release.sh` bygger, skubber og signerer en udgivelse, og `hack/verify-release.sh` kontrollerer den med den offentlige nøgle. cosign og syft kører bag en proxy, der ikke findes, med kun registryet lukket igennem, så et kald til en tjeneste uden for projektets infrastruktur får udgivelsen til at fejle i stedet for at ske i det stille (GO-130). |
 
 
 ## 15. Rækkefølge for implementeringen
@@ -1052,7 +1053,13 @@ WWW-44), og ingen udgivelse lægges der.
    hjælp (`make generate`, WWW-4). Fundet undervejs: lokal mode læste en
    udgangsmappes `manifest.json` som en chunk, så et trins output ikke
    kunne bruges som næste trins input; manifest-filerne springes nu over
-   (GO-87).
+   (GO-87). Udgivelsesscriptet (GO-135) er bygget og prøvet mod Zot i
+   testklyngen med en testnøgle: CLI'en til Linux og macOS, images til
+   amd64 og arm64, chartet, SBOM'er med syft og signaturer med cosign 3.
+   To byggerier af samme commit gav samme filer og digests (GO-4), en
+   anden nøgle og en ændret fil blev afvist, og testcase01 til 03 bestod
+   med det udgivne chart og dets images (`CHART` i `hack/e2e.sh`). Tilbage
+   er projektets nøgle, Forgejo, runnerne og registryet.
 
 En STOMP-driver til en ekstern broker (fx Artemis) var planlagt som
 trin 9 med GO-39 og GO-42, men er taget ud af planen: signaler gør
@@ -1062,8 +1069,6 @@ CRD'en har derfor kun værdien `builtin`.
 
 ## 16. Åbne spørgsmål
 
-- Hvilket værktøj laver SBOM'erne (GO-132)? Foreslået: syft, som kører
-  lokalt på runneren uden at kontakte nogen tjeneste.
 - Hvor kører Forgejo, runnerne og Zot på `registry.alpheus-dev.org`, og
   hvem driver dem? Se også `www/SPEC.md` afsnit 11.
 - Hvor længe får en version sikkerhedsopdateringer (GO-134)?
@@ -1071,7 +1076,7 @@ CRD'en har derfor kun værdien `builtin`.
 Afgjort 2026-11-01: udgivelser kun på egen infrastruktur i EU (14): Zot
 på `registry.alpheus-dev.org`, cosign med projektets egen nøgle og
 Forgejo Actions på egne runners. Det afløser beslutningen fra 2026-10-30
-om GitHub Container Registry.
+om GitHub Container Registry. syft laver SBOM'erne (GO-132).
 
 Afgjort 2026-10-30: Python via gRPC-kontrakten og en referencekomponent
 (15, trin 9), manifest-segmenter for hver 1.000 chunks (GO-32), egen

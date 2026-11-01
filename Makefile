@@ -1,4 +1,4 @@
-.PHONY: all generate proto check-generated check-deps test test-crd test-chart test-templates cli test-s3 test-agent-s3 vet images e2e bench bench-etl
+.PHONY: all generate proto check-generated check-deps test test-crd test-chart test-templates cli test-s3 test-agent-s3 vet images e2e bench bench-etl release verify-release
 
 all: generate vet check-deps test
 
@@ -86,6 +86,16 @@ e2e:
 # test/e2e/e2e_test.go).
 bench:
 	SKIP_IMAGES=1 hack/e2e.sh -run 'TestTestcase0[1-3]$$'
+
+# A release of the tagged commit in _out/release/<version>: binaries,
+# images, the chart, SBOMs, SHA256SUMS and signatures (SPEC 14). See
+# hack/release.sh for its settings.
+release:
+	hack/release.sh
+
+# Checks a release with its public key: make verify-release VERSION=vX.Y.Z
+verify-release:
+	hack/verify-release.sh _out/release/$(VERSION)
 
 # The flagship benchmark: large-file ETL with examples/meter-etl, with
 # export, split and clean at 1, 2, 4 and 8 replicas each, and a table of

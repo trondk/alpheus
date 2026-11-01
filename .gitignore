@@ -1,2 +1,5 @@
 # Images, binaries and deploy overlays from hack/images.sh and hack/e2e.sh.
 /_out/
+# The project's private signing key never goes in the repo (GO-131).
+cosign.key
+*.key

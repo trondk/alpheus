@@ -7,6 +7,10 @@
 #   SKIP_IMAGES=1  use the images in _out/images.env from the last run
 #   BENCH_*        the testcases' sizes (see test/e2e/e2e_test.go)
 #   HELM           the helm binary (helm)
+#   CHART          a released chart to install instead of charts/alpheus,
+#                  such as oci://<registry>/alpheus-dev/charts/alpheus, with
+#                  CHART_VERSION; its own image digests are used
+#                  (hack/release.sh)
 # Measurements are written to _out/bench.
 set -euo pipefail
 
@@ -24,11 +28,19 @@ set -a
 set +a
 
 # The Helm chart with the images pinned by digest, from the test registry.
-"$HELM" upgrade --install alpheus "$ROOT/charts/alpheus" \
-  --namespace alpheus-system --create-namespace --wait --timeout 180s --hide-notes \
-  --set registry="${CONTROLLER_IMAGE%%/*}" \
-  --set controller.image.digest="${CONTROLLER_IMAGE#*@}" \
-  --set agent.image.digest="${AGENT_IMAGE#*@}"
+REGISTRY_NAME="${CONTROLLER_IMAGE%%/*}"
+if [[ -n ${CHART:-} ]]; then
+  "$HELM" upgrade --install alpheus "$CHART" --version "${CHART_VERSION:?CHART_VERSION is required with CHART}" \
+    --ca-file "$VAGRANT/_out/ca.crt" \
+    --namespace alpheus-system --create-namespace --wait --timeout 180s --hide-notes \
+    --set registry="$REGISTRY_NAME"
+else
+  "$HELM" upgrade --install alpheus "$ROOT/charts/alpheus" \
+    --namespace alpheus-system --create-namespace --wait --timeout 180s --hide-notes \
+    --set registry="$REGISTRY_NAME" \
+    --set controller.image.digest="${CONTROLLER_IMAGE#*@}" \
+    --set agent.image.digest="${AGENT_IMAGE#*@}"
+fi
 kubectl label namespace alpheus-system --overwrite pod-security.kubernetes.io/enforce=restricted >/dev/null
 kubectl -n alpheus-system rollout status deployment/alpheus-controller --timeout=180s
 
