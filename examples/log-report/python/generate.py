@@ -28,7 +28,9 @@ def handle(inp, out):
             for i in range(s["lines"]):
                 level = "ERROR" if (n * s["lines"] + i) % 7 == 0 else "INFO"
                 f.write(f"{level} line {i + 1} of chunk {n + 1}\n".encode())
-        alpheus.count("lines", s["lines"])
+            # Counted before the file closes, so the count is committed
+            # with this chunk.
+            alpheus.count("lines", s["lines"])
 
 
 if __name__ == "__main__":

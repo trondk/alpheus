@@ -37,8 +37,9 @@ import (
 // refreshStorage fills in the status that comes from storage: edges,
 // results, and each step's committed counters and log (GO-79, GO-115,
 // GO-119). It is best effort; a storage error is logged and shown as the
-// run's message, and the next resync tries again.
-func (rc *Reconciler) refreshStorage(ctx context.Context, r *v1alpha1.StreamRun, g *graph) {
+// run's message, and the next resync tries again. It returns the error, so
+// a storage that refuses the run's keys can fail the run.
+func (rc *Reconciler) refreshStorage(ctx context.Context, r *v1alpha1.StreamRun, g *graph) error {
 	st, err := rc.store(ctx, r)
 	if err == nil {
 		err = rc.readStorage(ctx, st, r, g)
@@ -51,6 +52,7 @@ func (rc *Reconciler) refreshStorage(ctx context.Context, r *v1alpha1.StreamRun,
 	} else if strings.HasPrefix(r.Status.Message, "cannot read storage: ") {
 		r.Status.Message = ""
 	}
+	return err
 }
 
 func (rc *Reconciler) readStorage(ctx context.Context, st store.Store, r *v1alpha1.StreamRun, g *graph) error {

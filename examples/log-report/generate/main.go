@@ -59,10 +59,11 @@ func handle(ctx context.Context, in sdk.Input, out sdk.Output) error {
 		if err := w.Flush(); err != nil {
 			return err
 		}
+		// Counted before Close, so the count is committed with this chunk.
+		sdk.Count(ctx, "lines", int64(s.Lines))
 		if err := f.Close(); err != nil {
 			return err
 		}
-		sdk.Count(ctx, "lines", int64(s.Lines))
 	}
 	return nil
 }

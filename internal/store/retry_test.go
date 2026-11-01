@@ -65,6 +65,27 @@ func TestTransient(t *testing.T) {
 	}
 }
 
+func TestRefused(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"unknown key", fmt.Errorf("get x: %w", minio.ErrorResponse{StatusCode: http.StatusForbidden, Code: "InvalidAccessKeyId"}), true},
+		{"wrong secret", minio.ErrorResponse{StatusCode: http.StatusForbidden, Code: "SignatureDoesNotMatch"}, true},
+		{"no access", minio.ErrorResponse{StatusCode: http.StatusForbidden, Code: "AccessDenied"}, true},
+		{"no bucket", minio.ErrorResponse{StatusCode: http.StatusNotFound, Code: "NoSuchBucket"}, true},
+		{"missing object", minio.ErrorResponse{StatusCode: http.StatusNotFound, Code: "NoSuchKey"}, false},
+		{"down", minio.ErrorResponse{StatusCode: http.StatusServiceUnavailable}, false},
+		{"refused connection", syscall.ECONNREFUSED, false},
+		{"nil", nil, false},
+	} {
+		if got := Refused(c.err); got != c.want {
+			t.Errorf("%s: Refused = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
 func TestRetryUntilBack(t *testing.T) {
 	fastBackoff(t)
 	calls, retries := 0, 0

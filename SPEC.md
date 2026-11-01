@@ -3,7 +3,9 @@
 Status: udkast, 2026-11-01. Trin 1–8 i afsnit 15 er bygget: API-typer og
 CRD, chunks og lager, komponent-SDK'et, agenten, controlleren og
 end-to-end-tests på Kubernetes (Talos i en VM) med fan-out, fan-in,
-replikaer, genstart, backpressure og kaos. Af trin 9 er CLI, Helm-chart,
+replikaer, genstart, backpressure og kaos, og fejltests (testcase09 til
+testcase13: lageret går ned, controlleren dør, afviste nøgler, fuld
+bucket, for lille scratch-mappe). Af trin 9 er CLI, Helm-chart,
 skabeloner til komponenter i Go og Python og en guide til at skrive
 komponenter, flagskibet (ETL af store filer) og udgivelsesscriptet
 bygget; tilbage er infrastrukturen og første udgivelse. Åbne spørgsmål
@@ -103,7 +105,7 @@ alpheus/
 ├── examples/meter-etl/    flagskibet: ETL af store filer med elmåler-aflæsninger (findes)
 ├── test/
 │   ├── components/        testkomponenter: bench (findes), filter og sum i CSV (findes)
-│   ├── e2e/               testcase01 til testcase08 (findes), og fejltests: failure01 (findes)
+│   ├── e2e/               testcase01 til testcase13 (findes)
 │   └── internal/table/    CSV og decimaltal for testkomponenterne (findes)
 ├── vagrant/               testklyngen: Talos i en VM med Garage og Zot (findes)
 ├── docs/                  dokumentationen, som hjemmesiden henter ved byg (findes)
@@ -413,6 +415,7 @@ Manifestformat (version 1):
 | GO-68 | SKAL | Agenten afviser et manifest med lavere `epoch` end sit eget forsøgsnummer, og et manifest med højere `epoch` end sit eget får agenten til at stoppe straks. Begge dele sætter trinnet til `Failed` med årsagen "fencing". Brud på GO-67 bliver dermed opdaget i stedet for at give stille datatab. |
 | GO-69 | SKAL | Lageret skal have stærk read-after-write-konsistens for nye objekter, overskrivninger og listning. Det gælder AWS S3, Garage og MinIO. Installationsdokumentationen nævner kravet, og agenten advarer ved opstart, hvis lageret ikke er på listen over testede lagre. |
 | GO-136 | SKAL | Er lageret nede eller svarer det med en midlertidig fejl (en afvist eller afbrudt forbindelse, 5xx, 429 eller 408), prøver agenten igen med eksponentiel backoff (0,5 til 15 sekunder) i op til `spec.storage.timeout` (standard `10m`, højst `24h`, uforanderlig) fra første fejl, uden at bruge en genstart. Komponenten mærker det som et langsomt kald, som ved backpressure. En læsning, der afbrydes midt i et objekt, fortsætter, hvor den slap, men kun fra samme version (ETag), så en læser aldrig får begyndelsen af én version og slutningen af en anden. En skrivning sendes igen; det er sikkert, fordi hver nøgle har én skriver (GO-30). Fejl, der siger, at forespørgslen er forkert, fx en afvist nøgle, en manglende bucket eller en fuld kvote, prøves ikke igen. Svarer lageret ikke inden for `timeout`, stopper agenten med årsagen "storage unreachable", som controlleren viser i trinnets status, og forsøget tæller som fejlet efter de almindelige regler (GO-67). Controlleren og CLI'en prøver ikke igen på denne måde: controlleren forsøger igen ved næste reconcile. |
+| GO-137 | SKAL | Afviser lageret runnets nøgler eller bucket (en ukendt nøgle, en forkert hemmelighed, ingen adgang eller ingen bucket), sætter controlleren runnet til `Failed` med det samme med årsagen "the storage refused the keys in Secret <navn>", uden at bruge genstarter, og sletter pod'erne. Det samme gælder oprydningen (GO-20): kan nøglerne ikke slette runnets data, logger controlleren, at data bliver liggende, og fjerner sine finalizers, så runnet og dets namespace kan slettes. |
 | GO-34 | BØR | Lokale kopier af chunks i scratch-mappen slettes, så snart de er ackede eller skrevet. |
 
 ### 7.4 Backpressure og genstart
@@ -615,7 +618,7 @@ sdk.Progress(ctx, "4,2 mio. rækker behandlet")
 | Integration | controller mod API-server | envtest |
 | Integration | agent mod S3 | Garage i en container |
 | Driver | `builtin` | hub og klient i samme proces, og agenter gennem hub'en mod Garage |
-| E2E | testcase01 til testcase08, fejltests (failure01: lageret går ned) | Talos i en VM med Vagrant og libvirt (`vagrant/` i repo'ets rod) med Garage og Zot (12.2) |
+| E2E | testcase01 til testcase13 | Talos i en VM med Vagrant og libvirt (`vagrant/` i repo'ets rod) med Garage og Zot (12.2) |
 
 | ID | Niveau | Krav |
 |---|---|---|
@@ -838,6 +841,47 @@ så stort som inputtet. `make bench-etl` (`hack/bench-etl.sh`) kører den
 uden drab med 1, 2, 4 og 8 replikaer af `export`, `split` og `clean` og
 større data (16 filer à 2 millioner aflæsninger) og skriver en tabel med noden, den kørte på.
 
+**testcase09: lageret går ned (GO-136).** `source -> pass -> sink` som
+testcase04, med et `sink`, der venter et sekund pr. chunk. Når `sink` har
+acket en fjerdedel af sit input, skalerer testen Garage til 0 og tilbage
+igen, én gang efter 20 sekunder og én gang efter 3 minutter
+(`storage.timeout: 5m`). Runnet må ikke være færdigt, mens lageret er væk,
+og skal derefter slutte som `Succeeded` med hver chunk præcis én gang,
+præcise tællere og ingen genstarter.
+
+**testcase10: controlleren dør.** testcase02's fan-out og fan-in med et
+langsomt `sink`. Testen sletter controllerens pod to gange, når `sink`
+har acket en fjerdedel og tre fjerdedele af sit input fra `left`s første
+replika. Signal-hub'en ligger i controlleren og forsvinder med den;
+agenterne poller manifesterne i mellemtiden (GO-40). Runnet skal slutte
+som `Succeeded` med præcise tællere, acks og `consumed` som i testcase02,
+ingen chunks, der aldrig blev committet, og ingen genstarter. En tråd
+læser status fire gange i sekundet, og en tæller må aldrig falde, og et
+færdigt trin eller run må aldrig blive ufærdigt igen.
+
+**testcase11: lageret afviser nøglerne (GO-137).** Runnet peger på en
+Secret med det rigtige nøgle-ID og en forkert hemmelighed, så Garage
+svarer `SignatureDoesNotMatch`. Runnet skal være `Failed` inden for to
+minutter med årsagen "the storage refused the keys in Secret
+alpheus-s3-wrong", uden genstarter og uden pods tilbage, og når det
+slettes, skal det forsvinde inden for et minut og slippe sin finalizer på
+Secret'en, selv om dets data ikke kan slettes.
+
+**testcase12: bucketen er fuld.** `source -> sink` i bucketen
+`alpheus-quota` med en kvote på 20 MiB (`vagrant/services.sh`), langt
+mindre end runnet skal bruge, og et langsomt `sink`, så chunks hober sig
+op. Runnet skal være `Failed` med en årsag, der nævner kvoten, og ikke
+"storage unreachable": en fuld bucket er ikke et udfald (GO-136). Det
+committede skal holde: hver chunk i manifestet findes og har sin checksum,
+og `source`s tællere svarer til manifestet (GO-115). Testen tømmer
+bucketen før og efter.
+
+**testcase13: scratch-mappen er for lille (GO-106).** `sink` har
+`scratch: 1Mi` og får chunks på 4 MiB. Agenten skal afvise den første
+chunk med en fejl, der nævner scratch-mappen, før mappen bliver fuld og
+Kubernetes evicter pod'en; runnet er `Failed` med den årsag, og `sink`
+har brugt sin ene genstart.
+
 **Agent-test: hvert commit-punkt (GO-74).** En pod, der slås ihjel,
 rammer ikke et bestemt sted mellem to skrivninger til S3. Derfor kører
 `TestCrashAtEveryWrite` to pipelines i hukommelsen: testcase03's form
@@ -860,7 +904,7 @@ Bruges Alpheus uden Vagrant, sættes S3-lager og registry op manuelt.
 
 | Tjeneste | Adresse fra værten | Hvad `credentials.sh` viser |
 |---|---|---|
-| Garage S3 | `https://<VM IP>:30900`, region `garage`, bucket `alpheus-data` og resultat-bucketen `alpheus-results` | access key, secret key, og nøglen `results-reader`, der kun kan læse `alpheus-results` (GO-129) |
+| Garage S3 | `https://<VM IP>:30900`, region `garage`, bucket `alpheus-data`, resultat-bucketen `alpheus-results` og `alpheus-quota` med en kvote på 20 MiB (testcase12) | access key, secret key, og nøglen `results-reader`, der kun kan læse `alpheus-results` (GO-129) |
 | Garage dashboard | `https://<VM IP>:30901` | admin token (bruges til login) |
 | Garage internt | | rpc secret |
 | Zot | `https://registry.alpheus.test:30500`, ingen login | Zots egen S3-nøgle til bucket `alpheus-registry` |

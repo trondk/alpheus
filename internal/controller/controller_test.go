@@ -24,6 +24,8 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"io"
+	"iter"
 	"log/slog"
 	"net"
 	"os"
@@ -35,6 +37,7 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
+	"github.com/minio/minio-go/v7"
 	"google.golang.org/grpc/credentials"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -125,8 +128,13 @@ func runTests(m *testing.M, cfg *rest.Config) (int, error) {
 			AgentImage: agentImage,
 			HubAddress: "alpheus-signal-hub.alpheus-system.svc:7070",
 			Namespace:  "alpheus-system",
-			NewStore:   func(context.Context, *v1alpha1.StreamRun) (store.Store, error) { return mem, nil },
-			Resync:     200 * time.Millisecond,
+			NewStore: func(_ context.Context, r *v1alpha1.StreamRun) (store.Store, error) {
+				if r.Spec.Storage.Bucket == refusedBucket {
+					return refusing{}, nil
+				}
+				return mem, nil
+			},
+			Resync: 200 * time.Millisecond,
 		},
 	}
 	if err := rc.SetupWithManager(mgr); err != nil {
@@ -596,6 +604,66 @@ func TestFinalizer(t *testing.T) {
 	if _, err := store.ReadAll(t.Context(), mem, resultKey); err != nil {
 		t.Errorf("the result was deleted: %v", err)
 	}
+}
+
+// refusedBucket is a bucket whose storage refuses the run's keys.
+const refusedBucket = "refused"
+
+// refusing is storage that turns every request away, as S3 does with a
+// key it does not know.
+type refusing struct{}
+
+var errRefused = minio.ErrorResponse{StatusCode: 403, Code: "InvalidAccessKeyId", Message: "The access key ID you provided does not exist"}
+
+func (refusing) Put(context.Context, string, io.Reader, int64) error { return errRefused }
+func (refusing) Get(context.Context, string) (io.ReadCloser, error)  { return nil, errRefused }
+func (refusing) Delete(context.Context, string) error                { return errRefused }
+func (refusing) List(context.Context, string) iter.Seq2[string, error] {
+	return func(yield func(string, error) bool) { yield("", errRefused) }
+}
+
+// Keys the storage refuses fail the run at once, with no restarts, and the
+// run can still be deleted, leaving its data (GO-137).
+func TestRefusedKeys(t *testing.T) {
+	ns := namespace(t)
+	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: "alpheus-s3"}}
+	if err := k8s.Create(t.Context(), secret); err != nil {
+		t.Fatal(err)
+	}
+	r := testcase03(ns, 1)
+	r.Spec.Storage.Bucket = refusedBucket
+	create(t, r)
+	got := waitPhase(t, r, v1alpha1.RunFailed)
+	if !strings.Contains(got.Status.Message, "the storage refused the keys in Secret alpheus-s3") ||
+		!strings.Contains(got.Status.Message, "InvalidAccessKeyId") && !strings.Contains(got.Status.Message, "access key") {
+		t.Errorf("message %q", got.Status.Message)
+	}
+	for _, ss := range got.Status.Steps {
+		for _, rs := range ss.Replicas {
+			if rs.Restarts != 0 {
+				t.Errorf("%s replica %d restarted %d times", ss.Name, rs.Index, rs.Restarts)
+			}
+		}
+	}
+	eventually(t, "pods deleted", func() string {
+		if n := len(pods(t, ns)); n > 0 {
+			return fmt.Sprintf("%d pods left", n)
+		}
+		return ""
+	})
+	if err := k8s.Delete(t.Context(), get(t, r)); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "run and the Secret's finalizer gone", func() string {
+		if err := k8s.Get(t.Context(), client.ObjectKeyFromObject(r), &v1alpha1.StreamRun{}); !apierrors.IsNotFound(err) {
+			return fmt.Sprint("run: ", err)
+		}
+		k8s.Get(t.Context(), client.ObjectKeyFromObject(secret), secret)
+		if len(secret.Finalizers) > 0 {
+			return fmt.Sprint("secret finalizers: ", secret.Finalizers)
+		}
+		return ""
+	})
 }
 
 // A run whose storage Secret never existed is still deleted, leaving its

@@ -260,8 +260,10 @@ default. Once the run is deleted, `alpheus results gc` does that instead.
   units you choose (lower-case letters, digits and `_`, at most 32
   characters, at most 16 units per step), and log bad records as errors or
   warnings with a code. They go to the run's error log, are committed with
-  the chunk, and show in `alpheus get`. Progress text (at most once a
-  second) shows in `alpheus watch`.
+  the chunk, and show in `alpheus get`. A source has no input chunk, so
+  its counts go with the next chunk it closes: count a chunk before you
+  close it. Progress text (at most once a second) shows in
+  `alpheus watch`.
 
 The SDK exits with these codes, and the Python template does the same:
 
@@ -384,10 +386,11 @@ func handle(ctx context.Context, in sdk.Input, out sdk.Output) error {
 		if err := w.Flush(); err != nil {
 			return err
 		}
+		// Counted before Close, so the count is committed with this chunk.
+		sdk.Count(ctx, "lines", int64(s.Lines))
 		if err := f.Close(); err != nil { // a source's chunk is committed here
 			return err
 		}
-		sdk.Count(ctx, "lines", int64(s.Lines))
 	}
 	return nil
 }

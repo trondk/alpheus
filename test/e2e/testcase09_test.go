@@ -37,15 +37,15 @@ const (
 	garageName      = "garage"
 )
 
-// TestFailure01 runs source -> pass -> sink and takes the storage away in
+// TestTestcase09 runs source -> pass -> sink and takes the storage away in
 // the middle of the stream, by scaling Garage to 0, once for 20 seconds and
 // once for 3 minutes. The agents must wait for it with backoff instead of
 // failing (GO-136): the run must succeed with every chunk once and
 // unchanged, exact counters and no restarts at all.
-func TestFailure01(t *testing.T) {
+func TestTestcase09(t *testing.T) {
 	for _, outage := range []time.Duration{20 * time.Second, 3 * time.Minute} {
 		t.Run(outage.String(), func(t *testing.T) {
-			b := newBench(t, "failure01", nil)
+			b := newBench(t, "testcase09", nil)
 			e := setup(t)
 			r := e.create(b.Testcase)
 			b.run, b.store = r, e.runStore(r)

@@ -1,0 +1,28 @@
+# testcase13 (SPEC 12.1, GO-106): the scratch folder is too small. sink has
+# 1 MiB of scratch and gets chunks of BENCH_SIZE (4 MiB), so its agent must
+# refuse the first chunk with a clear error instead of filling the folder
+# until Kubernetes evicts the pod. One restart, which fails the same way.
+# hack/e2e.sh sets the image, pinned by digest, the test sets the sizes,
+# and the test creates the Secret alpheus-s3 in its namespace.
+apiVersion: alpheus-dev.org/v1alpha1
+kind: StreamRun
+metadata:
+  name: testcase13
+spec:
+  steps:
+    - name: source
+      image: ${BENCH_IMAGE}
+      settings: {role: source, chunks: ${BENCH_CHUNKS}, size: ${BENCH_SIZE}, seed: 13}
+    - name: sink
+      image: ${BENCH_IMAGE}
+      scratch: 1Mi
+      maxRestarts: 1
+      settings: {role: sink, chunks: ${BENCH_CHUNKS}, size: ${BENCH_SIZE}, seed: 13}
+  edges:
+    - {from: source, to: sink}
+  chunks: {maxBytes: 1Gi, maxUnacked: ${BENCH_MAX_UNACKED}}
+  storage:
+    endpoint: http://garage.storage.svc.cluster.local:3900
+    bucket: alpheus-data
+    region: garage
+    secretRef: alpheus-s3

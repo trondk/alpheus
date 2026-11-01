@@ -37,7 +37,7 @@ MCPipe uses (manifests in `services/`):
 
 | Service | From this machine | Inside the cluster |
 |---|---|---|
-| Garage S3 v2.4.1 | `https://<VM IP>:30900`, buckets `alpheus-data` (chunks) and `alpheus-results` (results) | `http://garage.storage.svc.cluster.local:3900` |
+| Garage S3 v2.4.1 | `https://<VM IP>:30900`, buckets `alpheus-data` (chunks), `alpheus-results` (results) and `alpheus-quota` (20 MiB quota, for testcase12) | `http://garage.storage.svc.cluster.local:3900` |
 | garage-ui v0.13.0 | `https://<VM IP>:30901` | |
 | Zot v2.1.22 | `https://registry.alpheus.test:30500` | `http://zot.registry.svc.cluster.local:5000` |
 

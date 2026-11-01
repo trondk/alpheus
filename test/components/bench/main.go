@@ -133,11 +133,13 @@ func source(ctx context.Context, s settings, out sdk.Output) error {
 		if _, err := io.Copy(f, payload(s.Seed, n, s.Size)); err != nil {
 			return err
 		}
+		// Counted before Close, so the counts are committed with this
+		// chunk (testcase12).
+		sdk.Count(ctx, "chunks", 1)
+		sdk.Count(ctx, "bytes", s.Size)
 		if err := f.Close(); err != nil {
 			return err
 		}
-		sdk.Count(ctx, "chunks", 1)
-		sdk.Count(ctx, "bytes", s.Size)
 	}
 	return nil
 }

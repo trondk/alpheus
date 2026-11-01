@@ -213,7 +213,11 @@ func (rc *Reconciler) reconcile(ctx context.Context, r *v1alpha1.StreamRun) (ctr
 		ss.Phase = stepPhase(ss.Replicas)
 	}
 
-	rc.refreshStorage(ctx, r, g)
+	// No agent can work with keys the storage refuses, and no restart
+	// helps, so the run fails at once (GO-137).
+	if err := rc.refreshStorage(ctx, r, g); store.Refused(err) && stop == "" {
+		stop = fmt.Sprintf("the storage refused the keys in Secret %s: %v", r.Spec.Storage.SecretRef, err)
+	}
 
 	finished, failed, running := 0, 0, false
 	for _, ss := range st.Steps {
@@ -547,7 +551,15 @@ func (rc *Reconciler) finalize(ctx context.Context, r *v1alpha1.StreamRun) error
 	case err != nil:
 		return err
 	default:
-		if err := rc.deletePrefix(ctx, r, chunk.RunPrefix(string(r.UID))); err != nil {
+		err := rc.deletePrefix(ctx, r, chunk.RunPrefix(string(r.UID)))
+		switch {
+		case store.Refused(err):
+			// Keys the storage refuses can never delete the data, so
+			// waiting would only keep the run, and its namespace, from
+			// going (GO-137).
+			log.FromContext(ctx).Info("the storage refuses the keys; the run's data is left in the bucket",
+				"secret", r.Spec.Storage.SecretRef, "prefix", chunk.RunPrefix(string(r.UID)), "error", err.Error())
+		case err != nil:
 			return err
 		}
 		before := secret.DeepCopy()

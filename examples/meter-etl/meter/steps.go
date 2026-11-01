@@ -74,12 +74,13 @@ func Export(ctx context.Context, in sdk.Input, out sdk.Output) error {
 		if err != nil {
 			return err
 		}
-		if err := f.Close(); err != nil {
-			return err
-		}
+		// Counted before Close, so the counts are committed with this file.
 		sdk.Count(ctx, "files", 1)
 		sdk.Count(ctx, "rows", int64(g.Rows))
 		sdk.Count(ctx, "bytes", raw)
+		if err := f.Close(); err != nil {
+			return err
+		}
 		sdk.Progress(ctx, fmt.Sprintf("file %d of %d", i+1, g.Files))
 	}
 	return nil

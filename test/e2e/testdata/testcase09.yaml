@@ -1,4 +1,4 @@
-# failure01 (GO-136): the storage goes down in the middle of the stream.
+# testcase09 (SPEC 12.1, GO-136): the storage goes down in the middle of the stream.
 # The test scales Garage to 0 and back. source is fixed, so a restarted
 # source would make the same chunks (GO-92), and sink takes a second per
 # chunk, so the storage is gone long before the run can finish.
@@ -8,7 +8,7 @@
 apiVersion: alpheus-dev.org/v1alpha1
 kind: StreamRun
 metadata:
-  name: failure01
+  name: testcase09
 spec:
   steps:
     - name: source

@@ -1,0 +1,36 @@
+# testcase10 (SPEC 12.1): the controller dies during a run. testcase02's
+# fan-out and fan-in, with a slow sink so the test can delete the
+# controller pod twice in the middle of the stream.
+# hack/e2e.sh sets the image, pinned by digest, the test sets the sizes,
+# and the test creates the Secret alpheus-s3 in its namespace.
+apiVersion: alpheus-dev.org/v1alpha1
+kind: StreamRun
+metadata:
+  name: testcase10
+spec:
+  steps:
+    - name: source
+      image: ${BENCH_IMAGE}
+      settings: {role: source, chunks: ${BENCH_CHUNKS}, size: ${BENCH_SIZE}, seed: 10}
+    - name: left
+      image: ${BENCH_IMAGE}
+      replicas: ${BENCH_LEFT_REPLICAS}
+      settings: {role: pass}
+    - name: right
+      image: ${BENCH_IMAGE}
+      replicas: ${BENCH_RIGHT_REPLICAS}
+      settings: {role: pass}
+    - name: sink
+      image: ${BENCH_IMAGE}
+      settings: {role: sink, chunks: ${BENCH_CHUNKS}, size: ${BENCH_SIZE}, seed: 10, ports: [left, right], delay: 300}
+  edges:
+    - {from: source, to: left}
+    - {from: source, to: right}
+    - {from: left, to: sink, port: left}
+    - {from: right, to: sink, port: right}
+  chunks: {maxBytes: 1Gi, maxUnacked: ${BENCH_MAX_UNACKED}}
+  storage:
+    endpoint: http://garage.storage.svc.cluster.local:3900
+    bucket: alpheus-data
+    region: garage
+    secretRef: alpheus-s3

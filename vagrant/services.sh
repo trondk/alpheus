@@ -16,6 +16,7 @@ REGISTRY_NAME="registry.alpheus.test"
 DATA_BUCKET="alpheus-data"
 RESULTS_BUCKET="alpheus-results"
 RESULTS_KEY="results-reader"
+QUOTA_BUCKET="alpheus-quota"
 REGISTRY_BUCKET="alpheus-registry"
 REGISTRY_KEY="zot-registry"
 
@@ -109,6 +110,12 @@ install_storage() {
   garage bucket allow --read --write --key "$GARAGE_DEFAULT_ACCESS_KEY" "$RESULTS_BUCKET" >/dev/null
   garage key info "$RESULTS_KEY" >/dev/null || garage key create "$RESULTS_KEY" >/dev/null
   garage bucket allow --read --key "$RESULTS_KEY" "$RESULTS_BUCKET" >/dev/null
+
+  # A small bucket that fills up, for testcase12: a run must fail cleanly
+  # when the storage refuses a write.
+  garage bucket info "$QUOTA_BUCKET" >/dev/null || garage bucket create "$QUOTA_BUCKET" >/dev/null
+  garage bucket allow --read --write --key "$GARAGE_DEFAULT_ACCESS_KEY" "$QUOTA_BUCKET" >/dev/null
+  garage bucket set-quotas --max-size 20MiB "$QUOTA_BUCKET" >/dev/null
 }
 
 # Zot's bucket and key live in Garage. The key is read back from Garage on

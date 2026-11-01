@@ -58,6 +58,21 @@ func transient(err error) bool {
 		errors.Is(err, syscall.EPIPE)
 }
 
+// Refused reports whether the storage turned the request away because of
+// the keys or the bucket: a key it does not know, a wrong secret, no access
+// or no such bucket. Trying again with the same keys cannot help.
+func Refused(err error) bool {
+	var r minio.ErrorResponse
+	if !errors.As(err, &r) {
+		return false
+	}
+	switch r.Code {
+	case "AccessDenied", "InvalidAccessKeyId", "SignatureDoesNotMatch", "NoSuchBucket", "AllAccessDisabled":
+		return true
+	}
+	return r.StatusCode == http.StatusUnauthorized || r.StatusCode == http.StatusForbidden
+}
+
 // retrier repeats an operation while it fails with a transient error, for at
 // most timeout from the first failure. A timeout of 0 tries once.
 type retrier struct {

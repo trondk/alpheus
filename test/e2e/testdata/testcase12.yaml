@@ -1,0 +1,30 @@
+# testcase12 (SPEC 12.1): the bucket is full. alpheus-quota has a quota of
+# 20 MiB (vagrant/services.sh), and the run needs far more, so Garage
+# refuses a write in the middle of the stream. sink is slow, so chunks
+# pile up on the edge. One restart, which fails the same way.
+# hack/e2e.sh sets the image, pinned by digest, the test sets the sizes,
+# and the test creates the Secret alpheus-s3 in its namespace.
+apiVersion: alpheus-dev.org/v1alpha1
+kind: StreamRun
+metadata:
+  name: testcase12
+spec:
+  steps:
+    - name: source
+      image: ${BENCH_IMAGE}
+      maxRestarts: 1
+      settings: {role: source, chunks: ${BENCH_CHUNKS}, size: ${BENCH_SIZE}, seed: 12, fixed: true}
+    - name: sink
+      image: ${BENCH_IMAGE}
+      settings: {role: sink, chunks: ${BENCH_CHUNKS}, size: ${BENCH_SIZE}, seed: 12, delay: 1000}
+  edges:
+    - {from: source, to: sink}
+  chunks: {maxBytes: 1Gi, maxUnacked: 64}
+  storage:
+    endpoint: http://garage.storage.svc.cluster.local:3900
+    bucket: alpheus-quota
+    region: garage
+    secretRef: alpheus-s3
+    # If Garage answered a full bucket with a temporary error, the agents
+    # would wait; the test must not wait 10 minutes to find out.
+    timeout: 1m

@@ -74,7 +74,11 @@ _current = None  # the running component, for count, error, warn, progress
 
 
 def count(unit, n):
-    """Adds n to the counter unit; committed with the current input chunk."""
+    """Adds n to the counter unit; committed with the current input chunk.
+
+    A source has no input chunk: its counts go with the next chunk it
+    closes, so it counts a chunk before closing it.
+    """
     _current.observe(count=(unit, n))
 
 

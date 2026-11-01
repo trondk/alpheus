@@ -47,7 +47,8 @@ func Field(key string, value any) LogField { return LogField{Key: key, Value: va
 // "rows" or "files" (lower-case letters, digits and _, at most 32; at most
 // 16 units per step). The count is committed with the input chunk being
 // handled, or for a source with the next output chunk it closes (GO-114,
-// GO-115). Count never blocks (GO-124).
+// GO-115), so a source counts a chunk before it closes it. Count never
+// blocks (GO-124).
 func Count(ctx context.Context, unit string, n int64) {
 	if o := observerFrom(ctx); o != nil {
 		o.count(unit, n)
