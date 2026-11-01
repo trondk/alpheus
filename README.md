@@ -76,6 +76,15 @@ run in-house, and immutable infrastructure, where nothing may touch the
 nodes. If you can run Kubernetes and an S3-compatible store such as
 Garage or MinIO, you can run Alpheus.
 
+The flagship use case is **large-file ETL on a sovereign on-prem
+cluster**: a utility's nightly smart-meter exports, gzipped CSV files of
+millions of readings, split, checked in parallel and summed on its own
+hardware. [`examples/meter-etl/`](examples/meter-etl/) is the code,
+testcase08 checks that every row counts exactly once even when a pod is
+killed, and `make bench-etl` measures it;
+[Large-file ETL on-prem](https://alpheus-dev.org/docs/etl/) has the
+walk-through and the first results.
+
 
 ## How it compares
 

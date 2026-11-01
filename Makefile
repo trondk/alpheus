@@ -1,4 +1,4 @@
-.PHONY: all generate proto check-generated check-deps test test-crd test-chart test-templates cli test-s3 test-agent-s3 vet images e2e bench
+.PHONY: all generate proto check-generated check-deps test test-crd test-chart test-templates cli test-s3 test-agent-s3 vet images e2e bench bench-etl
 
 all: generate vet check-deps test
 
@@ -86,6 +86,12 @@ e2e:
 # test/e2e/e2e_test.go).
 bench:
 	SKIP_IMAGES=1 hack/e2e.sh -run 'TestTestcase0[1-3]$$'
+
+# The flagship benchmark: large-file ETL with examples/meter-etl, with
+# export, split and clean at 1, 2, 4 and 8 replicas each, and a table of
+# the results (testcase08).
+bench-etl:
+	hack/bench-etl.sh
 
 # Alpheus never reads a chunk's content, so it must not depend on Parquet or
 # Arrow (GO-101).

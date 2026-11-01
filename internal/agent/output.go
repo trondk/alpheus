@@ -526,7 +526,10 @@ func (a *Agent) removeFiles(files []*outFile) {
 // waitForConsumers blocks while the next chunk of an output would go to a
 // consumer replica that already has maxUnacked unacked chunks from this
 // stream (GO-35). The chunk's number counts the output's files not yet
-// committed.
+// committed, but only committed chunks count as unacked: the consumer
+// cannot see the others, let alone ack them, so counting them would
+// deadlock a step that makes maxUnacked or more chunks for one consumer
+// replica from one input chunk.
 func (a *Agent) waitForConsumers(ctx context.Context, output string) error {
 	if a.cfg.MaxUnacked == 0 {
 		return nil
@@ -547,7 +550,8 @@ func (a *Agent) waitForConsumers(ctx context.Context, output string) error {
 					pending++
 				}
 			}
-			next := t.committed + pending + 1
+			committed := t.committed
+			next := committed + pending + 1
 			a.mu.Unlock()
 			c := chunk.Assign(next, a.cfg.Replica, t.replicas)
 			last, err := a.ackedBy(ctx, t, c)
@@ -558,7 +562,7 @@ func (a *Agent) waitForConsumers(ctx context.Context, output string) error {
 				continue
 			}
 			unacked := 0
-			for n := last + 1; n < next; n++ {
+			for n := last + 1; n <= committed; n++ {
 				if chunk.Assign(n, a.cfg.Replica, t.replicas) == c {
 					unacked++
 				}

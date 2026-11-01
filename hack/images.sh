@@ -27,6 +27,10 @@ IMAGES=(
   "alpheus-controller alpheus-dev/controller CONTROLLER_IMAGE"
   "bench alpheus-test/bench BENCH_IMAGE"
   "component-go alpheus-test/grep-go GREP_GO_IMAGE"
+  "export alpheus-test/meter-export METER_EXPORT_IMAGE"
+  "split alpheus-test/meter-split METER_SPLIT_IMAGE"
+  "clean alpheus-test/meter-clean METER_CLEAN_IMAGE"
+  "aggregate alpheus-test/meter-aggregate METER_AGGREGATE_IMAGE"
 )
 
 mkdir -p "$OUT/bin" "$OUT/certs"
@@ -34,7 +38,8 @@ cp "$CA_FILE" "$OUT/certs/ca.crt"
 cd "$ROOT"
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o "$OUT/bin/" \
   ./cmd/alpheus-agent ./cmd/alpheus-controller \
-  ./test/components/bench ./templates/component-go
+  ./test/components/bench ./templates/component-go \
+  ./examples/meter-etl/export ./examples/meter-etl/split ./examples/meter-etl/clean ./examples/meter-etl/aggregate
 
 : > "$OUT/images.env.tmp"
 for entry in "${IMAGES[@]}"; do

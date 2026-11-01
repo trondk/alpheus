@@ -23,6 +23,7 @@ limitations under the License.
 //	KUBECONFIG                      the cluster
 //	BENCH_IMAGE                     the test component, pinned by digest
 //	GREP_GO_IMAGE, GREP_PYTHON_IMAGE the component templates (testcase07)
+//	METER_*_IMAGE                   the meter-etl example's steps (testcase08)
 //	ALPHEUS_E2E_S3_ACCESS_KEY,      the keys put in each run's Secret
 //	ALPHEUS_E2E_S3_SECRET_KEY
 //	ALPHEUS_E2E_S3_RESULTS_ACCESS_KEY, the key that can only read the
@@ -39,8 +40,11 @@ limitations under the License.
 // BENCH_MAX_UNACKED, with defaults 64, 4 MiB and 4, and
 // BENCH_<STEP>_REPLICAS for the steps between source and sink: PASS
 // (default 1) in testcase01, LEFT and RIGHT (3 and 2) in testcase02 and
-// testcase06, FILTER (10) in testcase03, SLOW (2) in testcase05 and GO (2)
-// in testcase07.
+// testcase06, FILTER (10) in testcase03, SLOW (2) in testcase05, GO (2)
+// in testcase07 and CLEAN (4) in testcase08. testcase08 also reads ETL_FILES
+// (4), ETL_ROWS (2000000) per file, so split makes more chunks from one
+// file than maxUnacked, ETL_SPLIT_BYTES (16 MiB) and ETL_KILL,
+// which is 0 for a run without a killed pod.
 // testcase05 reads BENCH_SLOW_MS (500), the slow step's delay per chunk,
 // and testcase06 BENCH_CHAOS_SEED, which picks the pods it kills, and
 // BENCH_CHAOS_KILLS (12), how many.

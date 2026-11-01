@@ -83,6 +83,7 @@ With the cluster running:
 | `make test-agent-s3` | Runs the agent pipeline against Garage, with signals through the hub and a restart |
 | `make e2e` | Builds the images, pushes them to Zot, installs the controller and runs the end-to-end tests |
 | `make bench` | Runs testcase01, testcase02 and testcase03 and saves their measurements |
+| `make bench-etl` | Runs the flagship ETL flow with 1, 2, 4 and 8 replicas of export, split and clean, and prints a table of the results |
 
 ## End-to-end tests
 
@@ -214,6 +215,26 @@ and `python` when it has committed half. The run must succeed with every
 chunk once and unchanged, both steps must count the same lines in and out,
 and each must have restarted once. `hack/images.sh` builds the Python
 template with its own Dockerfile.
+
+## The flagship: large-file ETL
+
+testcase08 runs the flagship use case,
+[large-file ETL on-prem](/docs/etl/), with
+{{< repolink "examples/meter-etl/" >}}: `export` writes gzipped CSV files
+of smart-meter readings from a seed, `split` cuts them into chunks,
+`clean` checks every row in four replicas, and `aggregate` sums them per
+region and hour. The test computes the expected totals with the same
+generator and requires everything to be exact: every row read once, every
+bad row rejected and logged, one dataset chunk per split chunk, and the
+totals equal to the generator's, while it kills a `clean` pod in the
+middle. Each file gives more chunks than `maxUnacked`, which once
+deadlocked the agent; the test keeps it that way.
+
+`make bench-etl` runs the same flow without killing anything, with 16 files
+of 2 million readings and `export`, `split` and `clean` at 1, 2, 4 and 8
+replicas each, and prints a table of the processing time and throughput
+with the node it ran on.
+`REPLICAS`, `ETL_FILES`, `ETL_ROWS` and `ETL_SPLIT_BYTES` change it.
 
 `make test-templates` runs the Python template and the log-report example
 from [Writing components](/docs/components/) in local mode, in

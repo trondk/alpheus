@@ -97,9 +97,10 @@ alpheus/
 ├── charts/alpheus/        Helm-chart: CRD, RBAC, controller og hub-Service (findes)
 ├── templates/             skabeloner til komponenter: component-go og component-python (findes)
 ├── examples/log-report/   eksemplet fra komponent-guiden, i Go og Python (findes)
+├── examples/meter-etl/    flagskibet: ETL af store filer med elmåler-aflæsninger (findes)
 ├── test/
 │   ├── components/        testkomponenter: bench (findes), filter og sum i CSV (findes)
-│   ├── e2e/               testcase01 til testcase07 (findes), og fejltests
+│   ├── e2e/               testcase01 til testcase08 (findes), og fejltests
 │   └── internal/table/    CSV og decimaltal for testkomponenterne (findes)
 ├── docs/                  kilde til dokumentationen på hjemmesiden
 ├── vagrant/               testklyngen: Talos i en VM med Garage og Zot (findes)
@@ -426,7 +427,7 @@ Et nedbrud mellem trin 2 og 3 giver derfor ikke dubleret output.
 
 | ID | Niveau | Krav |
 |---|---|---|
-| GO-35 | SKAL | `maxUnacked` gælder pr. forbruger-replika, ikke for strømmen samlet. Producentens `Emit` blokerer, når den næste chunk er tildelt en forbruger-replika (GO-76), der allerede har `maxUnacked` u-ackede chunks fra strømmen, hos mindst ét forbrugende trin. Med 10 replikaer og `maxUnacked: 4` kan op til 40 chunks fra strømmen være i luften. Komponenten mærker backpressure som et langsomt kald, ikke som en fejl. |
+| GO-35 | SKAL | `maxUnacked` gælder pr. forbruger-replika, ikke for strømmen samlet. Producentens `Emit` blokerer, når den næste chunk er tildelt en forbruger-replika (GO-76), der allerede har `maxUnacked` u-ackede chunks fra strømmen, hos mindst ét forbrugende trin. Med 10 replikaer og `maxUnacked: 4` kan op til 40 chunks fra strømmen være i luften. Komponenten mærker backpressure som et langsomt kald, ikke som en fejl. Kun committede chunks tæller som u-ackede: chunks fra en input-chunk, der endnu ikke er `Done`, kan forbrugeren hverken se eller acke, så et trin, der laver `maxUnacked` eller flere chunks til samme forbruger-replika fra én input-chunk, ville ellers gå i stå. Sådan et trin kan derfor kortvarigt have flere end `maxUnacked` u-ackede chunks. |
 | GO-94 | SKAL | Fordi chunks skrives i rækkefølge, og fordelingen er fast, venter producenten på den replika, næste chunk er tildelt, selv om andre replikaer er ledige. Den langsomste replika sætter derfor tempoet for strømmen. Det er et bevidst valg, der giver deterministisk fordeling og simpel genstart, og dokumentationen nævner det. |
 | GO-36 | SKAL | Hver forbruger-replika har sin egen ack-fil pr. strøm, `runs/<uid>/<kant>/<replika>/acks-<trin>-<forbruger-replika>.json`. Ved fan-out og replikaer har en strøm derfor flere ack-filer, men hver fil har kun én skriver. Filen lister numrene på de ackede chunks og forfatterens forsøgsnummer: `{"version": 1, "acked": [1, 11, 21], "epoch": 2}`. Agenten læser filen før hver skrivning og stopper ved et højere `epoch` eller `closed: true` (GO-68, GO-97). For et trin uden udgående manifester har filen også `observed` (GO-115). |
 | GO-37 | SKAL | En input-chunk på en indgående strøm er behandlet, når alle udgående manifester har `consumed[<kant>/<replika>]` større end eller lig med dens nummer. Ved genstart bruger agenten dette, ikke ack-filen, når der er udgående kanter. Den opdaterer ack-filen, så den passer, og fortsætter fra første ubehandlede chunk. |
@@ -611,7 +612,7 @@ sdk.Progress(ctx, "4,2 mio. rækker behandlet")
 | Integration | controller mod API-server | envtest |
 | Integration | agent mod S3 | Garage i en container |
 | Driver | `builtin` | hub og klient i samme proces, og agenter gennem hub'en mod Garage |
-| E2E | testcase01 til testcase07, fejltests | Talos i en VM med Vagrant og libvirt (`vagrant/` i repo'ets rod) med Garage og Zot (12.2) |
+| E2E | testcase01 til testcase08, fejltests | Talos i en VM med Vagrant og libvirt (`vagrant/` i repo'ets rod) med Garage og Zot (12.2) |
 
 | ID | Niveau | Krav |
 |---|---|---|
@@ -805,6 +806,34 @@ to strømme skal tilsammen have alle chunks og EOS, og der må ikke ligge
 chunk-objekter, som aldrig blev committet. `hack/images.sh` bygger
 Python-skabelonen med dens egen Dockerfile. Antallet af `go`-replikaer
 ændres med `BENCH_GO_REPLICAS`.
+
+**testcase08: flagskibet, ETL af store filer.**
+
+```
+export ──> split ──> clean (4 replikaer) ──> aggregate ──> totaler (resultat)
+                        └──> dataset (resultat)
+```
+
+Brugsscenariet, Alpheus bygges og måles omkring: et forsyningsselskabs
+natlige eksport af elmåler-aflæsninger kommer som store gzippede CSV-filer
+og renses, kontrolleres og summeres på egen klynge uden andet end
+Kubernetes og et S3-lager. Komponenterne er `examples/meter-etl` og bruger
+kun standardbiblioteket. `export` skriver `ETL_FILES` filer med `ETL_ROWS`
+aflæsninger hver ud fra et seed, med 5 dårlige rækker pr. tusind; `split`
+skærer dem i chunks på `ETL_SPLIT_BYTES` ukomprimeret; `clean` kontrollerer
+hver række, skriver gyldige rækker gzippet til resultatet `dataset`,
+logger dårlige rækker i fejlloggen og sender en delsum pr. region og time
+videre; `aggregate` er tilstandsfuld og skriver totalerne. Testen beregner
+de forventede totaler med samme generator og kræver, at alt er eksakt:
+hver række læst én gang, de dårlige afvist og logget, resten i datasettet
+(én dataset-chunk pr. split-chunk) og totalerne pr. region og time ens med
+generatorens. Medmindre `ETL_KILL=0`, slår den `clean`s replika 0 ihjel,
+når `clean` har læst en fjerdedel af rækkerne. Den måler opstart,
+behandlingstid (fra alle komponenter kører til `Succeeded`) og
+gennemløb, og sletter runnets resultater til sidst, da datasettet er lige
+så stort som inputtet. `make bench-etl` (`hack/bench-etl.sh`) kører den
+uden drab med 1, 2, 4 og 8 replikaer af `export`, `split` og `clean` og
+større data (16 filer à 2 millioner aflæsninger) og skriver en tabel med noden, den kørte på.
 
 **Agent-test: hvert commit-punkt (GO-74).** En pod, der slås ihjel,
 rammer ikke et bestemt sted mellem to skrivninger til S3. Derfor kører

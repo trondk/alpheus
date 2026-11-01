@@ -1,0 +1,37 @@
+# testcase08 (SPEC 12.1): the flagship, large-file ETL of smart-meter
+# readings with examples/meter-etl. export writes ETL_FILES gzipped CSV
+# files of ETL_ROWS readings each in BENCH_EXPORT_REPLICAS replicas, split
+# cuts them into chunks of ETL_SPLIT_BYTES in BENCH_SPLIT_REPLICAS, clean
+# checks every row in BENCH_CLEAN_REPLICAS replicas,
+# and aggregate sums them per region and hour. hack/e2e.sh sets the images,
+# pinned by digest, the test sets the sizes, and the test creates the
+# Secret alpheus-s3 in its namespace.
+apiVersion: alpheus-dev.org/v1alpha1
+kind: StreamRun
+metadata:
+  name: testcase08
+spec:
+  steps:
+    - name: export
+      image: ${METER_EXPORT_IMAGE}
+      replicas: ${BENCH_EXPORT_REPLICAS}
+      settings: {files: ${ETL_FILES}, rows: ${ETL_ROWS}, seed: 8, badPerMille: 5, day: "2026-10-30"}
+    - name: split
+      image: ${METER_SPLIT_IMAGE}
+      replicas: ${BENCH_SPLIT_REPLICAS}
+      settings: {bytes: ${ETL_SPLIT_BYTES}}
+    - name: clean
+      image: ${METER_CLEAN_IMAGE}
+      replicas: ${BENCH_CLEAN_REPLICAS}
+    - name: aggregate
+      image: ${METER_AGGREGATE_IMAGE}
+  edges:
+    - {from: export, to: split}
+    - {from: split, to: clean}
+    - {from: clean, to: aggregate}
+  chunks: {maxBytes: 4Gi, maxUnacked: ${BENCH_MAX_UNACKED}}
+  storage:
+    endpoint: http://garage.storage.svc.cluster.local:3900
+    bucket: alpheus-data
+    region: garage
+    secretRef: alpheus-s3

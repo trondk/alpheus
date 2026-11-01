@@ -598,7 +598,9 @@ func TestFencing(t *testing.T) {
 func TestBackpressure(t *testing.T) {
 	st := store.NewMemory()
 	gen := pipeline(20, 2)[0]
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	// Long enough to commit four chunks also on a busy machine; it then
+	// waits for acks that never come.
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
 
 	dir, _ := os.MkdirTemp("", "alpheus-agent-")
@@ -614,6 +616,54 @@ func TestBackpressure(t *testing.T) {
 	m := readManifest(t, st, chunk.EdgeStream(testUID, "generate-filter", 0))
 	if m.Count() != 4 || m.EOS {
 		t.Errorf("%d chunks committed, want 4 (2 replicas x maxUnacked 2)", m.Count())
+	}
+}
+
+// A step may make more chunks from one input chunk than maxUnacked: its
+// output is not committed until the input chunk is done, so the consumer
+// cannot ack it before, and backpressure must not wait for that (GO-35).
+// Here filter writes each DK line five times, each in its own chunk: ten
+// chunks per input chunk, with maxUnacked 2.
+func TestManyChunksPerInput(t *testing.T) {
+	st := store.NewMemory()
+	rs := pipeline(6, 1)
+	rs[1].h = func(ctx context.Context, in sdk.Input, out sdk.Output) error {
+		for c, err := range in.Chunks(ctx) {
+			if err != nil {
+				return err
+			}
+			data, err := os.ReadFile(c.Path)
+			if err != nil {
+				return err
+			}
+			for line := range strings.Lines(string(data)) {
+				if !strings.HasPrefix(line, "DK ") {
+					continue
+				}
+				for range 5 {
+					f, err := out.Create(ctx, sdk.DefaultOutput, "txt")
+					if err != nil {
+						return err
+					}
+					io.WriteString(f, line)
+					if err := f.Close(); err != nil {
+						return err
+					}
+				}
+			}
+		}
+		return nil
+	}
+	if err := run(t, st, nil, rs...); err != nil {
+		t.Fatal(err)
+	}
+	result := chunk.ResultStream(testRun, testUID, "sum", "result", 0)
+	data, err := store.ReadAll(t.Context(), st, result.ChunkKey(1, "txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.TrimSpace(string(data)), strconv.FormatInt(5*expected(6), 10); got != want {
+		t.Errorf("sum %s, want %s", got, want)
 	}
 }
 

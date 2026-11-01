@@ -1,0 +1,34 @@
+# The meter-etl example: large-file ETL of smart-meter readings. export
+# writes 16 gzipped CSV files of 2 million readings each, split cuts them
+# into chunks of 16 MiB, clean checks every row in four replicas, and
+# aggregate sums the readings per region and hour. clean's dataset output
+# (the cleaned readings) and aggregate's totals are the run's results.
+# Build the images (images.sh), put their digests here, and create a
+# Secret alpheus-s3 with keys for the bucket.
+apiVersion: alpheus-dev.org/v1alpha1
+kind: StreamRun
+metadata:
+  name: meter-etl
+spec:
+  steps:
+    - name: export
+      image: registry.example/meter-export@sha256:…
+      settings: {files: 16, rows: 2000000, seed: 8, badPerMille: 5, day: "2026-10-30"}
+    - name: split
+      image: registry.example/meter-split@sha256:…
+      settings: {bytes: 16777216}
+    - name: clean
+      image: registry.example/meter-clean@sha256:…
+      replicas: 4
+    - name: aggregate
+      image: registry.example/meter-aggregate@sha256:…
+  edges:
+    - {from: export, to: split}
+    - {from: split, to: clean}
+    - {from: clean, to: aggregate}
+  chunks: {maxBytes: 4Gi, maxUnacked: 4}
+  resultsTTL: 24h
+  storage:
+    endpoint: http://s3.example:3900
+    bucket: flows
+    secretRef: alpheus-s3
