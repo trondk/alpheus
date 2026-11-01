@@ -27,6 +27,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"time"
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
@@ -44,12 +45,19 @@ type S3Config struct {
 	// CAFile is a PEM file of CA certificates to trust for https, in
 	// addition to the system's. Empty means the system's only.
 	CAFile string
+	// Timeout is how long a call keeps trying while the storage is down or
+	// answers with a temporary error, before it fails with ErrUnreachable
+	// (GO-136). 0 tries once, apart from the client's own few retries.
+	Timeout time.Duration
+	// OnRetry, if set, is told of each failure that will be retried.
+	OnRetry func(err error, wait time.Duration)
 }
 
 // S3 is a Store in an S3-compatible bucket.
 type S3 struct {
 	client *minio.Client
 	bucket string
+	retry  retrier
 }
 
 // NewS3 connects to the bucket. It makes no request; the first call does.
@@ -77,7 +85,7 @@ func NewS3(cfg S3Config) (*S3, error) {
 	if err != nil {
 		return nil, fmt.Errorf("s3 client: %w", err)
 	}
-	return &S3{client: client, bucket: cfg.Bucket}, nil
+	return &S3{client: client, bucket: cfg.Bucket, retry: retrier{timeout: cfg.Timeout, onRetry: cfg.OnRetry}}, nil
 }
 
 func transport(caFile string) (http.RoundTripper, error) {
@@ -107,7 +115,30 @@ func transport(caFile string) (http.RoundTripper, error) {
 }
 
 func (s *S3) Put(ctx context.Context, key string, r io.Reader, size int64) error {
-	if _, err := s.client.PutObject(ctx, s.bucket, key, r, size, minio.PutObjectOptions{}); err != nil {
+	put := func() error {
+		_, err := s.client.PutObject(ctx, s.bucket, key, r, size, minio.PutObjectOptions{})
+		return err
+	}
+	// A body that can be rewound can be sent again; overwriting a key is
+	// safe to repeat, since every key has one writer (GO-68).
+	retry := retrier{}
+	if seeker, ok := r.(io.Seeker); ok {
+		if start, err := seeker.Seek(0, io.SeekCurrent); err == nil {
+			retry = s.retry
+			first := true
+			send := put
+			put = func() error {
+				if !first {
+					if _, err := seeker.Seek(start, io.SeekStart); err != nil {
+						return err
+					}
+				}
+				first = false
+				return send()
+			}
+		}
+	}
+	if err := retry.do(ctx, put); err != nil {
 		return fmt.Errorf("put %s: %w", key, err)
 	}
 	return nil
@@ -117,15 +148,37 @@ func (s *S3) Get(ctx context.Context, key string) (io.ReadCloser, error) {
 	// One GET whose body is the object. Client.GetObject would make a
 	// second request with If-Match on the first one's ETag, which fails
 	// when a manifest is overwritten in between.
-	body, _, _, err := minio.Core{Client: s.client}.GetObject(ctx, s.bucket, key, minio.GetObjectOptions{})
+	open := func(ctx context.Context, offset int64, etag string) (io.ReadCloser, string, error) {
+		var opts minio.GetObjectOptions
+		if offset > 0 {
+			if err := opts.SetRange(offset, 0); err != nil {
+				return nil, "", err
+			}
+		}
+		if etag != "" {
+			if err := opts.SetMatchETag(etag); err != nil {
+				return nil, "", err
+			}
+		}
+		body, info, _, err := minio.Core{Client: s.client}.GetObject(ctx, s.bucket, key, opts)
+		return body, info.ETag, err
+	}
+	var body io.ReadCloser
+	var etag string
+	err := s.retry.do(ctx, func() (err error) {
+		body, etag, err = open(ctx, 0, "")
+		return err
+	})
 	if err != nil {
 		return nil, fmt.Errorf("get %s: %w", key, mapErr(err))
 	}
-	return body, nil
+	return &resumingReader{ctx: ctx, retry: s.retry, open: open, etag: etag, body: body}, nil
 }
 
 func (s *S3) Delete(ctx context.Context, key string) error {
-	if err := s.client.RemoveObject(ctx, s.bucket, key, minio.RemoveObjectOptions{}); err != nil {
+	if err := s.retry.do(ctx, func() error {
+		return s.client.RemoveObject(ctx, s.bucket, key, minio.RemoveObjectOptions{})
+	}); err != nil {
 		if errors.Is(mapErr(err), ErrNotFound) {
 			return nil
 		}
@@ -140,20 +193,29 @@ func (s *S3) List(ctx context.Context, prefix string) iter.Seq2[string, error] {
 		// must cancel it.
 		ctx, cancel := context.WithCancel(ctx)
 		defer cancel()
-		for obj := range s.client.ListObjects(ctx, s.bucket, minio.ListObjectsOptions{Prefix: prefix, Recursive: true}) {
-			if obj.Err != nil {
-				yield("", fmt.Errorf("list %s: %w", prefix, obj.Err))
-				return
+		// A listing that breaks off goes on after the last key it gave.
+		last := ""
+		page := func() error {
+			opts := minio.ListObjectsOptions{Prefix: prefix, Recursive: true, StartAfter: last}
+			for obj := range s.client.ListObjects(ctx, s.bucket, opts) {
+				if obj.Err != nil {
+					return obj.Err
+				}
+				last = obj.Key
+				if !yield(obj.Key, nil) {
+					return errStop
+				}
 			}
-			if !yield(obj.Key, nil) {
-				return
-			}
+			return ctx.Err()
 		}
-		if err := ctx.Err(); err != nil {
+		if err := s.retry.do(ctx, page); err != nil && err != errStop {
 			yield("", fmt.Errorf("list %s: %w", prefix, err))
 		}
 	}
 }
+
+// errStop ends a listing the caller left early.
+var errStop = errors.New("stop")
 
 func mapErr(err error) error {
 	switch minio.ToErrorResponse(err).Code {

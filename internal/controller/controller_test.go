@@ -43,6 +43,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/util/retry"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -295,6 +296,10 @@ func TestPodsAndSuccess(t *testing.T) {
 		cfg.ScratchLimit != 10<<30 || cfg.UID != string(get(t, r).UID) {
 		t.Errorf("agent config %+v", cfg)
 	}
+	// The API server sets the default storage timeout (GO-136).
+	if got := env(ag, "ALPHEUS_S3_TIMEOUT"); got != "10m0s" {
+		t.Errorf("ALPHEUS_S3_TIMEOUT %q, want 10m0s", got)
+	}
 	if env(comp, "ALPHEUS_REPLICA") != "1" || env(comp, "ALPHEUS_SETTINGS") != `{"field":"country","in":["DK"]}` {
 		t.Errorf("component env %+v", comp.Env)
 	}
@@ -341,6 +346,39 @@ func TestPodsAndSuccess(t *testing.T) {
 	}
 	if _, err := store.ReadAll(t.Context(), mem, "results/sales/"+string(got.UID)+"/summary.json"); err != nil {
 		t.Errorf("summary: %v", err)
+	}
+}
+
+// A pod's failure names the agent's reason when the agent failed, such as
+// storage that stayed unreachable (GO-136).
+func TestFailureReason(t *testing.T) {
+	component := corev1.ContainerStatus{Name: ComponentContainer, State: corev1.ContainerState{
+		Terminated: &corev1.ContainerStateTerminated{ExitCode: 1},
+	}}
+	agentFailed := corev1.ContainerStatus{Name: AgentContainer, LastTerminationState: corev1.ContainerState{
+		Terminated: &corev1.ContainerStateTerminated{ExitCode: 1, Message: "storage unreachable for 10m0s: put x: connection refused\n"},
+	}}
+	agentDone := corev1.ContainerStatus{Name: AgentContainer, State: corev1.ContainerState{
+		Terminated: &corev1.ContainerStateTerminated{ExitCode: 0, Message: "ignored"},
+	}}
+	for _, c := range []struct {
+		name  string
+		init  []corev1.ContainerStatus
+		conts []corev1.ContainerStatus
+		want  string
+	}{
+		{"component only", nil, []corev1.ContainerStatus{component}, "the component exited with code 1"},
+		{"agent finished", []corev1.ContainerStatus{agentDone}, []corev1.ContainerStatus{component}, "the component exited with code 1"},
+		{"both", []corev1.ContainerStatus{agentFailed}, []corev1.ContainerStatus{component},
+			"the component exited with code 1; the agent failed: storage unreachable for 10m0s: put x: connection refused"},
+		{"agent only", []corev1.ContainerStatus{agentFailed}, nil,
+			"the agent failed: storage unreachable for 10m0s: put x: connection refused"},
+		{"nothing", nil, nil, "the pod failed"},
+	} {
+		pod := &corev1.Pod{Status: corev1.PodStatus{InitContainerStatuses: c.init, ContainerStatuses: c.conts}}
+		if got := failure(pod); got != c.want {
+			t.Errorf("%s: %q, want %q", c.name, got, c.want)
+		}
 	}
 }
 
@@ -454,6 +492,40 @@ func TestInvalidRuns(t *testing.T) {
 	}
 	if n := len(pods(t, ns)); n != 0 {
 		t.Errorf("%d pods for invalid runs", n)
+	}
+}
+
+// spec.storage.timeout is checked by the API server and immutable like the
+// rest of storage, compared as a duration, so a client that reads "10m" and
+// writes it back as "10m0s" changes nothing (GO-136).
+func TestStorageTimeout(t *testing.T) {
+	ns := namespace(t)
+	for _, bad := range []string{"-1s", "25h"} {
+		r := testcase03(ns, 1)
+		r.Name = "bad-timeout"
+		r.Spec.Storage.Timeout = &metav1.Duration{}
+		r.Spec.Storage.Timeout.Duration, _ = time.ParseDuration(bad)
+		if err := k8s.Create(t.Context(), r); err == nil || !strings.Contains(err.Error(), "timeout must be between") {
+			t.Errorf("timeout %s: %v, want it refused", bad, err)
+		}
+	}
+
+	r := testcase03(ns, 1)
+	r.Spec.Storage.Timeout = &metav1.Duration{Duration: 90 * time.Second}
+	create(t, r)
+	update := func(change func(*v1alpha1.StreamRun)) error {
+		return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			cur := get(t, r)
+			change(cur)
+			return k8s.Update(t.Context(), cur)
+		})
+	}
+	if err := update(func(cur *v1alpha1.StreamRun) { cur.Spec.Cancel = true }); err != nil {
+		t.Fatalf("writing the run back as read: %v", err)
+	}
+	err := update(func(cur *v1alpha1.StreamRun) { cur.Spec.Storage.Timeout.Duration = time.Minute })
+	if err == nil || !strings.Contains(err.Error(), "storage is immutable") {
+		t.Errorf("changing the timeout: %v, want it refused", err)
 	}
 }
 

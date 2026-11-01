@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"alpheus-dev.org/alpheus/api/v1alpha1"
 	"alpheus-dev.org/alpheus/internal/chunk"
@@ -146,4 +147,13 @@ func maxRestarts(s *v1alpha1.Step) int32 {
 		return 3
 	}
 	return *s.MaxRestarts
+}
+
+// storageTimeout is how long agents wait for the storage (GO-136). The API
+// server sets the default; a run stored before the field existed has none.
+func storageTimeout(r *v1alpha1.StreamRun) time.Duration {
+	if r.Spec.Storage.Timeout == nil {
+		return 10 * time.Minute
+	}
+	return r.Spec.Storage.Timeout.Duration
 }

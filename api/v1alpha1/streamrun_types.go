@@ -55,7 +55,7 @@ type StreamRun struct {
 // +kubebuilder:validation:XValidation:rule="self.steps == oldSelf.steps",message="steps is immutable"
 // +kubebuilder:validation:XValidation:rule="has(self.edges) == has(oldSelf.edges) && (!has(self.edges) || self.edges == oldSelf.edges)",message="edges is immutable"
 // +kubebuilder:validation:XValidation:rule="has(self.chunks) == has(oldSelf.chunks) && (!has(self.chunks) || self.chunks == oldSelf.chunks)",message="chunks is immutable"
-// +kubebuilder:validation:XValidation:rule="self.storage == oldSelf.storage",message="storage is immutable"
+// +kubebuilder:validation:XValidation:rule="self.storage.endpoint == oldSelf.storage.endpoint && self.storage.bucket == oldSelf.storage.bucket && self.storage.secretRef == oldSelf.storage.secretRef && has(self.storage.region) == has(oldSelf.storage.region) && (!has(self.storage.region) || self.storage.region == oldSelf.storage.region) && has(self.storage.resultsBucket) == has(oldSelf.storage.resultsBucket) && (!has(self.storage.resultsBucket) || self.storage.resultsBucket == oldSelf.storage.resultsBucket) && has(self.storage.resultsSecretRef) == has(oldSelf.storage.resultsSecretRef) && (!has(self.storage.resultsSecretRef) || self.storage.resultsSecretRef == oldSelf.storage.resultsSecretRef) && has(self.storage.timeout) == has(oldSelf.storage.timeout) && (!has(self.storage.timeout) || duration(self.storage.timeout) == duration(oldSelf.storage.timeout))",message="storage is immutable"
 // +kubebuilder:validation:XValidation:rule="has(self.signals) == has(oldSelf.signals) && (!has(self.signals) || self.signals == oldSelf.signals)",message="signals is immutable"
 // +kubebuilder:validation:XValidation:rule="has(self.ttlAfterFinished) == has(oldSelf.ttlAfterFinished) && (!has(self.ttlAfterFinished) || duration(self.ttlAfterFinished) == duration(oldSelf.ttlAfterFinished))",message="ttlAfterFinished is immutable"
 // +kubebuilder:validation:XValidation:rule="has(self.resultsTTL) == has(oldSelf.resultsTTL) && (!has(self.resultsTTL) || duration(self.resultsTTL) == duration(oldSelf.resultsTTL))",message="resultsTTL is immutable"
@@ -353,6 +353,18 @@ type Storage struct {
 	// +optional
 	// +kubebuilder:validation:MaxLength=253
 	ResultsSecretRef string `json:"resultsSecretRef,omitempty"`
+
+	// Timeout is how long an agent keeps trying while the storage is down
+	// or answers with a temporary error, such as 503 or a refused
+	// connection. Its component waits meanwhile, as under backpressure,
+	// and no restart is used. When the storage has not answered for this
+	// long, the attempt fails with the reason "storage unreachable"
+	// (GO-136). 0 gives up at once.
+	//
+	// +optional
+	// +default="10m"
+	// +kubebuilder:validation:XValidation:rule="duration(self) >= duration('0s') && duration(self) <= duration('24h')",message="timeout must be between 0s and 24h"
+	Timeout *metav1.Duration `json:"timeout,omitempty"`
 }
 
 // SignalDriver names a signal driver.

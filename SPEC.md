@@ -103,7 +103,7 @@ alpheus/
 ├── examples/meter-etl/    flagskibet: ETL af store filer med elmåler-aflæsninger (findes)
 ├── test/
 │   ├── components/        testkomponenter: bench (findes), filter og sum i CSV (findes)
-│   ├── e2e/               testcase01 til testcase08 (findes), og fejltests
+│   ├── e2e/               testcase01 til testcase08 (findes), og fejltests: failure01 (findes)
 │   └── internal/table/    CSV og decimaltal for testkomponenterne (findes)
 ├── vagrant/               testklyngen: Talos i en VM med Garage og Zot (findes)
 ├── docs/                  dokumentationen, som hjemmesiden henter ved byg (findes)
@@ -412,6 +412,7 @@ Manifestformat (version 1):
 | GO-33 | — | Udgået: Parquet er ude af Alpheus (GO-101). |
 | GO-68 | SKAL | Agenten afviser et manifest med lavere `epoch` end sit eget forsøgsnummer, og et manifest med højere `epoch` end sit eget får agenten til at stoppe straks. Begge dele sætter trinnet til `Failed` med årsagen "fencing". Brud på GO-67 bliver dermed opdaget i stedet for at give stille datatab. |
 | GO-69 | SKAL | Lageret skal have stærk read-after-write-konsistens for nye objekter, overskrivninger og listning. Det gælder AWS S3, Garage og MinIO. Installationsdokumentationen nævner kravet, og agenten advarer ved opstart, hvis lageret ikke er på listen over testede lagre. |
+| GO-136 | SKAL | Er lageret nede eller svarer det med en midlertidig fejl (en afvist eller afbrudt forbindelse, 5xx, 429 eller 408), prøver agenten igen med eksponentiel backoff (0,5 til 15 sekunder) i op til `spec.storage.timeout` (standard `10m`, højst `24h`, uforanderlig) fra første fejl, uden at bruge en genstart. Komponenten mærker det som et langsomt kald, som ved backpressure. En læsning, der afbrydes midt i et objekt, fortsætter, hvor den slap, men kun fra samme version (ETag), så en læser aldrig får begyndelsen af én version og slutningen af en anden. En skrivning sendes igen; det er sikkert, fordi hver nøgle har én skriver (GO-30). Fejl, der siger, at forespørgslen er forkert, fx en afvist nøgle, en manglende bucket eller en fuld kvote, prøves ikke igen. Svarer lageret ikke inden for `timeout`, stopper agenten med årsagen "storage unreachable", som controlleren viser i trinnets status, og forsøget tæller som fejlet efter de almindelige regler (GO-67). Controlleren og CLI'en prøver ikke igen på denne måde: controlleren forsøger igen ved næste reconcile. |
 | GO-34 | BØR | Lokale kopier af chunks i scratch-mappen slettes, så snart de er ackede eller skrevet. |
 
 ### 7.4 Backpressure og genstart
@@ -614,7 +615,7 @@ sdk.Progress(ctx, "4,2 mio. rækker behandlet")
 | Integration | controller mod API-server | envtest |
 | Integration | agent mod S3 | Garage i en container |
 | Driver | `builtin` | hub og klient i samme proces, og agenter gennem hub'en mod Garage |
-| E2E | testcase01 til testcase08, fejltests | Talos i en VM med Vagrant og libvirt (`vagrant/` i repo'ets rod) med Garage og Zot (12.2) |
+| E2E | testcase01 til testcase08, fejltests (failure01: lageret går ned) | Talos i en VM med Vagrant og libvirt (`vagrant/` i repo'ets rod) med Garage og Zot (12.2) |
 
 | ID | Niveau | Krav |
 |---|---|---|

@@ -2,7 +2,7 @@
 title: Writing components
 description: What a component is, how a run moves its files step by step, and how to write one in Go or Python, with templates to start from.
 weight: 10
-lastmod: 2026-10-31
+lastmod: 2026-11-01
 ---
 
 A component is a container image that does one step of a flow. It reads
@@ -217,6 +217,13 @@ The chunk that was being handled is given to the component again, so a
 component must write the same output for the same input. The old attempt
 is shut out: its certificate no longer works at the hub, and its writes
 to the manifests are refused.
+
+If the storage goes down, no pod fails. The agents try again, waiting a
+little longer each time, up to 15 seconds, and the components' calls take
+longer meanwhile, as under backpressure. Only when the storage has not
+answered for `storage.timeout`, 10 minutes by default, does the attempt
+fail, with the reason `storage unreachable` in `alpheus get`. An error
+that waiting will not fix, such as a refused key, fails at once.
 
 ### 10. Cleaning up
 

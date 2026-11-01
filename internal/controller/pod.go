@@ -127,6 +127,7 @@ func (rc *Reconciler) pod(r *v1alpha1.StreamRun, g *graph, s *v1alpha1.Step, rep
 		{Name: "ALPHEUS_S3_ENDPOINT", Value: r.Spec.Storage.Endpoint},
 		{Name: "ALPHEUS_S3_BUCKET", Value: r.Spec.Storage.Bucket},
 		{Name: "ALPHEUS_S3_REGION", Value: r.Spec.Storage.Region},
+		{Name: "ALPHEUS_S3_TIMEOUT", Value: storageTimeout(r).String()},
 		secretEnv("ALPHEUS_S3_ACCESS_KEY", r.Spec.Storage.SecretRef, "AWS_ACCESS_KEY_ID"),
 		secretEnv("ALPHEUS_S3_SECRET_KEY", r.Spec.Storage.SecretRef, "AWS_SECRET_ACCESS_KEY"),
 	}

@@ -1,0 +1,32 @@
+# failure01 (GO-136): the storage goes down in the middle of the stream.
+# The test scales Garage to 0 and back. source is fixed, so a restarted
+# source would make the same chunks (GO-92), and sink takes a second per
+# chunk, so the storage is gone long before the run can finish.
+# The timeout outlasts the longest outage.
+# hack/e2e.sh sets the image, pinned by digest, the test sets the sizes,
+# and the test creates the Secret alpheus-s3 in its namespace.
+apiVersion: alpheus-dev.org/v1alpha1
+kind: StreamRun
+metadata:
+  name: failure01
+spec:
+  steps:
+    - name: source
+      image: ${BENCH_IMAGE}
+      settings: {role: source, chunks: ${BENCH_CHUNKS}, size: ${BENCH_SIZE}, seed: 9, fixed: true}
+    - name: pass
+      image: ${BENCH_IMAGE}
+      settings: {role: pass}
+    - name: sink
+      image: ${BENCH_IMAGE}
+      settings: {role: sink, chunks: ${BENCH_CHUNKS}, size: ${BENCH_SIZE}, seed: 9, delay: 1000}
+  edges:
+    - {from: source, to: pass}
+    - {from: pass, to: sink}
+  chunks: {maxBytes: 1Gi, maxUnacked: ${BENCH_MAX_UNACKED}}
+  storage:
+    endpoint: http://garage.storage.svc.cluster.local:3900
+    bucket: alpheus-data
+    region: garage
+    secretRef: alpheus-s3
+    timeout: 5m

@@ -26,6 +26,8 @@ limitations under the License.
 //	ALPHEUS_S3_SECRET_KEY
 //	ALPHEUS_S3_CA_FILE     optional CA bundle for the endpoint
 //	ALPHEUS_S3_RESULTS_BUCKET  optional bucket for results/ (GO-129)
+//	ALPHEUS_S3_TIMEOUT     how long to keep trying while the storage is
+//	                       unreachable, as a Go duration; empty means 0 (GO-136)
 //	ALPHEUS_SIGNAL_HUB     the builtin signal hub; empty means poll only
 //	ALPHEUS_SIGNAL_CA      the hub's CA, and this agent's certificate and
 //	ALPHEUS_SIGNAL_CERT    key, issued by the controller per run (GO-41)
@@ -47,6 +49,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"google.golang.org/grpc/credentials"
 
@@ -65,8 +68,23 @@ func main() {
 	defer stop()
 	if err := run(ctx, log, *exitOnFinish); err != nil {
 		log.Error("agent failed", "error", err.Error())
+		terminationMessage(err.Error())
 		os.Exit(1)
 	}
+}
+
+// terminationMessage leaves why the agent failed where Kubernetes shows it
+// in the pod's status, and the controller in the step's (GO-136). The file
+// exists only in a container.
+func terminationMessage(msg string) {
+	const path = "/dev/termination-log"
+	if _, err := os.Stat(path); err != nil {
+		return
+	}
+	if len(msg) > 1024 {
+		msg = msg[:1024]
+	}
+	_ = os.WriteFile(path, []byte(msg), 0o644)
 }
 
 func run(ctx context.Context, log *slog.Logger, exitOnFinish bool) error {
@@ -81,6 +99,14 @@ func run(ctx context.Context, log *slog.Logger, exitOnFinish bool) error {
 		AccessKey: os.Getenv("ALPHEUS_S3_ACCESS_KEY"),
 		SecretKey: os.Getenv("ALPHEUS_S3_SECRET_KEY"),
 		CAFile:    os.Getenv("ALPHEUS_S3_CA_FILE"),
+		OnRetry: func(err error, wait time.Duration) {
+			log.Warn("storage unreachable; trying again", "error", err.Error(), "retry_in", wait.String())
+		},
+	}
+	if t := os.Getenv("ALPHEUS_S3_TIMEOUT"); t != "" {
+		if s3.Timeout, err = time.ParseDuration(t); err != nil {
+			return fmt.Errorf("ALPHEUS_S3_TIMEOUT: %w", err)
+		}
 	}
 	var st store.Store
 	if st, err = store.NewS3(s3); err != nil {

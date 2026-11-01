@@ -23,6 +23,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -283,8 +284,13 @@ func (rc *Reconciler) replica(ctx context.Context, r *v1alpha1.StreamRun, g *gra
 				return "", err
 			}
 			// The attempt's pod existed and is gone, so it is safe to start
-			// another (GO-67).
-			return rc.failedAttempt(ctx, r, g, s, rs, "the pod was deleted")
+			// another (GO-67). If the controller deleted it for the agent's
+			// restarts, that is the reason.
+			msg := "the pod was deleted"
+			if strings.HasPrefix(rs.Message, "the agent restarted ") {
+				msg = rs.Message
+			}
+			return rc.failedAttempt(ctx, r, g, s, rs, msg)
 		}
 		if rc.Options.HubAddress != "" {
 			if err := rc.ensureSignalSecret(ctx, r, s.Name, int(rs.Index), rs.Attempt); err != nil {
@@ -316,6 +322,9 @@ func (rc *Reconciler) replica(ctx context.Context, r *v1alpha1.StreamRun, g *gra
 		rs.Phase = v1alpha1.StepRunning
 		if agentRestarts(pod) >= agentRestartLimit {
 			rs.Message = fmt.Sprintf("the agent restarted %d times", agentRestarts(pod))
+			if m := agentMessage(pod); m != "" {
+				rs.Message += ": " + m
+			}
 			if err := rc.Delete(ctx, pod); err != nil && !apierrors.IsNotFound(err) {
 				return "", err
 			}
@@ -349,22 +358,48 @@ func (rc *Reconciler) failedAttempt(ctx context.Context, r *v1alpha1.StreamRun, 
 	return fmt.Sprintf("step %s replica %d failed after %d restarts: %s", s.Name, rs.Index, rs.Restarts, msg), nil
 }
 
-// failure describes why a pod failed, from the component's exit.
+// failure describes why a pod failed, from the component's exit and, when
+// the agent failed too, the agent's reason, such as "storage unreachable"
+// (GO-136).
 func failure(pod *corev1.Pod) string {
+	msg := ""
 	for _, cs := range pod.Status.ContainerStatuses {
 		if cs.Name == ComponentContainer && cs.State.Terminated != nil {
 			t := cs.State.Terminated
-			msg := fmt.Sprintf("the component exited with code %d", t.ExitCode)
+			msg = fmt.Sprintf("the component exited with code %d", t.ExitCode)
 			if t.Message != "" {
 				msg += ": " + t.Message
 			}
-			return msg
 		}
 	}
-	if pod.Status.Message != "" {
-		return pod.Status.Message
+	if msg == "" {
+		msg = pod.Status.Message
 	}
-	return "the pod failed"
+	if m := agentMessage(pod); m != "" {
+		if msg == "" {
+			return "the agent failed: " + m
+		}
+		return msg + "; the agent failed: " + m
+	}
+	if msg == "" {
+		return "the pod failed"
+	}
+	return msg
+}
+
+// agentMessage is the reason the agent last failed with, if it did.
+func agentMessage(pod *corev1.Pod) string {
+	for _, cs := range pod.Status.InitContainerStatuses {
+		if cs.Name != AgentContainer {
+			continue
+		}
+		for _, t := range []*corev1.ContainerStateTerminated{cs.State.Terminated, cs.LastTerminationState.Terminated} {
+			if t != nil && t.ExitCode != 0 && t.Message != "" {
+				return strings.TrimSpace(t.Message)
+			}
+		}
+	}
+	return ""
 }
 
 func agentRestarts(pod *corev1.Pod) int32 {
