@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Builds a release: the CLI for Linux and macOS, the agent and controller
-# images for linux/amd64 and linux/arm64, the Helm chart with their digests
-# in it, an SPDX SBOM for every binary and image, and SHA256SUMS. Signs the
-# images, the chart and SHA256SUMS with the project's cosign key, without a
-# transparency log, and attaches each image's SBOM to it (SPEC 14).
+# Builds a release: the CLI for Linux and macOS with the LICENSE, the agent
+# and controller images for linux/amd64 and linux/arm64, the Helm chart with
+# their digests and the LICENSE in it, an SPDX SBOM for every binary and
+# image, and SHA256SUMS. Signs the images, the chart and SHA256SUMS with the
+# project's cosign key, without a transparency log, and attaches each
+# image's SBOM to it (SPEC 14).
 #
 # The files end up in _out/release/<version>/, ready for
 # https://alpheus-dev.org/releases/<version>/. Images and the chart are
@@ -119,12 +120,13 @@ for a in "${ARCHES[@]}"; do
   build linux "$a" ./cmd/alpheus ./cmd/alpheus-agent ./cmd/alpheus-controller
   build darwin "$a" ./cmd/alpheus
 done
+for d in "$WORK"/bin/*/; do cp LICENSE "$d"; done
 
 for os in linux darwin; do
   for a in "${ARCHES[@]}"; do
     name="alpheus_${VERSION}_${os}_${a}"
     tar --sort=name --mtime="@$SOURCE_DATE_EPOCH" --owner=0 --group=0 --numeric-owner \
-      -C "$WORK/bin/${os}_$a" -cf - alpheus | gzip -n -9 >"$OUT/$name.tar.gz"
+      -C "$WORK/bin/${os}_$a" -cf - alpheus LICENSE | gzip -n -9 >"$OUT/$name.tar.gz"
     sbom "file:$WORK/bin/${os}_$a/alpheus" alpheus "$OUT/sbom/$name.spdx.json"
     echo "  $name.tar.gz"
   done
@@ -173,6 +175,7 @@ done
 # A released chart installs the images by digest (GO-24): the first
 # `digest: ""` in values.yaml is the controller's, the second the agent's.
 cp -r charts/alpheus "$WORK/chart"
+cp LICENSE "$WORK/chart/"
 awk -v c="${DIGEST[controller]}" -v a="${DIGEST[agent]}" '
   /^    digest: ""/ { n++; sub(/""/, "\"" (n == 1 ? c : a) "\"") } { print }
 ' charts/alpheus/values.yaml >"$WORK/chart/values.yaml"
@@ -182,7 +185,7 @@ awk -v c="${DIGEST[controller]}" -v a="${DIGEST[agent]}" '
 # commit's time, the same commit gives the same chart.
 chart="$OUT/alpheus-${VERSION#v}.tgz"
 mkdir "$WORK/unpacked"
-tar -xzf "$WORK/alpheus-${VERSION#v}.tgz" -C "$WORK/unpacked"
+tar -xzmf "$WORK/alpheus-${VERSION#v}.tgz" -C "$WORK/unpacked"
 tar --sort=name --mtime="@$SOURCE_DATE_EPOCH" --owner=0 --group=0 --numeric-owner \
   -C "$WORK/unpacked" -cf - alpheus | gzip -n -9 >"$chart"
 # helm push takes the manifest's creation time from the file's mtime.
