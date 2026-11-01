@@ -26,9 +26,9 @@ import (
 
 const skipSettings = `{"role": "sink", "chunks": 10, "size": 1000, "seed": 3, "skip": 5}`
 
-// TestTestcase03Local runs pass with drop and sink with skip: pass drops
+// TestBenchDropSkip runs pass with drop and sink with skip: pass drops
 // chunks 5 and 10, and sink expects the other eight.
-func TestTestcase03Local(t *testing.T) {
+func TestBenchDropSkip(t *testing.T) {
 	bin := build(t)
 	src, err := step(bin, "", `{"role": "source", "chunks": 10, "size": 1000, "seed": 3}`, t.TempDir())
 	if err != nil {

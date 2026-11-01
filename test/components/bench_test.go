@@ -30,9 +30,9 @@ import (
 
 const benchSettings = `{"role": "%s", "chunks": 5, "size": 100000, "seed": 7}`
 
-// TestTestcase01Local runs testcase01's steps, source, pass and sink, with
+// TestBenchLocal runs testcase01's steps, source, pass and sink, with
 // the bench binary in local mode, one after the other.
-func TestTestcase01Local(t *testing.T) {
+func TestBenchLocal(t *testing.T) {
 	bin := build(t)
 	src, err := step(bin, "", fmt.Sprintf(benchSettings, "source"), t.TempDir())
 	if err != nil {
@@ -70,7 +70,7 @@ func TestTestcase01Local(t *testing.T) {
 }
 
 // The sink fails on a changed byte and on a missing chunk.
-func TestTestcase01SinkChecks(t *testing.T) {
+func TestBenchSinkChecks(t *testing.T) {
 	bin := build(t)
 	src, err := step(bin, "", fmt.Sprintf(benchSettings, "source"), t.TempDir())
 	if err != nil {
