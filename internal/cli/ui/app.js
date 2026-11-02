@@ -50,6 +50,14 @@ function phase(p) {
   return `<span class="phase ${esc(p || "Pending")}">${esc(p || "Pending")}</span>`;
 }
 
+const finished = p => ["Succeeded", "PartiallySucceeded", "Failed", "Cancelled"].includes(p);
+
+// shown is a step's or replica's phase as the page shows it: one that had
+// not finished when its run ended was stopped with the run.
+function shown(p, run) {
+  return finished(run.status?.phase) && (!p || p === "Running" || p === "Pending") ? "Stopped" : (p || "Pending");
+}
+
 function bytes(n) {
   const u = ["B", "KiB", "MiB", "GiB", "TiB"];
   let i = 0;
@@ -135,12 +143,12 @@ function flow(run) {
   });
   steps.forEach(s => {
     const p = pos[s.name], st = status[s.name] || {};
-    svg += `<rect class="box ${esc(st.phase || "Pending")}" x="${p.x}" y="${p.y}" width="${BW}" height="${BH}" rx="6"/>
+    svg += `<rect class="box ${esc(shown(st.phase, run))}" x="${p.x}" y="${p.y}" width="${BW}" height="${BH}" rx="6"/>
       <text class="name" x="${p.x + BW / 2}" y="${p.y + 30}" text-anchor="middle">${esc(s.name)}</text>`;
     (st.replicas || []).forEach((rs, i, all) => {
       const cx = p.x + BW / 2 + (i - (all.length - 1) / 2) * 22;
       svg += `<a href="#/runs/${enc(run.metadata.namespace)}/${enc(run.metadata.name)}/${enc(s.name)}/${rs.index}">
-        <circle class="dot ${esc(rs.phase || "Pending")}" cx="${cx}" cy="${p.y + 58}" r="7"><title>${esc(s.name)} replica ${rs.index}: ${esc(rs.phase || "Pending")}${rs.reason ? ", " + esc(rs.reason) : ""}</title></circle></a>`;
+        <circle class="dot ${esc(shown(rs.phase, run))}" cx="${cx}" cy="${p.y + 58}" r="7"><title>${esc(s.name)} replica ${rs.index}: ${esc(shown(rs.phase, run))}${rs.reason ? ", " + esc(rs.reason) : ""}</title></circle></a>`;
     });
   });
   svg += `<line class="ground" x1="0" y1="${H - 12}" x2="${W}" y2="${H - 12}"/></svg>`;
@@ -165,7 +173,7 @@ async function runView(ns, name) {
     <table><thead><tr><th>Step</th><th>Replica</th><th>Phase</th><th>Attempt</th><th>Reason</th><th>Message</th></tr></thead><tbody>
     ${rows.map(r => `<tr class="click" data-href="#/runs/${enc(ns)}/${enc(name)}/${enc(r.step)}/${r.index}">
       <td><a href="#/runs/${enc(ns)}/${enc(name)}/${enc(r.step)}/${r.index}">${esc(r.step)}</a></td><td>${r.index}</td>
-      <td>${phase(r.phase)}</td><td>${r.attempt || 1}${r.restarts ? ` (${r.restarts} restarts)` : ""}</td>
+      <td>${phase(shown(r.phase, run))}</td><td>${r.attempt || 1}${r.restarts ? ` (${r.restarts} restarts)` : ""}</td>
       <td>${esc(r.reason || "")}</td><td>${esc(r.message || "")}${r.failedChunks ? ` (${r.failedChunks} chunks not processed)` : ""}</td></tr>`).join("")}
     </tbody></table>
     ${(st.results || []).length ? `<h2>Results</h2><table><thead><tr><th>Result</th><th>Chunks</th><th>Bytes</th><th>Where</th></tr></thead><tbody>
@@ -186,10 +194,12 @@ async function replicaView(ns, name, step, replica, fresh) {
   ]);
   const ss = (run.status.steps || []).find(s => s.name === step) || {};
   const rs = (ss.replicas || []).find(r => String(r.index) === String(replica)) || {};
-  if (state.attempt === null) state.attempt = rs.pod ? 0 : (attempts.find(a => a.logs) || {}).attempt || 0;
+  // A finished run's pods are gone, so only kept logs are left.
+  const live = Boolean(rs.pod) && !finished(run.status.phase);
+  if (state.attempt === null) state.attempt = live ? 0 : (attempts.find(a => a.logs) || {}).attempt || 0;
   const q = `step=${enc(step)}&replica=${replica}`;
   const tab = (id, label) => `<button type="button" role="tab" data-tab="${id}" aria-selected="${state.tab === id}">${label}</button>`;
-  const options = (rs.pod ? [`<option value="0"${state.attempt === 0 ? " selected" : ""}>attempt ${rs.attempt} (live)</option>`] : [])
+  const options = (live ? [`<option value="0"${state.attempt === 0 ? " selected" : ""}>attempt ${rs.attempt} (live)</option>`] : [])
     .concat(attempts.filter(a => a.logs).map(a => `<option value="${a.attempt}"${state.attempt === a.attempt ? " selected" : ""}>attempt ${a.attempt} (kept)</option>`));
   let body = "";
   try {
@@ -233,9 +243,9 @@ async function replicaView(ns, name, step, replica, fresh) {
   }
   main.innerHTML = `<p><a href="#/runs/${enc(ns)}/${enc(name)}">← Run ${esc(name)}</a></p>
     <h1>${esc(step)}, replica ${esc(replica)}</h1>
-    <div class="card"><div class="status">${phase(rs.phase)}${rs.reason ? ": " + esc(rs.reason) : ""}</div>
+    <div class="card"><div class="status">${phase(shown(rs.phase, run))}${rs.reason ? ": " + esc(rs.reason) : ""}</div>
       ${rs.message ? `<p class="message">${esc(rs.message)}</p>` : ""}
-      <p class="muted">Attempt ${rs.attempt || 1} · ${rs.restarts || 0} restarts${rs.pod ? " · pod " + esc(rs.pod) : ""}</p></div>
+      <p class="muted">Attempt ${rs.attempt || 1} · ${rs.restarts || 0} restarts${live ? " · pod " + esc(rs.pod) : ""}</p></div>
     <div class="tabs" role="tablist">${tab("counts", "Counts")}${tab("errors", "Error log")}${tab("logs", "Logs")}${tab("failures", "Failures")}
       ${state.tab === "logs" && options.length ? `<select id="attempt" aria-label="Attempt">${options.join("")}</select>
       <select id="container" aria-label="Container"><option${state.container === "component" ? " selected" : ""}>component</option><option${state.container === "agent" ? " selected" : ""}>agent</option></select>` : ""}

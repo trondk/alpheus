@@ -40,6 +40,7 @@ tr.click:hover, tr.click:focus-within { background: var(--code); }
 .PartiallySucceeded { color: var(--run); } .PartiallySucceeded::before { content: "◐"; }
 .Running { color: var(--run); } .Running::before { content: "●"; }
 .Pending { color: var(--muted); } .Pending::before { content: "○"; }
+.Stopped { color: var(--muted); } .Stopped::before { content: "■"; }
 .chips { display: flex; gap: .4rem; margin: .4rem 0 .8rem; }
 .chips button, button { font: inherit; padding: .25rem .7rem; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); color: var(--text); cursor: pointer; }
 .chips button[aria-pressed="true"], .tabs button[aria-selected="true"] { border-color: var(--accent); color: var(--accent); font-weight: 600; }
