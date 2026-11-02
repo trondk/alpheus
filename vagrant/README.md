@@ -41,6 +41,17 @@ MCPipe uses (manifests in `services/`):
 | garage-ui v0.13.0 | `https://<VM IP>:30901` | |
 | Zot v2.1.22 | `https://registry.alpheus.test:30500` | `http://zot.registry.svc.cluster.local:5000` |
 
+`make deploy` (or `make e2e`) installs Alpheus itself with the Helm chart,
+and with it `alpheus ui` running in the cluster, which stays up between
+test runs:
+
+| Service | From this machine |
+|---|---|
+| alpheus ui | `http://<VM IP>:30717/`, the runs of every namespace, with their logs, failures and replay |
+
+The UI has no login, like the rest of this test cluster; it is on the VM's
+private network only.
+
 HTTPS goes through HAProxy with a certificate from a test CA that
 `talos.sh` makes in `_out/ca.crt`. Talos trusts the CA and resolves
 `registry.alpheus.test` to the VM itself, so flow files name images

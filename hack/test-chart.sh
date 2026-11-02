@@ -65,6 +65,32 @@ check "PodMonitor for the agents" "kind: PodMonitor" "$out"
 check "dashboard" '"uid": "alpheus"' "$out"
 reject "annotations off" "prometheus.io/scrape" "$out"
 
+D3=sha256:3333333333333333333333333333333333333333333333333333333333333333
+out=$(render "${PINNED[@]}")
+reject "no UI by default" "name: alpheus-ui" "$out"
+out=$(render "${PINNED[@]}" --set ui.enabled=true)
+check "UI digest required" "ui.image.digest is required" "$out"
+out=$(render "${PINNED[@]}" --set ui.enabled=true --set ui.image.digest=$D3 --set 'ui.namespaces={flows,etl}')
+check "UI by digest" "image: registry.alpheus-dev.org/alpheus-dev/ui@$D3" "$out"
+check "UI in the cluster" "- --in-cluster" "$out"
+check "UI replays as pods" "- --replay=cluster" "$out"
+check "UI gets the agent's image" "- --agent-image=registry.alpheus-dev.org/alpheus-dev/agent@$D1" "$out"
+check "UI reads storage in flows" "namespace: flows" "$out"
+check "UI reads storage in etl" "namespace: etl" "$out"
+check "UI's RoleBindings" "kind: RoleBinding" "$out"
+out=$(render "${PINNED[@]}" --set ui.enabled=true --set ui.image.digest=$D3 --set 'ui.namespaces={*}' --set ui.replay=false \
+  --set ui.ingress.enabled=true --set ui.ingress.host=alpheus.example)
+reject "UI in every namespace, without RoleBindings" "kind: RoleBinding" "$out"
+check "UI's ClusterRoleBinding for every namespace" "kind: ClusterRole, name: alpheus-ui-namespaced}" "$out"
+check "UI replay off" "- --replay=off" "$out"
+reject "UI may not create pods" "create, delete" "$out"
+check "UI Ingress" "host: alpheus.example" "$out"
+check "UI answers to the Ingress's host" "- --host=alpheus.example" "$out"
+out=$(render "${PINNED[@]}" --set ui.enabled=true --set ui.image.digest=$D3 --set ui.service.type=NodePort \
+  --set ui.service.nodePort=30717 --set 'ui.hosts={192.168.121.7}')
+check "UI on a NodePort" "nodePort: 30717" "$out"
+check "UI answers to the node's address" "- --host=192.168.121.7" "$out"
+
 out=$(render "${PINNED[@]}" --set signalHub.enabled=false --set crds.install=false)
 check "hub disabled" "-hub-listen=" "$out"
 reject "no hub Service" "name: alpheus-signal-hub" "$out"

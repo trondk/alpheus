@@ -25,6 +25,7 @@ TAG="${TAG:-dev}"
 IMAGES=(
   "alpheus-agent alpheus-dev/agent AGENT_IMAGE"
   "alpheus-controller alpheus-dev/controller CONTROLLER_IMAGE"
+  "alpheus alpheus-dev/ui UI_IMAGE"
   "bench alpheus-test/bench BENCH_IMAGE"
   "component-go alpheus-test/grep-go GREP_GO_IMAGE"
   "export alpheus-test/meter-export METER_EXPORT_IMAGE"
@@ -37,7 +38,7 @@ mkdir -p "$OUT/bin" "$OUT/certs"
 cp "$CA_FILE" "$OUT/certs/ca.crt"
 cd "$ROOT"
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o "$OUT/bin/" \
-  ./cmd/alpheus-agent ./cmd/alpheus-controller \
+  ./cmd/alpheus-agent ./cmd/alpheus-controller ./cmd/alpheus \
   ./test/components/bench ./templates/component-go \
   ./examples/meter-etl/export ./examples/meter-etl/split ./examples/meter-etl/clean ./examples/meter-etl/aggregate
 

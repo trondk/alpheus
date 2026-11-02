@@ -38,6 +38,9 @@ limitations under the License.
 // After the component has finished, the agent keeps running until it gets
 // SIGTERM, as a native sidecar must; -exit-on-finish makes it exit at once,
 // for runs outside Kubernetes.
+//
+// In a replay pod, -fetch-failure <prefix> fetches a kept failed attempt
+// into -dest, each chunk checked, and exits (GO-141).
 package main
 
 import (
@@ -52,6 +55,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -61,6 +65,7 @@ import (
 	"google.golang.org/grpc/credentials"
 
 	"alpheus-dev.org/alpheus/internal/agent"
+	"alpheus-dev.org/alpheus/internal/replay"
 	alsignal "alpheus-dev.org/alpheus/internal/signal"
 	"alpheus-dev.org/alpheus/internal/signal/builtin"
 	"alpheus-dev.org/alpheus/internal/store"
@@ -68,11 +73,21 @@ import (
 
 func main() {
 	exitOnFinish := flag.Bool("exit-on-finish", false, "exit when the component has finished, instead of waiting for SIGTERM")
+	fetchFailure := flag.String("fetch-failure", "", "fetch the failed attempt kept at this prefix into -dest and exit, for a replay pod (GO-141)")
+	dest := flag.String("dest", "/replay", "with -fetch-failure: the folder to fetch into")
 	flag.Parse()
 
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil)).With("component", "alpheus-agent")
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
+	if *fetchFailure != "" {
+		if err := fetch(ctx, log, *fetchFailure, *dest); err != nil {
+			log.Error("fetch failed", "error", err.Error())
+			terminationMessage(err.Error())
+			os.Exit(1)
+		}
+		return
+	}
 	if err := run(ctx, log, *exitOnFinish); err != nil {
 		if ctx.Err() != nil && errors.Is(err, context.Canceled) {
 			// Stopped, as Kubernetes stops a sidecar once the component
@@ -117,34 +132,9 @@ func run(ctx context.Context, log *slog.Logger, exitOnFinish bool) error {
 		defer stopMetrics()
 	}
 
-	s3 := store.S3Config{
-		Endpoint:  os.Getenv("ALPHEUS_S3_ENDPOINT"),
-		Bucket:    os.Getenv("ALPHEUS_S3_BUCKET"),
-		Region:    os.Getenv("ALPHEUS_S3_REGION"),
-		AccessKey: os.Getenv("ALPHEUS_S3_ACCESS_KEY"),
-		SecretKey: os.Getenv("ALPHEUS_S3_SECRET_KEY"),
-		CAFile:    os.Getenv("ALPHEUS_S3_CA_FILE"),
-		OnRetry: func(err error, wait time.Duration) {
-			log.Warn("storage unreachable; trying again", "error", err.Error(), "retry_in", wait.String())
-			metrics.Retried()
-		},
-	}
-	if t := os.Getenv("ALPHEUS_S3_TIMEOUT"); t != "" {
-		if s3.Timeout, err = time.ParseDuration(t); err != nil {
-			return fmt.Errorf("ALPHEUS_S3_TIMEOUT: %w", err)
-		}
-	}
-	var st store.Store
-	if st, err = store.NewS3(s3); err != nil {
+	st, err := storeFromEnv(log, metrics.Retried)
+	if err != nil {
 		return err
-	}
-	if b := os.Getenv("ALPHEUS_S3_RESULTS_BUCKET"); b != "" {
-		s3.Bucket = b
-		results, err := store.NewS3(s3)
-		if err != nil {
-			return err
-		}
-		st = store.WithResults(st, results)
 	}
 
 	var sig alsignal.Driver
@@ -174,6 +164,62 @@ func run(ctx context.Context, log *slog.Logger, exitOnFinish bool) error {
 	if !exitOnFinish {
 		<-ctx.Done()
 	}
+	return nil
+}
+
+// storeFromEnv opens the storage the ALPHEUS_S3_* variables name.
+func storeFromEnv(log *slog.Logger, retried func()) (store.Store, error) {
+	s3 := store.S3Config{
+		Endpoint:  os.Getenv("ALPHEUS_S3_ENDPOINT"),
+		Bucket:    os.Getenv("ALPHEUS_S3_BUCKET"),
+		Region:    os.Getenv("ALPHEUS_S3_REGION"),
+		AccessKey: os.Getenv("ALPHEUS_S3_ACCESS_KEY"),
+		SecretKey: os.Getenv("ALPHEUS_S3_SECRET_KEY"),
+		CAFile:    os.Getenv("ALPHEUS_S3_CA_FILE"),
+		OnRetry: func(err error, wait time.Duration) {
+			log.Warn("storage unreachable; trying again", "error", err.Error(), "retry_in", wait.String())
+			retried()
+		},
+	}
+	if t := os.Getenv("ALPHEUS_S3_TIMEOUT"); t != "" {
+		var err error
+		if s3.Timeout, err = time.ParseDuration(t); err != nil {
+			return nil, fmt.Errorf("ALPHEUS_S3_TIMEOUT: %w", err)
+		}
+	}
+	st, err := store.NewS3(s3)
+	if err != nil {
+		return nil, err
+	}
+	if b := os.Getenv("ALPHEUS_S3_RESULTS_BUCKET"); b != "" {
+		s3.Bucket = b
+		results, err := store.NewS3(s3)
+		if err != nil {
+			return nil, err
+		}
+		return store.WithResults(st, results), nil
+	}
+	return st, nil
+}
+
+// fetch fetches a kept failure into dest, each chunk checked against its
+// SHA-256, for a replay pod's component (GO-141).
+func fetch(ctx context.Context, log *slog.Logger, prefix, dest string) error {
+	st, err := storeFromEnv(log, func() {})
+	if err != nil {
+		return err
+	}
+	f, data, err := replay.Read(ctx, st, prefix)
+	if err != nil {
+		return err
+	}
+	if err := replay.Fetch(ctx, st, prefix, f, dest); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(dest, "failure.json"), data, 0o644); err != nil {
+		return err
+	}
+	log.Info("fetched the failed attempt", "step", f.Step, "replica", f.Replica, "attempt", f.Attempt, "inputs", len(f.Inputs), "reason", f.Reason)
 	return nil
 }
 

@@ -11,3 +11,30 @@ The controller's pods meet Pod Security level restricted; to enforce it:
 Watch a run with:
 
   kubectl get streamruns -A
+{{- if .Values.ui.enabled }}
+
+The UI runs in the cluster. Reach it with:
+
+  kubectl port-forward -n {{ .Release.Namespace }} svc/alpheus-ui 7171
+  open http://localhost:7171/
+{{- if eq .Values.ui.service.type "NodePort" }}
+
+or on port {{ .Values.ui.service.nodePort | default "(see kubectl get svc alpheus-ui)" }} of a node, by one of the host
+names in ui.hosts. Anyone who reaches that port sees the page.
+{{- end }}
+{{- if .Values.ui.ingress.enabled }}
+
+or at http://{{ .Values.ui.ingress.host }}/ through the Ingress. It has no
+login of its own: put an authenticating proxy in front of it.
+{{- end }}
+{{- if not .Values.ui.namespaces }}
+
+ui.namespaces is empty, so the UI shows runs and events but not their
+logs or failures. List the namespaces whose runs it may read.
+{{- end }}
+{{- else }}
+
+Or open a page with the runs, their logs and failures, on your machine:
+
+  alpheus ui
+{{- end }}

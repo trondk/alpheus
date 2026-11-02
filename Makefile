@@ -1,4 +1,4 @@
-.PHONY: all generate proto check-generated check-deps test test-crd test-chart test-templates cli test-s3 test-agent-s3 vet images e2e bench bench-etl release verify-release vulndb vuln
+.PHONY: all generate proto check-generated check-deps test test-crd test-chart test-templates cli test-s3 test-agent-s3 vet images e2e bench bench-etl release verify-release vulndb vuln deploy
 
 all: generate vet check-deps test
 
@@ -112,6 +112,11 @@ vuln:
 # Checks a release with its public key: make verify-release VERSION=vX.Y.Z
 verify-release:
 	hack/verify-release.sh _out/release/$(VERSION)
+
+# Builds the images and installs the chart on the test cluster, with the
+# UI on port 30717 of the VM, without running the tests.
+deploy:
+	DEPLOY_ONLY=1 hack/e2e.sh
 
 # The flagship benchmark: large-file ETL with examples/meter-etl, with
 # export, split and clean at 1, 2, 4 and 8 replicas each, and a table of

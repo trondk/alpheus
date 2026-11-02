@@ -32,6 +32,7 @@ import (
 	"net/http"
 	"os/exec"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -47,6 +48,7 @@ import (
 	"alpheus-dev.org/alpheus/api/v1alpha1"
 	"alpheus-dev.org/alpheus/internal/chunk"
 	"alpheus-dev.org/alpheus/internal/controller"
+	"alpheus-dev.org/alpheus/internal/replay"
 	"alpheus-dev.org/alpheus/internal/store"
 )
 
@@ -60,8 +62,13 @@ const maxErrorEntries = 1000
 func uiCmd(ctx context.Context, e *Env, args []string) error {
 	var o opts
 	fs := newFlags(e, "ui", "", &o)
-	listen := fs.String("listen", "127.0.0.1:7171", "where the page is served; keep it on this machine")
+	listen := fs.String("listen", "127.0.0.1:7171", "where the page is served; keep it on this machine unless --in-cluster")
 	noOpen := fs.Bool("no-open", false, "do not open the page in the browser")
+	inCluster := fs.Bool("in-cluster", false, "run as a Deployment in the cluster: runs of every namespace, replays as pods (GO-143)")
+	var hosts stringList
+	fs.Var(&hosts, "host", "a host name the page may be reached by besides localhost, such as an Ingress's; can be repeated")
+	agentImage := fs.String("agent-image", "", "with --in-cluster: the agent's image, for replay pods")
+	replayMode := fs.String("replay", "", "how the replay button runs: podman, docker, cluster or off; default podman, or cluster with --in-cluster")
 	caFile := fs.String("ca-file", "", "CA bundle for the storage endpoint")
 	endpoint := fs.String("endpoint", "", "the S3 endpoint as seen from here, when spec.storage.endpoint is only reachable in the cluster")
 	pos, err := parse(fs, args, &o)
@@ -71,9 +78,24 @@ func uiCmd(ctx context.Context, e *Env, args []string) error {
 	if len(pos) != 0 {
 		return usagef("ui takes no arguments")
 	}
+	if *replayMode == "" {
+		*replayMode = "podman"
+		if *inCluster {
+			*replayMode = "cluster"
+		}
+	}
+	if !slices.Contains([]string{"podman", "docker", "cluster", "off"}, *replayMode) {
+		return usagef("--replay %s: want podman, docker, cluster or off", *replayMode)
+	}
 	c, ns, err := e.connect(&o)
 	if err != nil {
 		return err
+	}
+	if *inCluster {
+		*noOpen = true
+		if o.kube.Namespace == "" {
+			ns = allNamespaces // the Deployment's own namespace has no runs
+		}
 	}
 	ln, err := net.Listen("tcp", *listen)
 	if err != nil {
@@ -83,9 +105,13 @@ func uiCmd(ctx context.Context, e *Env, args []string) error {
 	if _, err := rand.Read(token); err != nil {
 		return err
 	}
-	u := &ui{e: e, c: c, namespace: ns, caFile: *caFile, endpoint: *endpoint, token: hex.EncodeToString(token), addr: ln.Addr().String()}
+	u := &ui{e: e, c: c, namespace: ns, caFile: *caFile, endpoint: *endpoint, token: hex.EncodeToString(token), addr: ln.Addr().String(),
+		hosts: hosts, replayMode: *replayMode, agentImage: *agentImage}
 	srv := &http.Server{Handler: u.handler(), ReadHeaderTimeout: 10 * time.Second}
 	url := "http://" + u.addr + "/"
+	if *inCluster {
+		url = "port " + u.addr
+	}
 	fmt.Fprintf(e.Stdout, "alpheus ui on %s (namespace %s); Ctrl-C stops it\n", url, ns)
 	if !*noOpen {
 		openBrowser(url)
@@ -118,8 +144,14 @@ type ui struct {
 	namespace string
 	caFile    string
 	endpoint  string
-	token     string // guards replay, which runs a program here
+	token     string // guards replay, which runs a program or starts a pod
 	addr      string
+	// hosts are the host names besides localhost the page answers to.
+	hosts []string
+	// replayMode is how the replay button runs: podman, docker, cluster
+	// or off.
+	replayMode string
+	agentImage string // the agent's image, for replay pods
 
 	mu     sync.Mutex
 	stores map[string]store.Store // by run UID
@@ -150,7 +182,7 @@ func (u *ui) local(next http.Handler) http.Handler {
 		if err != nil {
 			host = r.Host
 		}
-		if ip := net.ParseIP(host); host != "localhost" && (ip == nil || !ip.IsLoopback()) {
+		if ip := net.ParseIP(host); host != "localhost" && (ip == nil || !ip.IsLoopback()) && !slices.Contains(u.hosts, host) {
 			http.Error(w, "alpheus ui answers only on localhost", http.StatusForbidden)
 			return
 		}
@@ -169,6 +201,7 @@ func (u *ui) index(w http.ResponseWriter, r *http.Request) {
 	}
 	page = bytes.Replace(page, []byte("{{namespace}}"), []byte(u.namespace), 1)
 	page = bytes.Replace(page, []byte("{{token}}"), []byte(u.token), 1)
+	page = bytes.Replace(page, []byte("{{replay}}"), []byte(u.replayMode), 1)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write(page)
 }
@@ -186,6 +219,22 @@ func httpError(w http.ResponseWriter, err error) {
 	http.Error(w, err.Error(), code)
 }
 
+// allNamespaces, as the namespace, lists the runs of every namespace.
+const allNamespaces = "*"
+
+// listNamespace is the namespace a list or a watch is about; "" is every
+// namespace.
+func (u *ui) listNamespace(r *http.Request) string {
+	ns := r.URL.Query().Get("namespace")
+	if ns == "" {
+		ns = u.namespace
+	}
+	if ns == allNamespaces {
+		return ""
+	}
+	return ns
+}
+
 // runSummary is one run in the list.
 type runSummary struct {
 	Namespace     string            `json:"namespace"`
@@ -200,12 +249,8 @@ type runSummary struct {
 }
 
 func (u *ui) runs(w http.ResponseWriter, r *http.Request) {
-	ns := r.URL.Query().Get("namespace")
-	if ns == "" {
-		ns = u.namespace
-	}
 	var list v1alpha1.StreamRunList
-	if err := u.c.Client.List(r.Context(), &list, client.InNamespace(ns)); err != nil {
+	if err := u.c.Client.List(r.Context(), &list, client.InNamespace(u.listNamespace(r))); err != nil {
 		httpError(w, err)
 		return
 	}
@@ -222,16 +267,12 @@ func (u *ui) runs(w http.ResponseWriter, r *http.Request) {
 // watch sends a server-sent event whenever a run in the namespace changes,
 // so the page fetches it again.
 func (u *ui) watch(w http.ResponseWriter, r *http.Request) {
-	ns := r.URL.Query().Get("namespace")
-	if ns == "" {
-		ns = u.namespace
-	}
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming is not supported", http.StatusInternalServerError)
 		return
 	}
-	wi, err := u.c.Client.Watch(r.Context(), &v1alpha1.StreamRunList{}, client.InNamespace(ns))
+	wi, err := u.c.Client.Watch(r.Context(), &v1alpha1.StreamRunList{}, client.InNamespace(u.listNamespace(r)))
 	if err != nil {
 		httpError(w, err)
 		return
@@ -494,7 +535,7 @@ func (u *ui) failure(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	attempt, _ := strconv.Atoi(r.URL.Query().Get("attempt"))
-	prefix, err := findFailure(r.Context(), st, run, step, replica, attempt)
+	prefix, err := replay.Find(r.Context(), st, run.Name, string(run.UID), step, replica, attempt)
 	if err != nil {
 		httpError(w, err)
 		return
@@ -515,6 +556,10 @@ func (u *ui) replay(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "replay needs the page's token", http.StatusForbidden)
 		return
 	}
+	if u.replayMode == "off" {
+		http.Error(w, "replay is off here", http.StatusForbidden)
+		return
+	}
 	step, replica, attempt := r.URL.Query().Get("step"), r.URL.Query().Get("replica"), r.URL.Query().Get("attempt")
 	if _, err := strconv.Atoi(replica); err != nil || step == "" {
 		http.Error(w, "step and replica are required", http.StatusBadRequest)
@@ -523,6 +568,10 @@ func (u *ui) replay(w http.ResponseWriter, r *http.Request) {
 	args := []string{"replay", r.PathValue("name"), step, "--replica", replica, "-n", r.PathValue("ns")}
 	if attempt != "" {
 		args = append(args, "--attempt", attempt)
+	}
+	args = append(args, "--with", u.replayMode)
+	if u.agentImage != "" {
+		args = append(args, "--agent-image", u.agentImage)
 	}
 	if u.endpoint != "" {
 		args = append(args, "--endpoint", u.endpoint)

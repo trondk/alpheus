@@ -6,6 +6,7 @@ const main = document.getElementById("main");
 const nsInput = document.getElementById("ns");
 const live = document.getElementById("live");
 const token = document.querySelector('meta[name="alpheus-token"]').content;
+const replayMode = document.querySelector('meta[name="alpheus-replay"]').content;
 let namespace = document.querySelector('meta[name="alpheus-namespace"]').content;
 let filter = "all";
 let source = null;
@@ -87,12 +88,13 @@ async function runsView() {
     (filter === "running" && (r.phase === "Running" || r.phase === "Pending" || !r.phase)) ||
     (filter === "failed" && (r.phase === "Failed" || r.phase === "PartiallySucceeded")));
   const chip = f => `<button type="button" data-filter="${f}" aria-pressed="${filter === f}">${f}</button>`;
-  main.innerHTML = `<h1>Runs in ${esc(namespace)}</h1>
+  const all = namespace === "*";
+  main.innerHTML = `<h1>Runs in ${all ? "every namespace" : esc(namespace)}</h1>
     <div class="chips" role="group" aria-label="Filter">${chip("all")}${chip("running")}${chip("failed")}</div>
     ${shown.length === 0 ? `<p class="muted">No runs${filter === "all" ? "" : " here with this filter"}.</p>` : `
-    <table><thead><tr><th>Run</th><th>Phase</th><th>Steps</th><th>Started</th><th>Duration</th><th>Reason</th></tr></thead><tbody>
+    <table><thead><tr>${all ? "<th>Namespace</th>" : ""}<th>Run</th><th>Phase</th><th>Steps</th><th>Started</th><th>Duration</th><th>Reason</th></tr></thead><tbody>
     ${shown.map(r => `<tr class="click" data-href="#/runs/${enc(r.namespace)}/${enc(r.name)}">
-      <td><a href="#/runs/${enc(r.namespace)}/${enc(r.name)}">${esc(r.name)}</a></td><td>${phase(r.phase)}</td>
+      ${all ? `<td>${esc(r.namespace)}</td>` : ""}<td><a href="#/runs/${enc(r.namespace)}/${enc(r.name)}">${esc(r.name)}</a></td><td>${phase(r.phase)}</td>
       <td>${esc(r.stepsFinished || "–")}</td><td>${ago(r.startedAt || r.created)}</td>
       <td>${duration(r.startedAt, r.finishedAt)}</td><td>${esc(r.reason || "")}</td></tr>`).join("")}
     </tbody></table>`}`;
@@ -233,8 +235,9 @@ async function replicaView(ns, name, step, replica, fresh) {
           <div class="card"><div class="status">${esc(f.reason)}</div><p class="message">${esc(f.message)}</p>
           <p class="muted">Image <code>${esc(f.image)}</code></p>
           <p>${f.inputs.length} input chunks kept: ${f.inputs.map(i => `<code>${esc(i.file)}</code>`).join(" ") || "none (a source)"}</p>
-          <p><button type="button" class="primary" id="replay" data-attempt="${a}">Replay attempt ${a} ▸</button>
-          <span class="muted">Runs <code>alpheus replay ${esc(name)} ${esc(step)} --replica ${replica} --attempt ${a}</code>: the same image on these chunks, at debug level, with podman on this machine.</span></p></div>
+          ${replayMode === "off" ? `<p class="muted">Replay is off here. Run <code>alpheus replay ${esc(name)} ${esc(step)} --replica ${replica} --attempt ${a}</code> yourself.</p>` :
+          `<p><button type="button" class="primary" id="replay" data-attempt="${a}">Replay attempt ${a} ▸</button>
+          <span class="muted">Runs <code>alpheus replay ${esc(name)} ${esc(step)} --replica ${replica} --attempt ${a} --with ${esc(replayMode)}</code>: the same image on these chunks, at debug level, ${replayMode === "cluster" ? "as a pod in the run's namespace" : "with " + esc(replayMode) + " on the machine that runs alpheus ui"}.</span></p>`}</div>
           <pre id="replay-out" hidden></pre>`;
       }
     }
@@ -303,6 +306,62 @@ async function render(fresh) {
     location.hash = tr.dataset.href;
   });
 }
+
+// The header's button switches between the light and the dark look.
+const themeButton = document.getElementById("theme");
+function showTheme() {
+  const dark = document.documentElement.dataset.theme === "dark";
+  themeButton.setAttribute("aria-pressed", String(dark));
+  themeButton.textContent = dark ? "light" : "dark";
+  themeButton.title = dark ? "Switch to the light look" : "Switch to the dark look";
+}
+// rain draws the Matrix's falling code behind the dark look, about 20
+// frames a second, and not at all when the viewer asks for less motion or
+// the page is hidden.
+const rain = (() => {
+  const canvas = document.getElementById("rain");
+  const ctx = canvas.getContext("2d");
+  const glyphs = "アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワン0123456789ABCDEF";
+  const size = 16;
+  let drops = [], timer = null;
+  const still = window.matchMedia("(prefers-reduced-motion: reduce)");
+  function resize() {
+    canvas.width = innerWidth;
+    canvas.height = innerHeight;
+    drops = Array.from({ length: Math.ceil(innerWidth / size) }, () => Math.random() * -innerHeight / size);
+  }
+  function frame() {
+    ctx.fillStyle = "rgba(2, 8, 5, 0.12)";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.font = size + "px monospace";
+    drops.forEach((y, i) => {
+      const ch = glyphs[Math.floor(Math.random() * glyphs.length)];
+      ctx.fillStyle = Math.random() < 0.06 ? "#d8ffe6" : "#36f07a";
+      ctx.fillText(ch, i * size, y * size);
+      drops[i] = y * size > canvas.height && Math.random() > 0.975 ? 0 : y + 1;
+    });
+  }
+  function update() {
+    const on = document.documentElement.dataset.theme === "dark" && !still.matches && !document.hidden;
+    if (on && !timer) { resize(); timer = setInterval(frame, 50); }
+    if (!on && timer) { clearInterval(timer); timer = null; ctx.clearRect(0, 0, canvas.width, canvas.height); }
+  }
+  addEventListener("resize", () => timer && resize());
+  document.addEventListener("visibilitychange", update);
+  still.addEventListener("change", update);
+  return update;
+})();
+
+themeButton.onclick = () => {
+  const dark = document.documentElement.dataset.theme !== "dark";
+  if (dark) document.documentElement.dataset.theme = "dark";
+  else delete document.documentElement.dataset.theme;
+  try { localStorage.setItem("alpheus-theme", dark ? "dark" : "light"); } catch (e) { /* no storage: this visit only */ }
+  showTheme();
+  rain();
+};
+showTheme();
+rain();
 
 nsInput.value = namespace;
 document.getElementById("ns-form").onsubmit = ev => {

@@ -112,14 +112,16 @@ alpheus replay <run> <step>
 
 | Flag | What it does |
 |---|---|
+| `--agent-image string` | with --with cluster: the agent's image, which fetches the inputs; default: the controller's |
 | `--attempt int` | the failed attempt; default: the last one kept |
 | `--ca-file string` | CA bundle for the storage endpoint |
 | `--dir string` | where the inputs go; default: ./alpheus-replay/RUN-STEP-REPLICA-ATTEMPT |
 | `-e value` | KEY=VALUE for the component, such as what the step's envFrom gives; can be repeated |
 | `--endpoint string` | the S3 endpoint as seen from here, when spec.storage.endpoint is only reachable in the cluster |
 | `--image string` | pull the component from here instead, such as a mirror's address for the same digest |
+| `--keep` | with --with cluster: keep the replay pod |
 | `--replica int` | the replica; default: the one that stopped the run, else 0 (default -1) |
-| `--with string` | run the component with podman or docker, or none to only fetch the inputs (default "podman") |
+| `--with string` | run the component with podman or docker here, as a pod in the cluster (cluster), or not at all (none: only fetch the inputs) (default "podman") |
 
 ## alpheus ui
 
@@ -131,10 +133,14 @@ alpheus ui
 
 | Flag | What it does |
 |---|---|
+| `--agent-image string` | with --in-cluster: the agent's image, for replay pods |
 | `--ca-file string` | CA bundle for the storage endpoint |
 | `--endpoint string` | the S3 endpoint as seen from here, when spec.storage.endpoint is only reachable in the cluster |
-| `--listen string` | where the page is served; keep it on this machine (default "127.0.0.1:7171") |
+| `--host value` | a host name the page may be reached by besides localhost, such as an Ingress's; can be repeated |
+| `--in-cluster` | run as a Deployment in the cluster: runs of every namespace, replays as pods (GO-143) |
+| `--listen string` | where the page is served; keep it on this machine unless --in-cluster (default "127.0.0.1:7171") |
 | `--no-open` | do not open the page in the browser |
+| `--replay string` | how the replay button runs: podman, docker, cluster or off; default podman, or cluster with --in-cluster |
 
 ## alpheus validate
 

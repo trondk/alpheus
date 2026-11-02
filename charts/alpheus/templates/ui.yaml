@@ -1,0 +1,188 @@
+{{- if .Values.ui.enabled }}
+{{- if not (or .Values.ui.image.digest .Values.controller.allowTags) }}
+{{- fail "ui.image.digest is required: the UI's image must be pinned by digest (GO-24)" }}
+{{- end }}
+# alpheus ui in the cluster (GO-143): a read-only page, apart from replay,
+# shared by the team. It answers only to requests for localhost (through
+# kubectl port-forward) or the Ingress's host.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: alpheus-ui
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "alpheus.labels" . | nindent 4 }}
+---
+# What every namespace shows: runs and their events.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: alpheus-ui
+  labels:
+    {{- include "alpheus.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [alpheus-dev.org]
+    resources: [streamruns]
+    verbs: [get, list, watch]
+  - apiGroups: [events.k8s.io]
+    resources: [events]
+    verbs: [list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: alpheus-ui
+  labels:
+    {{- include "alpheus.labels" . | nindent 4 }}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: alpheus-ui}
+subjects:
+  - {kind: ServiceAccount, name: alpheus-ui, namespace: {{ .Release.Namespace }}}
+---
+# What only ui.namespaces show: the runs' storage, through their Secrets,
+# and pod logs, and the replay pods.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: alpheus-ui-namespaced
+  labels:
+    {{- include "alpheus.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list{{ if .Values.ui.replay }}, create, delete{{ end }}]
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get]
+{{- if has "*" .Values.ui.namespaces }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: alpheus-ui-namespaced
+  labels:
+    {{- include "alpheus.labels" . | nindent 4 }}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: alpheus-ui-namespaced}
+subjects:
+  - {kind: ServiceAccount, name: alpheus-ui, namespace: {{ .Release.Namespace }}}
+{{- else }}
+{{- range .Values.ui.namespaces }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: alpheus-ui
+  namespace: {{ . }}
+  labels:
+    {{- include "alpheus.labels" $ | nindent 4 }}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: alpheus-ui-namespaced}
+subjects:
+  - {kind: ServiceAccount, name: alpheus-ui, namespace: {{ $.Release.Namespace }}}
+{{- end }}
+{{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alpheus-ui
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "alpheus.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: alpheus-ui
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: alpheus-ui
+        app.kubernetes.io/part-of: alpheus
+    spec:
+      serviceAccountName: alpheus-ui
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: ui
+          image: {{ include "alpheus.image" (dict "root" . "image" .Values.ui.image) }}
+          imagePullPolicy: {{ .Values.ui.image.pullPolicy }}
+          args:
+            - ui
+            - --in-cluster
+            - --listen=:7171
+            - --agent-image={{ include "alpheus.image" (dict "root" . "image" .Values.agent.image) }}
+            - --replay={{ if .Values.ui.replay }}cluster{{ else }}off{{ end }}
+            {{- with .Values.ui.ingress.host }}
+            - --host={{ . }}
+            {{- end }}
+            {{- range .Values.ui.hosts }}
+            - --host={{ . }}
+            {{- end }}
+          ports:
+            - {name: http, containerPort: 7171}
+          # The page answers only to localhost and the Ingress's host.
+          readinessProbe:
+            httpGet: {path: /, port: http, httpHeaders: [{name: Host, value: localhost}]}
+          livenessProbe:
+            httpGet: {path: /, port: http, httpHeaders: [{name: Host, value: localhost}]}
+          resources:
+            {{- toYaml .Values.ui.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alpheus-ui
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "alpheus.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.ui.service.type }}
+  selector:
+    app.kubernetes.io/name: alpheus-ui
+  ports:
+    - name: http
+      port: 7171
+      targetPort: http
+      {{- if and (eq .Values.ui.service.type "NodePort") .Values.ui.service.nodePort }}
+      nodePort: {{ .Values.ui.service.nodePort }}
+      {{- end }}
+{{- if .Values.ui.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: alpheus-ui
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "alpheus.labels" . | nindent 4 }}
+spec:
+  {{- with .Values.ui.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- with .Values.ui.ingress.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    - host: {{ required "ui.ingress.host is required with the Ingress" .Values.ui.ingress.host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service: {name: alpheus-ui, port: {name: http}}
+{{- end }}
+{{- end }}

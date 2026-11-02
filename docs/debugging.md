@@ -127,6 +127,12 @@ $ podman run --rm --network=none -v …/alpheus-replay/sales-filter-1-4:/replay:
 - `--with docker` uses Docker; `--with none` only fetches the inputs and
   prints the command, so you can run the component yourself, for example
   in a debugger.
+- `--with cluster` runs it as a pod in the run's namespace instead: the
+  agent's image fetches and checks the chunks, then the step's image runs
+  on them with the step's resources, `envFrom` and scratch size, and the
+  logs come to your terminal. The data stays in the cluster, and a failure
+  that depends on the node's resources can show again. The pod is deleted
+  afterwards, unless you pass `--keep`.
 - `--image` pulls the same digest from another registry, and `-e KEY=VALUE`
   passes what the step's `envFrom` gives in the cluster, which replay does
   not copy.
@@ -157,6 +163,8 @@ alpheus ui on http://127.0.0.1:7171/ (namespace flows); Ctrl-C stops it
 ```
 
 The CLI serves a page on your machine and opens it in the browser. It
+starts in a light look; the button at the top right switches to a dark
+one, and the browser remembers it. It
 shows the runs, one run with its flow, replicas, results and events, and
 one replica with its counts, error log, logs (live, or kept from a failed
 attempt) and failures, with a button that runs `alpheus replay`. It updates
@@ -168,6 +176,33 @@ as the status changes. [The UI](/ui/) has a sketch of it.
   localhost, so a web page cannot use it to reach your cluster. Replay
   needs a token only the page has.
 - `--endpoint` and `--ca-file` reach the storage, as for `alpheus replay`.
+
+### In the cluster
+
+The chart can run the same page as a Deployment, for a team that shares
+it. It is off unless you turn it on:
+
+```console
+$ helm upgrade alpheus oci://registry.alpheus-dev.org/alpheus-dev/charts/alpheus \
+    --namespace alpheus-system --reuse-values \
+    --set ui.enabled=true --set 'ui.namespaces={flows}'
+$ kubectl port-forward -n alpheus-system svc/alpheus-ui 7171
+```
+
+Then open <http://localhost:7171/>. In the cluster the page shows the runs
+of every namespace, and its replay button runs `alpheus replay --with
+cluster`, so the replay is a pod next to the run.
+
+- **What it may see.** Runs and their events, in every namespace. The
+  runs' logs, error logs and failures only in the namespaces in
+  `ui.namespaces`, since reading them means reading the runs' storage
+  Secrets there; `["*"]` is every namespace. Replay pods are started only
+  there, and `ui.replay: false` turns the button off.
+- **Who may see it.** The page has no login of its own: everyone who
+  reaches it sees what its service account may see. Through
+  `kubectl port-forward`, only those with access to the cluster reach it.
+  With `ui.ingress`, put an authenticating proxy in front of it. The page
+  still answers only to requests for localhost or the Ingress's host.
 
 ## Metrics
 

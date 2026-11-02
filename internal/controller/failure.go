@@ -26,53 +26,12 @@ import (
 
 	"alpheus-dev.org/alpheus/api/v1alpha1"
 	"alpheus-dev.org/alpheus/internal/chunk"
+	"alpheus-dev.org/alpheus/internal/replay"
 	"alpheus-dev.org/alpheus/internal/store"
 )
 
-// maxCapturedInputs caps how many input chunks a failure keeps.
-const maxCapturedInputs = 16
-
-// Failure is what a failed attempt leaves so it can be replayed on its own
-// (GO-141): results/<run>/<uid>/_failures/<step>/<replica>/attempt-<n>/
-// failure.json, with copies of the input chunks the attempt was given but
-// had not finished, in input/, as files named like the agent names them.
-// Images are pinned by digest and chunks are checked by their SHA-256, so
-// a replay runs the same code on the same bytes.
-type Failure struct {
-	Version   int             `json:"version"`
-	Run       string          `json:"run"`
-	Namespace string          `json:"namespace"`
-	UID       string          `json:"uid"`
-	Step      string          `json:"step"`
-	Replica   int             `json:"replica"`
-	Replicas  int             `json:"replicas"`
-	Attempt   int             `json:"attempt"`
-	Reason    v1alpha1.Reason `json:"reason"`
-	Message   string          `json:"message"`
-	Time      time.Time       `json:"time"`
-	Image     string          `json:"image"`
-	Settings  json.RawMessage `json:"settings,omitempty"`
-	// Source is true for a step without inputs: a replay runs it with
-	// none.
-	Source bool           `json:"source,omitempty"`
-	Inputs []FailureInput `json:"inputs"`
-	// Logs is where the attempt's logs are kept (GO-140).
-	Logs string `json:"logs"`
-}
-
-// FailureInput is one input chunk of a failed attempt.
-type FailureInput struct {
-	Port            string `json:"port"`
-	Edge            string `json:"edge"`
-	ProducerReplica int    `json:"producerReplica"`
-	N               int64  `json:"n"`
-	Bytes           int64  `json:"bytes"`
-	SHA256          string `json:"sha256"`
-	// File is the copy's name in input/.
-	File string `json:"file"`
-}
-
-// captureFailure keeps what a replay of the failed attempt needs (GO-141).
+// captureFailure keeps what a replay of the failed attempt needs, as
+// replay.Failure describes (GO-141).
 // The input chunks are those assigned to the replica and not acked, the
 // first maxOpen of each stream: the ones the attempt had open, and the
 // ones a new attempt gets first. A failure of the storage itself keeps
@@ -90,11 +49,11 @@ func (rc *Reconciler) captureFailure(ctx context.Context, r *v1alpha1.StreamRun,
 	}
 	uid, replica := string(r.UID), int(rs.Index)
 	prefix := chunk.FailurePrefix(r.Name, uid, s.Name, replica, int(rs.Attempt))
-	f := Failure{
+	f := replay.Failure{
 		Version: 1, Run: r.Name, Namespace: r.Namespace, UID: uid, Step: s.Name,
 		Replica: replica, Replicas: replicas(s), Attempt: int(rs.Attempt),
 		Reason: reason, Message: msg, Time: time.Now().UTC(), Image: s.Image,
-		Source: len(g.in[s.Name]) == 0, Inputs: []FailureInput{},
+		Source: len(g.in[s.Name]) == 0, Inputs: []replay.Input{},
 		Logs: fmt.Sprintf("s3://%s/%s", r.Spec.Storage.Bucket, chunk.LogsPrefix(r.Name, uid, s.Name, replica, int(rs.Attempt))),
 	}
 	if s.Settings != nil {
@@ -121,7 +80,7 @@ func (rc *Reconciler) captureFailure(ctx context.Context, r *v1alpha1.StreamRun,
 			}
 			taken := 0
 			for _, c := range m.Chunks {
-				if taken >= perStream || len(f.Inputs) >= maxCapturedInputs {
+				if taken >= perStream || len(f.Inputs) >= replay.MaxInputs {
 					break
 				}
 				if chunk.Assign(c.N, p, replicas(s)) != replica || (acks != nil && acks.Has(c.N)) {
@@ -132,7 +91,7 @@ func (rc *Reconciler) captureFailure(ctx context.Context, r *v1alpha1.StreamRun,
 					log.FromContext(ctx).Error(err, "capture failure: copy chunk", "chunk", file)
 					continue
 				}
-				f.Inputs = append(f.Inputs, FailureInput{Port: port, Edge: edgeName(e), ProducerReplica: p, N: c.N, Bytes: c.Bytes, SHA256: c.SHA256, File: file})
+				f.Inputs = append(f.Inputs, replay.Input{Port: port, Edge: edgeName(e), ProducerReplica: p, N: c.N, Bytes: c.Bytes, SHA256: c.SHA256, File: file})
 				taken++
 			}
 		}

@@ -4,10 +4,11 @@ Status: udkast, 2026-11-02. Trin 1–8 i afsnit 15 er bygget: API-typer og
 CRD, chunks og lager, komponent-SDK'et, agenten, controlleren og
 end-to-end-tests på Kubernetes (Talos i en VM) med fan-out, fan-in,
 replikaer, genstart, backpressure og kaos, og fejltests (testcase09 til
-testcase14: lageret går ned, controlleren dør, afviste nøgler, fuld
-bucket, for lille scratch-mappe, en komponent med en fejl). Fejlsøgning
-(GO-138 til GO-142) er bygget: årsagskoder, events, gemte logs, genkørsel
-af et fejlet forsøg, `alpheus ui` og metrics. Af trin 9 er CLI, Helm-chart,
+testcase15: lageret går ned, controlleren dør, afviste nøgler, fuld
+bucket, for lille scratch-mappe, en komponent med en fejl, set gennem UI'et
+i klyngen). Fejlsøgning (GO-138 til GO-143) er bygget: årsagskoder, events,
+gemte logs, genkørsel af et fejlet forsøg, `alpheus ui` på maskinen og i
+klyngen, og metrics. Af trin 9 er CLI, Helm-chart,
 skabeloner til komponenter i Go og Python og en guide til at skrive
 komponenter, flagskibet (ETL af store filer) og udgivelsesscriptet
 bygget; tilbage er infrastrukturen og første udgivelse. Åbne spørgsmål
@@ -107,7 +108,7 @@ alpheus/
 ├── examples/meter-etl/    flagskibet: ETL af store filer med elmåler-aflæsninger (findes)
 ├── test/
 │   ├── components/        testkomponenter: bench (findes), filter og sum i CSV (findes)
-│   ├── e2e/               testcase01 til testcase14 (findes)
+│   ├── e2e/               testcase01 til testcase15 (findes)
 │   └── internal/table/    CSV og decimaltal for testkomponenterne (findes)
 ├── vagrant/               testklyngen: Talos i en VM med Garage og Zot (findes)
 ├── docs/                  dokumentationen, som hjemmesiden henter ved byg (findes)
@@ -424,6 +425,7 @@ Manifestformat (version 1):
 | GO-140 | SKAL | Før controlleren erstatter eller sletter et fejlet forsøgs pod, gemmer den slutningen af hver containers log, højst 4 MiB, under `results/<run>/<uid>/_logs/<trin>/<replika>/attempt-<n>/` (`component.log`, `agent.log` og `agent-previous.log`, når agenten genstartede på stedet), med samme TTL som resultater. `status.steps[].logs` siger hvor, og `alpheus logs --kept` viser dem. Det er best effort og stopper aldrig runnet. |
 | GO-141 | SKAL | Et fejlet forsøg gemmes, så det kan køres igen for sig selv: `results/<run>/<uid>/_failures/<trin>/<replika>/attempt-<n>/failure.json` med årsag, besked, image (låst med digest), settings og input-chunks, og kopier af de input-chunks, forsøget havde fået og ikke var færdigt med, under `input/`: de første `maxOpen` i hver strøm, højst 16. Lageret kopierer dem selv (server-side copy). Fejl i lageret gemmer intet. `alpheus replay` henter dem, kontrollerer hver mod sin SHA-256 og kører samme image på dem i local mode med podman eller docker, som replika 0 af 1, uden netværk og med `ALPHEUS_LOG_LEVEL=debug`; `--with none` henter kun. SDK'erne sætter log-niveauet fra `ALPHEUS_LOG_LEVEL`, og Go-SDK'et tager flere porte i `ALPHEUS_LOCAL_INPUTS`. |
 | GO-142 | SKAL | `alpheus ui` serverer en side på brugerens maskine (standard `127.0.0.1:7171`) med brugerens kubeconfig, uden noget installeret i klyngen: runs, ét run med flow, replikaer, resultater og events, og én replika med tællere, fejllog, logs (live eller gemte) og fejlede forsøg med en knap, der kører `alpheus replay`. Den opdateres live med server-sent events. Den er skrivebeskyttet, bortset fra replay, svarer kun på forespørgsler til localhost (mod DNS rebinding), og replay kræver et token, som kun siden har. Siden er indlejret i CLI'en, i Go og ren HTML, CSS og JavaScript uden afhængigheder. |
+| GO-143 | SKAL | Chartet kan køre `alpheus ui --in-cluster` som en Deployment (`ui.enabled`, standard fra), med CLI'ens binær i sit eget image, bygget, signeret og udgivet med de andre. Den viser runs og events i alle namespaces; logs, fejllog og fejlede forsøg kun i `ui.namespaces`, hvor dens service account må læse Secrets og pod-logs (`["*"]` er alle). Replay-knappen kører `alpheus replay --with cluster`: en pod i runnets namespace, ejet af runnet, hvor agentens image (`-fetch-failure`) henter og kontrollerer chunks, og trinnets image kører på dem i local mode med trinnets ressourcer, `envFrom` og scratch-størrelse; podden slettes bagefter. `ui.replay: false` slår knappen fra og fjerner retten til at oprette pods. Siden svarer kun på forespørgsler til localhost (gennem `kubectl port-forward`), Ingress'ens vært og værterne i `ui.hosts` (`--host`), og den har ingen login: en Ingress eller en NodePort (`ui.service`) skal have en proxy, der autentificerer, foran, uden for testklyngen. I testklyngen kører UI'et altid efter `make deploy` eller `make e2e` på VM'ens port 30717. Siden starter lyst og har et mørkt cyberpunk-look, som brugeren slår til; browseren husker valget. |
 | GO-34 | BØR | Lokale kopier af chunks i scratch-mappen slettes, så snart de er ackede eller skrevet. |
 
 ### 7.4 Backpressure og genstart
@@ -626,7 +628,7 @@ sdk.Progress(ctx, "4,2 mio. rækker behandlet")
 | Integration | controller mod API-server | envtest |
 | Integration | agent mod S3 | Garage i en container |
 | Driver | `builtin` | hub og klient i samme proces, og agenter gennem hub'en mod Garage |
-| E2E | testcase01 til testcase14 | Talos i en VM med Vagrant og libvirt (`vagrant/` i repo'ets rod) med Garage og Zot (12.2) |
+| E2E | testcase01 til testcase15 | Talos i en VM med Vagrant og libvirt (`vagrant/` i repo'ets rod) med Garage og Zot (12.2) |
 
 | ID | Niveau | Krav |
 |---|---|---|
@@ -900,6 +902,14 @@ bucketen, og det sidste forsøg gemt med den chunk, det fejlede på, som
 første input. `alpheus replay --with none` henter inputs, og
 bench-komponenten fejler på dem i local mode på samme måde med
 debug-linjer i loggen.
+
+**testcase15: UI'et i klyngen (GO-143).** testcase14's komponent med en
+fejl, set gennem `alpheus ui`, som `hack/e2e.sh` installerer med chartet
+(`ui.namespaces={*}`), nået med `kubectl port-forward`. Siden skal vise
+runnet blandt alle namespaces' runs, replikaens gemte forsøg og log, og
+replay-knappen skal køre det sidste forsøg som en pod i runnets namespace,
+der henter inputs, fejler på samme måde med debug-linjer og slettes
+bagefter.
 
 **Agent-test: hvert commit-punkt (GO-74).** En pod, der slås ihjel,
 rammer ikke et bestemt sted mellem to skrivninger til S3. Derfor kører

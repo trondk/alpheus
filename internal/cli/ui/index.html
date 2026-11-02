@@ -5,18 +5,22 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="alpheus-namespace" content="{{namespace}}">
 <meta name="alpheus-token" content="{{token}}">
+<meta name="alpheus-replay" content="{{replay}}">
 <title>alpheus ui</title>
 <link rel="stylesheet" href="/static/style.css">
+<script src="/static/theme.js"></script>
 <script src="/static/app.js" defer></script>
 </head>
 <body>
+<canvas id="rain" aria-hidden="true"></canvas>
 <header>
   <a href="#/" class="brand">alpheus</a>
   <form id="ns-form" class="ns">
     <label for="ns">namespace</label>
-    <input id="ns" name="ns" autocomplete="off" spellcheck="false">
+    <input id="ns" name="ns" autocomplete="off" spellcheck="false" title="* for every namespace">
   </form>
   <span id="live" class="live" title="updates as the status changes">●</span>
+  <button type="button" id="theme" class="theme" aria-pressed="false">dark</button>
 </header>
 <main id="main" tabindex="-1"><p class="muted">Loading…</p></main>
 </body>

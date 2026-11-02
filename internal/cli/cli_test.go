@@ -44,6 +44,7 @@ import (
 	"alpheus-dev.org/alpheus/internal/agent"
 	"alpheus-dev.org/alpheus/internal/chunk"
 	"alpheus-dev.org/alpheus/internal/controller"
+	"alpheus-dev.org/alpheus/internal/replay"
 	"alpheus-dev.org/alpheus/internal/store"
 )
 
@@ -559,10 +560,10 @@ func TestReplayAndKeptLogs(t *testing.T) {
 	sum := sha256.Sum256([]byte(body))
 	prefix := chunk.FailurePrefix("rp", uid, "filter", 1, 2)
 	h.mem.Put(ctx, prefix+"input/read-filter-0-000003.csv", strings.NewReader(body), int64(len(body)))
-	f := controller.Failure{Version: 1, Run: "rp", UID: uid, Step: "filter", Replica: 1, Replicas: 2, Attempt: 2,
+	f := replay.Failure{Version: 1, Run: "rp", UID: uid, Step: "filter", Replica: 1, Replicas: 2, Attempt: 2,
 		Reason: v1alpha1.ReasonComponentFailed, Message: "the component exited with code 1: bad row",
 		Image: "registry.example/filter" + pin, Settings: json.RawMessage(`{"match":"ERROR"}`),
-		Inputs: []controller.FailureInput{{Port: "default", Edge: "read-filter", N: 3, Bytes: int64(len(body)), SHA256: hex.EncodeToString(sum[:]), File: "read-filter-0-000003.csv"}}}
+		Inputs: []replay.Input{{Port: "default", Edge: "read-filter", N: 3, Bytes: int64(len(body)), SHA256: hex.EncodeToString(sum[:]), File: "read-filter-0-000003.csv"}}}
 	data, _ := json.Marshal(f)
 	h.mem.Put(ctx, prefix+"failure.json", bytes.NewReader(data), int64(len(data)))
 	// An older attempt, which replay passes over for the last one.
@@ -619,13 +620,13 @@ func TestUI(t *testing.T) {
 	r := h.get("u")
 	uid, ctx := string(r.UID), context.Background()
 	h.mem.Put(ctx, chunk.LogsPrefix("u", uid, "filter", 0, 1)+"component.log", strings.NewReader("boom\n"), 5)
-	f := controller.Failure{Version: 1, Run: "u", Step: "filter", Attempt: 1, Reason: v1alpha1.ReasonComponentFailed, Image: "x" + pin, Inputs: []controller.FailureInput{}}
+	f := replay.Failure{Version: 1, Run: "u", Step: "filter", Attempt: 1, Reason: v1alpha1.ReasonComponentFailed, Image: "x" + pin, Inputs: []replay.Input{}}
 	data, _ := json.Marshal(f)
 	h.mem.Put(ctx, chunk.FailurePrefix("u", uid, "filter", 0, 1)+"failure.json", bytes.NewReader(data), int64(len(data)))
 	h.mem.Put(ctx, chunk.ErrorLogPrefix("u", uid, "filter", 0)+"log-000001.jsonl", strings.NewReader(`{"level":"error","code":"bad_row","message":"row 3"}`+"\n"), 53)
 
 	c, _ := h.env().Connect(Kube{})
-	u := &ui{e: h.env(), c: c, namespace: h.ns, token: "secret"}
+	u := &ui{e: h.env(), c: c, namespace: h.ns, token: "secret", replayMode: "podman"}
 	srv := httptest.NewServer(u.handler())
 	defer srv.Close()
 	get := func(path string, host string) (int, string) {
@@ -690,4 +691,112 @@ func TestUI(t *testing.T) {
 		t.Errorf("replay: %d %q, commands %v", code, body, h.commands)
 	}
 	os.RemoveAll("alpheus-replay") // replay's default folder, in the test's working directory
+}
+
+// replay --with cluster runs the attempt as a pod in the run's namespace:
+// the agent's image fetches the inputs, the step's image runs on them at
+// debug level, the logs are printed and the pod is deleted (GO-141, GO-143).
+func TestReplayInCluster(t *testing.T) {
+	h := newHarness(t)
+	h.mustRun("run", "-f", h.file("flow.yaml", flow("rc", "")))
+	r := h.get("rc")
+	ctx := context.Background()
+	prefix := chunk.FailurePrefix("rc", string(r.UID), "filter", 0, 1)
+	f := replay.Failure{Version: 1, Run: "rc", Step: "filter", Attempt: 1, Reason: v1alpha1.ReasonComponentFailed,
+		Image: "registry.example/filter" + pin, Settings: json.RawMessage(`{"match":"x"}`),
+		Inputs: []replay.Input{{Port: "default", File: "read-filter-0-000001.csv"}}}
+	data, _ := json.Marshal(f)
+	h.mem.Put(ctx, prefix+"failure.json", bytes.NewReader(data), int64(len(data)))
+
+	// No kubelet: the test plays it, failing the component with code 1.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for range 100 {
+			var pods corev1.PodList
+			k8s.List(ctx, &pods, client.InNamespace(h.ns), client.MatchingLabels{controller.LabelReplay: "rc"})
+			if len(pods.Items) == 1 {
+				p := pods.Items[0]
+				p.Status.Phase = corev1.PodFailed
+				p.Status.InitContainerStatuses = []corev1.ContainerStatus{{Name: controller.ReplayContainer,
+					State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 0}}}}
+				p.Status.ContainerStatuses = []corev1.ContainerStatus{{Name: controller.ComponentContainer,
+					State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 1}}}}
+				if err := k8s.Status().Update(ctx, &p); err != nil {
+					t.Error(err)
+				}
+				return
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		t.Error("no replay pod")
+	}()
+	out := h.mustRun("replay", "rc", "filter", "--with", "cluster", "--agent-image", "registry.example/agent"+pin, "-e", "TOKEN=x")
+	<-done
+	if !strings.Contains(out, "Replaying in pod "+h.ns+"/rc-filter-0-replay-1-") || !strings.Contains(out, "exited with code 1, as in the run") {
+		t.Errorf("replay: %s", out)
+	}
+	var pods corev1.PodList
+	k8s.List(ctx, &pods, client.InNamespace(h.ns), client.MatchingLabels{controller.LabelReplay: "rc"})
+	for _, p := range pods.Items {
+		if p.DeletionTimestamp.IsZero() {
+			t.Errorf("replay pod %s left", p.Name)
+		}
+	}
+
+	// The pod it makes.
+	pod, err := controller.ReplayPod(r, &f, prefix, "registry.example/agent"+pin, "x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fetch, comp := pod.Spec.InitContainers[0], pod.Spec.Containers[0]
+	if fetch.Image != "registry.example/agent"+pin || strings.Join(fetch.Args, " ") != "-fetch-failure "+prefix+" -dest /replay" {
+		t.Errorf("fetch container %+v", fetch)
+	}
+	envs := map[string]string{}
+	for _, ev := range comp.Env {
+		envs[ev.Name] = ev.Value
+	}
+	if comp.Image != f.Image || envs["ALPHEUS_MODE"] != "local" || envs["ALPHEUS_LOG_LEVEL"] != "debug" ||
+		envs["ALPHEUS_LOCAL_INPUT"] != "/replay/in/default" || envs["ALPHEUS_SETTINGS"] != `{"match":"x"}` {
+		t.Errorf("component container %+v", comp)
+	}
+	if pod.Labels[controller.LabelRun] != "" || pod.OwnerReferences[0].UID != r.UID || *pod.Spec.AutomountServiceAccountToken {
+		t.Errorf("pod meta %+v, automount %v", pod.ObjectMeta, *pod.Spec.AutomountServiceAccountToken)
+	}
+}
+
+// In the cluster the ui shows every namespace, answers to the host names it
+// is given, and can have replay off (GO-143).
+func TestUIInCluster(t *testing.T) {
+	h := newHarness(t)
+	h.mustRun("run", "-f", h.file("flow.yaml", flow("a", "")))
+	c, _ := h.env().Connect(Kube{})
+	u := &ui{e: h.env(), c: c, namespace: allNamespaces, token: "t", replayMode: "off", hosts: []string{"alpheus.example"}}
+	srv := httptest.NewServer(u.handler())
+	defer srv.Close()
+	do := func(method, path, host string) (int, string) {
+		req, _ := http.NewRequest(method, srv.URL+path, nil)
+		req.Host = host
+		req.Header.Set("X-Alpheus-Token", "t")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(b)
+	}
+	if code, body := do("GET", "/api/runs", "alpheus.example"); code != 200 || !strings.Contains(body, `"namespace":"`+h.ns+`"`) {
+		t.Errorf("runs of every namespace by the allowed host: %d %.200s", code, body)
+	}
+	if code, _ := do("GET", "/api/runs", "other.example"); code != http.StatusForbidden {
+		t.Errorf("another host: %d", code)
+	}
+	if code, body := do("GET", "/", "alpheus.example:443"); code != 200 || !strings.Contains(body, `name="alpheus-replay" content="off"`) {
+		t.Errorf("page: %d", code)
+	}
+	if code, body := do("POST", "/api/runs/"+h.ns+"/a/replay?step=filter&replica=0", "alpheus.example"); code != http.StatusForbidden || !strings.Contains(body, "off") {
+		t.Errorf("replay when off: %d %q", code, body)
+	}
 }

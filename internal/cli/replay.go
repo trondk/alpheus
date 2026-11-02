@@ -18,35 +18,34 @@ package cli
 
 import (
 	"context"
-	"crypto/sha256"
+	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
-	"path"
 	"path/filepath"
 	"slices"
-	"sort"
-	"strconv"
 	"strings"
+	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"alpheus-dev.org/alpheus/api/v1alpha1"
-	"alpheus-dev.org/alpheus/internal/chunk"
 	"alpheus-dev.org/alpheus/internal/controller"
-	"alpheus-dev.org/alpheus/internal/store"
+	"alpheus-dev.org/alpheus/internal/replay"
 )
 
 // replayView is what replay prints with -o.
 type replayView struct {
-	Failure  controller.Failure `json:"failure"`
-	Dir      string             `json:"dir"`
-	Command  []string           `json:"command,omitempty"`
-	ExitCode *int               `json:"exitCode,omitempty"`
+	Failure  replay.Failure `json:"failure"`
+	Dir      string         `json:"dir,omitempty"`
+	Pod      string         `json:"pod,omitempty"`
+	Command  []string       `json:"command,omitempty"`
+	ExitCode *int           `json:"exitCode,omitempty"`
 }
 
 // stringList is a flag that can be given more than once.
@@ -61,8 +60,10 @@ func replayCmd(ctx context.Context, e *Env, args []string) error {
 	replica := fs.Int("replica", -1, "the replica; default: the one that stopped the run, else 0")
 	attempt := fs.Int("attempt", 0, "the failed attempt; default: the last one kept")
 	dir := fs.String("dir", "", "where the inputs go; default: ./alpheus-replay/RUN-STEP-REPLICA-ATTEMPT")
-	with := fs.String("with", "podman", "run the component with podman or docker, or none to only fetch the inputs")
+	with := fs.String("with", "podman", "run the component with podman or docker here, as a pod in the cluster (cluster), or not at all (none: only fetch the inputs)")
 	image := fs.String("image", "", "pull the component from here instead, such as a mirror's address for the same digest")
+	agentImage := fs.String("agent-image", "", "with --with cluster: the agent's image, which fetches the inputs; default: the controller's")
+	keep := fs.Bool("keep", false, "with --with cluster: keep the replay pod")
 	var env stringList
 	fs.Var(&env, "e", "KEY=VALUE for the component, such as what the step's envFrom gives; can be repeated")
 	caFile := fs.String("ca-file", "", "CA bundle for the storage endpoint")
@@ -74,8 +75,8 @@ func replayCmd(ctx context.Context, e *Env, args []string) error {
 	if len(pos) != 2 {
 		return usagef("replay takes a run and a step")
 	}
-	if *with != "podman" && *with != "docker" && *with != "none" {
-		return usagef("--with %s: want podman, docker or none", *with)
+	if !slices.Contains([]string{"podman", "docker", "cluster", "none"}, *with) {
+		return usagef("--with %s: want podman, docker, cluster or none", *with)
 	}
 	c, ns, err := e.connect(&o)
 	if err != nil {
@@ -105,67 +106,79 @@ func replayCmd(ctx context.Context, e *Env, args []string) error {
 			*replica = int(*r.Status.FailedReplica)
 		}
 	}
-	prefix, err := findFailure(ctx, st, &r, step, *replica, *attempt)
+	prefix, err := replay.Find(ctx, st, r.Name, string(r.UID), step, *replica, *attempt)
 	if err != nil {
 		return hint(err, reachable)
 	}
-	data, err := store.ReadAll(ctx, st, prefix+"failure.json")
+	f, data, err := replay.Read(ctx, st, prefix)
 	if err != nil {
 		return hint(err, reachable)
 	}
-	var f controller.Failure
-	if err := json.Unmarshal(data, &f); err != nil {
-		return fmt.Errorf("%sfailure.json: %w", prefix, err)
+	if *image != "" {
+		f.Image = *image
 	}
-
-	if *dir == "" {
-		*dir = filepath.Join("alpheus-replay", fmt.Sprintf("%s-%s-%d-%d", f.Run, f.Step, f.Replica, f.Attempt))
-	}
-	if err := fetchInputs(ctx, st, prefix, &f, *dir); err != nil {
-		return err
-	}
-	if err := os.WriteFile(filepath.Join(*dir, "failure.json"), data, 0o644); err != nil {
-		return err
-	}
-	view := replayView{Failure: f, Dir: *dir}
+	view := replayView{Failure: *f}
 	if o.output == "" {
 		fmt.Fprintf(e.Stdout, "Step %s replica %d, attempt %d: %s\n", f.Step, f.Replica, f.Attempt, f.Reason)
 		fmt.Fprintf(e.Stdout, "  %s\n", f.Message)
 		fmt.Fprintf(e.Stdout, "Image:  %s\n", f.Image)
-		fmt.Fprintf(e.Stdout, "Inputs: %d chunks in %s, checked against their SHA-256\n", len(f.Inputs), filepath.Join(*dir, "in"))
+		fmt.Fprintf(e.Stdout, "Inputs: %d chunks, checked against their SHA-256\n", len(f.Inputs))
 		fmt.Fprintf(e.Stdout, "Logs of the attempt: %s\n", f.Logs)
 	}
-	if *with == "none" {
-		if o.output != "" {
-			return write(e.Stdout, o.output, view, nil)
-		}
-		fmt.Fprintf(e.Stdout, "\nRun it yourself in local mode with:\n  %s\n", strings.Join(localEnv(&f, filepath.Join(*dir, "in"), filepath.Join(*dir, "out")), " \\\n    "))
-		return nil
-	}
 
-	img := f.Image
-	if *image != "" {
-		img = *image
-	}
-	abs, err := filepath.Abs(*dir)
-	if err != nil {
-		return err
-	}
-	cmd := []string{*with, "run", "--rm", "--network=none", "-v", abs + ":/replay:Z"}
-	for _, kv := range localEnv(&f, "/replay/in", "/replay/out") {
-		cmd = append(cmd, "-e", kv)
-	}
-	for _, kv := range env {
-		cmd = append(cmd, "-e", kv)
-	}
-	cmd = append(cmd, img)
-	view.Command = cmd
-	if o.output == "" {
-		fmt.Fprintf(e.Stdout, "\n$ %s\n\n", strings.Join(cmd, " "))
-	}
-	code, err := e.RunCommand(ctx, cmd, e.Stdout, e.Stderr)
-	if err != nil {
-		return hint(fmt.Errorf("%s: %w", *with, err), "install "+*with+", or pass --with none and run the component yourself")
+	var code int
+	if *with == "cluster" {
+		if *agentImage == "" {
+			if *agentImage, err = controllerAgentImage(ctx, c.Client); err != nil {
+				return hint(err, "pass the agent's image with --agent-image")
+			}
+		}
+		name, code2, err := replayInCluster(ctx, e, c, &r, f, prefix, *agentImage, env, *keep, o.output == "")
+		view.Pod = name
+		if err != nil {
+			return err
+		}
+		code = code2
+	} else {
+		if *dir == "" {
+			*dir = filepath.Join("alpheus-replay", fmt.Sprintf("%s-%s-%d-%d", f.Run, f.Step, f.Replica, f.Attempt))
+		}
+		view.Dir = *dir
+		if err := replay.Fetch(ctx, st, prefix, f, *dir); err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(*dir, "failure.json"), data, 0o644); err != nil {
+			return err
+		}
+		if o.output == "" {
+			fmt.Fprintf(e.Stdout, "Fetched to %s\n", filepath.Join(*dir, "in"))
+		}
+		if *with == "none" {
+			if o.output != "" {
+				return write(e.Stdout, o.output, view, nil)
+			}
+			fmt.Fprintf(e.Stdout, "\nRun it yourself in local mode with:\n  %s\n", strings.Join(replay.LocalEnv(f, filepath.Join(*dir, "in"), filepath.Join(*dir, "out")), " \\\n    "))
+			return nil
+		}
+		abs, err := filepath.Abs(*dir)
+		if err != nil {
+			return err
+		}
+		cmd := []string{*with, "run", "--rm", "--network=none", "-v", abs + ":/replay:Z"}
+		for _, kv := range replay.LocalEnv(f, "/replay/in", "/replay/out") {
+			cmd = append(cmd, "-e", kv)
+		}
+		for _, kv := range env {
+			cmd = append(cmd, "-e", kv)
+		}
+		cmd = append(cmd, f.Image)
+		view.Command = cmd
+		if o.output == "" {
+			fmt.Fprintf(e.Stdout, "\n$ %s\n\n", strings.Join(cmd, " "))
+		}
+		if code, err = e.RunCommand(ctx, cmd, e.Stdout, e.Stderr); err != nil {
+			return hint(fmt.Errorf("%s: %w", *with, err), "install "+*with+", run it in the cluster with --with cluster, or pass --with none and run the component yourself")
+		}
 	}
 	view.ExitCode = &code
 	if o.output != "" {
@@ -176,122 +189,129 @@ func replayCmd(ctx context.Context, e *Env, args []string) error {
 		fmt.Fprintf(e.Stdout, "\nThe component succeeded on these inputs; in the run it failed with: %s\n", f.Message)
 		fmt.Fprintln(e.Stdout, "The failure may depend on chunks before these, on the environment or on resources.")
 	default:
-		fmt.Fprintf(e.Stdout, "\nThe component exited with code %d, as in the run. Its output is in %s.\n", code, filepath.Join(*dir, "out"))
+		where := ""
+		if view.Dir != "" {
+			where = " Its output is in " + filepath.Join(view.Dir, "out") + "."
+		}
+		fmt.Fprintf(e.Stdout, "\nThe component exited with code %d, as in the run.%s\n", code, where)
 	}
 	return nil
 }
 
-// localEnv is the environment that runs the component in local mode on
-// the failure's inputs, at debug level (GO-141). The inputs are only this
-// replica's, so it runs as replica 0 of 1.
-func localEnv(f *controller.Failure, in, out string) []string {
-	settings := string(f.Settings)
-	if settings == "" {
-		settings = "{}"
+// controllerAgentImage is the agent's image the controller in
+// alpheus-system starts step pods with.
+func controllerAgentImage(ctx context.Context, c client.Reader) (string, error) {
+	var d appsv1.Deployment
+	if err := c.Get(ctx, client.ObjectKey{Namespace: "alpheus-system", Name: "alpheus-controller"}, &d); err != nil {
+		return "", fmt.Errorf("find the agent's image in alpheus-system/alpheus-controller: %w", err)
 	}
-	env := []string{"ALPHEUS_MODE=local", "ALPHEUS_LOCAL_OUTPUT=" + out, "ALPHEUS_LOG_LEVEL=debug",
-		"ALPHEUS_REPLICA=0", "ALPHEUS_REPLICAS=1", "ALPHEUS_SETTINGS=" + settings}
-	var ports []string
-	for _, p := range inputPorts(f) {
-		ports = append(ports, p+"="+path.Join(in, p))
+	for _, ct := range d.Spec.Template.Spec.Containers {
+		for _, a := range ct.Args {
+			if img, ok := strings.CutPrefix(a, "-agent-image="); ok {
+				return img, nil
+			}
+		}
 	}
-	switch {
-	case len(ports) == 1 && strings.HasPrefix(ports[0], "default="):
-		env = append(env, "ALPHEUS_LOCAL_INPUT="+path.Join(in, "default"))
-	case len(ports) > 0:
-		env = append(env, "ALPHEUS_LOCAL_INPUTS="+strings.Join(ports, ","))
-	}
-	return env
+	return "", errors.New("alpheus-system/alpheus-controller has no -agent-image")
 }
 
-func inputPorts(f *controller.Failure) []string {
-	var ports []string
-	for _, in := range f.Inputs {
-		if !slices.Contains(ports, in.Port) {
-			ports = append(ports, in.Port)
+// replayInCluster runs the replay as a pod in the run's namespace
+// (GO-141), prints the fetch's and the component's logs as they come, and
+// returns the component's exit code. The pod is deleted afterwards unless
+// keep is set.
+func replayInCluster(ctx context.Context, e *Env, c *Clients, r *v1alpha1.StreamRun, f *replay.Failure, prefix, agentImage string, env []string, keep, text bool) (string, int, error) {
+	suffix := make([]byte, 3)
+	rand.Read(suffix)
+	name := fmt.Sprintf("%s-%s-%d-replay-%d-%s", r.Name, f.Step, f.Replica, f.Attempt, hex.EncodeToString(suffix))
+	if len(name) > 63 {
+		name = name[len(name)-63:]
+		name = strings.TrimLeft(name, "-.")
+	}
+	pod, err := controller.ReplayPod(r, f, prefix, agentImage, name)
+	if err != nil {
+		return "", 0, err
+	}
+	for _, kv := range env {
+		k, v, _ := strings.Cut(kv, "=")
+		pod.Spec.Containers[0].Env = append(pod.Spec.Containers[0].Env, corev1.EnvVar{Name: k, Value: v})
+	}
+	if err := c.Client.Create(ctx, pod); err != nil {
+		return "", 0, hint(apiError(err), "a replay in the cluster creates a pod in the run's namespace")
+	}
+	if !keep {
+		defer c.Client.Delete(context.WithoutCancel(ctx), pod)
+	}
+	if text {
+		fmt.Fprintf(e.Stdout, "\nReplaying in pod %s/%s, at debug level:\n\n", r.Namespace, name)
+	}
+	for _, container := range []string{controller.ReplayContainer, controller.ComponentContainer} {
+		if err := followLog(ctx, c, r.Namespace, name, container, e.Stdout); err != nil {
+			return name, 0, err
 		}
 	}
-	sort.Strings(ports)
-	return ports
+	// The pod's status may lag the end of its log.
+	for {
+		var cur corev1.Pod
+		if err := c.Client.Get(ctx, client.ObjectKeyFromObject(pod), &cur); err != nil {
+			return name, 0, apiError(err)
+		}
+		for _, cs := range cur.Status.InitContainerStatuses {
+			if t := cs.State.Terminated; t != nil && t.ExitCode != 0 {
+				return name, 0, fmt.Errorf("fetching the inputs failed: %s", strings.TrimSpace(t.Message))
+			}
+		}
+		for _, cs := range cur.Status.ContainerStatuses {
+			if t := cs.State.Terminated; cs.Name == controller.ComponentContainer && t != nil {
+				return name, int(t.ExitCode), nil
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return name, 0, ctx.Err()
+		case <-time.After(time.Second):
+		}
+	}
 }
 
-// findFailure is the prefix of a kept failure: the given attempt, or the
-// last one.
-func findFailure(ctx context.Context, st store.Store, r *v1alpha1.StreamRun, step string, replica, attempt int) (string, error) {
-	if attempt > 0 {
-		return chunk.FailurePrefix(r.Name, string(r.UID), step, replica, attempt), nil
-	}
-	base := chunk.FailurePrefix(r.Name, string(r.UID), step, replica, 1)
-	base = base[:strings.LastIndex(strings.TrimSuffix(base, "/"), "/")+1]
-	last := 0
-	for key, err := range st.List(ctx, base) {
-		if err != nil {
-			return "", err
+// followLog prints a container's log until it ends, waiting for the
+// container to start. A container that never starts, such as the
+// component after a failed fetch, has no log.
+func followLog(ctx context.Context, c *Clients, ns, pod, container string, w io.Writer) error {
+	for {
+		var cur corev1.Pod
+		if err := c.Client.Get(ctx, client.ObjectKey{Namespace: ns, Name: pod}, &cur); err != nil {
+			return apiError(err)
 		}
-		rest, ok := strings.CutPrefix(key, base+"attempt-")
-		if !ok {
-			continue
-		}
-		n, _, _ := strings.Cut(rest, "/")
-		if a, err := strconv.Atoi(n); err == nil && a > last {
-			last = a
-		}
-	}
-	if last == 0 {
-		return "", fmt.Errorf("step %s replica %d of run %s has no kept failure", step, replica, r.Name)
-	}
-	return chunk.FailurePrefix(r.Name, string(r.UID), step, replica, last), nil
-}
-
-// fetchInputs downloads the failure's input chunks into dir/in/<port>/,
-// checked against their size and SHA-256, and makes dir/out/ for the
-// output, writable by the component's user.
-func fetchInputs(ctx context.Context, st store.Store, prefix string, f *controller.Failure, dir string) error {
-	out := filepath.Join(dir, "out")
-	if err := os.RemoveAll(out); err != nil {
-		return err
-	}
-	if err := os.MkdirAll(out, 0o777); err != nil {
-		return err
-	}
-	if err := os.Chmod(out, 0o777); err != nil { // the image's user is not this one
-		return err
-	}
-	for _, in := range f.Inputs {
-		pdir := filepath.Join(dir, "in", in.Port)
-		if err := os.MkdirAll(pdir, 0o755); err != nil {
+		started, done := containerState(&cur, container)
+		if started {
+			body, err := c.Kube.CoreV1().Pods(ns).GetLogs(pod, &corev1.PodLogOptions{Container: container, Follow: true}).Stream(ctx)
+			if err != nil {
+				return fmt.Errorf("log of %s: %w", container, err)
+			}
+			_, err = io.Copy(w, body)
+			body.Close()
 			return err
 		}
-		if err := fetchChunk(ctx, st, prefix+"input/"+in.File, filepath.Join(pdir, in.File), in); err != nil {
-			return err
+		if done || cur.Status.Phase == corev1.PodFailed || cur.Status.Phase == corev1.PodSucceeded {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Second):
 		}
 	}
-	return nil
 }
 
-func fetchChunk(ctx context.Context, st store.Store, key, file string, in controller.FailureInput) error {
-	r, err := st.Get(ctx, key)
-	if err != nil {
-		return err
+// containerState says whether a container has started (it runs or ran),
+// or will never start because the pod is past it.
+func containerState(p *corev1.Pod, name string) (started, never bool) {
+	for _, cs := range append(append([]corev1.ContainerStatus{}, p.Status.InitContainerStatuses...), p.Status.ContainerStatuses...) {
+		if cs.Name == name {
+			return cs.State.Running != nil || cs.State.Terminated != nil, false
+		}
 	}
-	defer r.Close()
-	w, err := os.Create(file)
-	if err != nil {
-		return err
-	}
-	h := sha256.New()
-	n, err := io.Copy(io.MultiWriter(w, h), r)
-	if cerr := w.Close(); err == nil {
-		err = cerr
-	}
-	if err == nil && (n != in.Bytes || hex.EncodeToString(h.Sum(nil)) != in.SHA256) {
-		err = errors.New("its size or SHA-256 differs from the manifest's")
-	}
-	if err != nil {
-		os.Remove(file)
-		return fmt.Errorf("input %s: %w", in.File, err)
-	}
-	return nil
+	return false, false
 }
 
 // runCommand runs a command with its output to stdout and stderr, and

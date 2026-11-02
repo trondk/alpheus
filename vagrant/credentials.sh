@@ -60,6 +60,15 @@ kubectl version --request-timeout=5s >/dev/null 2>&1 || CLUSTER=0
 GARAGE="$OUT/secrets.env"
 REGISTRY="registry.alpheus.test:30500"
 
+# alpheus ui in the cluster, which make deploy and make e2e install (GO-143).
+UI_STATUS="not installed: make deploy"
+if [[ "$CLUSTER" == 1 ]]; then
+  ready="$(kubectl -n alpheus-system get deployment alpheus-ui -o jsonpath='{.status.readyReplicas}' 2>/dev/null)"
+  if [[ -n "$ready" && "$ready" != 0 ]]; then UI_STATUS="running"
+  elif kubectl -n alpheus-system get deployment alpheus-ui >/dev/null 2>&1; then UI_STATUS="installed, not ready"
+  fi
+fi
+
 # The cluster admin's bearer token is not stored; the kubeconfig uses a client
 # certificate. Show a fingerprint of it so two kubeconfigs can be compared.
 CLIENT_CERT="$(kubectl config view --raw -o jsonpath='{.users[0].user.client-certificate-data}' 2>/dev/null \
@@ -116,6 +125,12 @@ Garage (storage)                               from _out/secrets.env
                 key of its own, results-reader, can only read (GO-129):
     access key: $(show "$(from_garage_key results-reader "Key ID")")
     secret key: $(show "$(from_garage_key results-reader "Secret key")")
+
+Alpheus                                        make deploy installs it
+  ui:           http://$CP_IP:30717/   ($UI_STATUS)
+                the runs of every namespace, their logs, failures and
+                replay; no login (the VM's network only)
+  controller:   kubectl -n alpheus-system get deploy,pods
 
 Zot (registry)                                 Garage key from the cluster
   web UI:       https://$REGISTRY   no login (this machine only, README.md)

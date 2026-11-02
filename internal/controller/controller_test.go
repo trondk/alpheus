@@ -61,6 +61,7 @@ import (
 	"alpheus-dev.org/alpheus/api/v1alpha1"
 	"alpheus-dev.org/alpheus/internal/agent"
 	"alpheus-dev.org/alpheus/internal/chunk"
+	"alpheus-dev.org/alpheus/internal/replay"
 	"alpheus-dev.org/alpheus/internal/signal"
 	"alpheus-dev.org/alpheus/internal/signal/builtin"
 	"alpheus-dev.org/alpheus/internal/store"
@@ -494,7 +495,7 @@ func TestRestartsThenStop(t *testing.T) {
 	// Each failed attempt is kept for a replay, with the chunks it had not
 	// finished (GO-141).
 	data, err := store.ReadAll(t.Context(), mem, chunk.FailurePrefix("sales", uid, "filter", 0, 1)+"failure.json")
-	var f Failure
+	var f replay.Failure
 	if err == nil {
 		err = json.Unmarshal(data, &f)
 	}

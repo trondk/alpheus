@@ -37,6 +37,7 @@ import (
 	"alpheus-dev.org/alpheus/internal/chunk"
 	"alpheus-dev.org/alpheus/internal/cli"
 	"alpheus-dev.org/alpheus/internal/controller"
+	"alpheus-dev.org/alpheus/internal/replay"
 	"alpheus-dev.org/alpheus/internal/store"
 )
 
@@ -133,7 +134,7 @@ func TestTestcase14(t *testing.T) {
 	// The last attempt is kept with the chunks it had open, the first of
 	// which is the one it failed on.
 	data, err := store.ReadAll(t.Context(), st3, chunk.FailurePrefix("testcase14", uid, "pass", 0, 2)+"failure.json")
-	var f controller.Failure
+	var f replay.Failure
 	if err == nil {
 		err = json.Unmarshal(data, &f)
 	}

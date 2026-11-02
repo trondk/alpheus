@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Builds a release: the CLI for Linux and macOS with the LICENSE, the agent
-# and controller images for linux/amd64 and linux/arm64, the Helm chart with
+# Builds a release: the CLI for Linux and macOS with the LICENSE, the agent,
+# controller and UI images for linux/amd64 and linux/arm64, the Helm chart with
 # their digests and the LICENSE in it, an SPDX SBOM for every binary and
 # image, and SHA256SUMS. Signs the images, the chart and SHA256SUMS with the
 # project's cosign key, without a transparency log, and attaches each
@@ -156,8 +156,9 @@ done
 
 : >"$OUT/images.txt"
 declare -A DIGEST
-for img in agent controller; do
+for img in agent controller ui; do
   bin="alpheus-$img"
+  [[ $img == ui ]] && bin=alpheus # the CLI, as alpheus ui --in-cluster (GO-143)
   repo="alpheus-dev/$img"
   ref="$REGISTRY/$repo:$VERSION"
   podman manifest rm "$ref" >/dev/null 2>&1 || true
@@ -193,13 +194,14 @@ done
 # --- Helm chart -----------------------------------------------------------
 
 # A released chart installs the images by digest (GO-24): the first
-# `digest: ""` in values.yaml is the controller's, the second the agent's.
+# `digest: ""` in values.yaml is the controller's, the second the agent's,
+# the third the UI's.
 cp -r charts/alpheus "$WORK/chart"
 cp LICENSE "$WORK/chart/"
-awk -v c="${DIGEST[controller]}" -v a="${DIGEST[agent]}" '
-  /^    digest: ""/ { n++; sub(/""/, "\"" (n == 1 ? c : a) "\"") } { print }
+awk -v c="${DIGEST[controller]}" -v a="${DIGEST[agent]}" -v u="${DIGEST[ui]}" '
+  /^    digest: ""/ { n++; sub(/""/, "\"" (n == 1 ? c : n == 2 ? a : u) "\"") } { print }
 ' charts/alpheus/values.yaml >"$WORK/chart/values.yaml"
-[[ "$(grep -c "digest: \"sha256:" "$WORK/chart/values.yaml")" == 2 ]] || die "digests not set in values.yaml"
+[[ "$(grep -c "digest: \"sha256:" "$WORK/chart/values.yaml")" == 3 ]] || die "digests not set in values.yaml"
 "$HELM" package "$WORK/chart" --version "${VERSION#v}" --app-version "$VERSION" -d "$WORK" >/dev/null
 # helm stamps the current time on every file; packed again with the
 # commit's time, the same commit gives the same chart.

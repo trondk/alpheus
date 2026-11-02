@@ -40,6 +40,45 @@ signalHub:
   enabled: true
   port: 7070
 
+ui:
+  # alpheus ui as a Deployment, a page the team shares (GO-143). Reach it
+  # with kubectl port-forward -n <release namespace> svc/alpheus-ui 7171,
+  # then http://localhost:7171/, or through the Ingress below.
+  enabled: false
+  image:
+    repository: alpheus-dev/ui
+    tag: ""
+    digest: ""
+    pullPolicy: IfNotPresent
+  # The namespaces whose runs' logs, error logs and failures the UI may
+  # read, and where its replay button starts pods. Reading them means
+  # reading the runs' storage Secrets there. ["*"] is every namespace.
+  # Runs and events of every namespace are always shown.
+  namespaces: []
+  # The replay button runs a failed attempt again as a pod in the run's
+  # namespace. Off, the page shows the command instead.
+  replay: true
+  resources:
+    requests: {cpu: 20m, memory: 64Mi}
+    limits: {memory: 256Mi}
+  # How the UI's Service is reached: ClusterIP for kubectl port-forward,
+  # or NodePort on nodePort, as the test cluster does. A NodePort reaches
+  # it from outside the cluster without a login.
+  service:
+    type: ClusterIP
+    nodePort: null
+  # Host names besides localhost the page answers to, such as the node's
+  # address with a NodePort. The Ingress's host is added by itself.
+  hosts: []
+  # Without a login of its own, the UI shows everyone who reaches it what
+  # its service account may see. Put an authenticating proxy in front of
+  # an Ingress.
+  ingress:
+    enabled: false
+    className: ""
+    host: ""
+    tls: []
+
 metrics:
   # prometheus.io/scrape annotations on the controller's pods; step pods
   # always have them, for the agent's metrics on port 9090 (GO-51).

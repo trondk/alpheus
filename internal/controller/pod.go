@@ -31,6 +31,7 @@ import (
 
 	"alpheus-dev.org/alpheus/api/v1alpha1"
 	"alpheus-dev.org/alpheus/internal/agent"
+	"alpheus-dev.org/alpheus/internal/replay"
 )
 
 // Labels on the pods of a run.
@@ -125,19 +126,10 @@ func (rc *Reconciler) pod(r *v1alpha1.StreamRun, g *graph, s *v1alpha1.Step, rep
 		settings = string(s.Settings.Raw)
 	}
 
-	agentEnv := []corev1.EnvVar{
+	agentEnv := append([]corev1.EnvVar{
 		{Name: "ALPHEUS_AGENT_CONFIG", Value: string(cfg)},
 		{Name: "ALPHEUS_METRICS_LISTEN", Value: fmt.Sprintf(":%d", AgentMetricsPort)},
-		{Name: "ALPHEUS_S3_ENDPOINT", Value: r.Spec.Storage.Endpoint},
-		{Name: "ALPHEUS_S3_BUCKET", Value: r.Spec.Storage.Bucket},
-		{Name: "ALPHEUS_S3_REGION", Value: r.Spec.Storage.Region},
-		{Name: "ALPHEUS_S3_TIMEOUT", Value: storageTimeout(r).String()},
-		secretEnv("ALPHEUS_S3_ACCESS_KEY", r.Spec.Storage.SecretRef, "AWS_ACCESS_KEY_ID"),
-		secretEnv("ALPHEUS_S3_SECRET_KEY", r.Spec.Storage.SecretRef, "AWS_SECRET_ACCESS_KEY"),
-	}
-	if b := r.Spec.Storage.ResultsBucket; b != "" {
-		agentEnv = append(agentEnv, corev1.EnvVar{Name: "ALPHEUS_S3_RESULTS_BUCKET", Value: b})
-	}
+	}, storageEnv(r)...)
 	volumes := []corev1.Volume{{
 		Name:         sharedVolume,
 		VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: s.Scratch}},
@@ -223,6 +215,87 @@ func (rc *Reconciler) pod(r *v1alpha1.StreamRun, g *graph, s *v1alpha1.Step, rep
 			}},
 			Containers: []corev1.Container{component},
 			Volumes:    volumes,
+		},
+	}, nil
+}
+
+// storageEnv is how the agent reaches the run's storage: the endpoint,
+// buckets and the keys from the run's Secret.
+func storageEnv(r *v1alpha1.StreamRun) []corev1.EnvVar {
+	env := []corev1.EnvVar{
+		{Name: "ALPHEUS_S3_ENDPOINT", Value: r.Spec.Storage.Endpoint},
+		{Name: "ALPHEUS_S3_BUCKET", Value: r.Spec.Storage.Bucket},
+		{Name: "ALPHEUS_S3_REGION", Value: r.Spec.Storage.Region},
+		{Name: "ALPHEUS_S3_TIMEOUT", Value: storageTimeout(r).String()},
+		secretEnv("ALPHEUS_S3_ACCESS_KEY", r.Spec.Storage.SecretRef, "AWS_ACCESS_KEY_ID"),
+		secretEnv("ALPHEUS_S3_SECRET_KEY", r.Spec.Storage.SecretRef, "AWS_SECRET_ACCESS_KEY"),
+	}
+	if b := r.Spec.Storage.ResultsBucket; b != "" {
+		env = append(env, corev1.EnvVar{Name: "ALPHEUS_S3_RESULTS_BUCKET", Value: b})
+	}
+	return env
+}
+
+// LabelReplay marks a replay pod with its run's name. Replay pods have no
+// LabelRun, so the controller never takes them for a step's pods.
+const LabelReplay = "alpheus-dev.org/replay"
+
+// ReplayContainer is the replay pod's container that fetches the inputs.
+const ReplayContainer = "fetch"
+
+// ReplayPod is a pod that runs a failed attempt again on its own in the
+// cluster (GO-141): the agent's image fetches the failure at prefix into
+// an emptyDir, checking each chunk, and then the step's image runs on it
+// in local mode at debug level, with the step's resources, envFrom and
+// scratch size, and without the network it needs in a run. It is owned by
+// the run, so it goes when the run does.
+func ReplayPod(r *v1alpha1.StreamRun, f *replay.Failure, prefix, agentImage, name string) (*corev1.Pod, error) {
+	var s *v1alpha1.Step
+	for i := range r.Spec.Steps {
+		if r.Spec.Steps[i].Name == f.Step {
+			s = &r.Spec.Steps[i]
+		}
+	}
+	if s == nil {
+		return nil, fmt.Errorf("run %s has no step %q", r.Name, f.Step)
+	}
+	const dir = "/replay"
+	var env []corev1.EnvVar
+	for _, kv := range replay.LocalEnv(f, dir+"/in", dir+"/out") {
+		k, v, _ := strings.Cut(kv, "=")
+		env = append(env, corev1.EnvVar{Name: k, Value: v})
+	}
+	mounts := []corev1.VolumeMount{{Name: "replay", MountPath: dir}}
+	component := corev1.Container{
+		Name: ComponentContainer, Image: f.Image, EnvFrom: s.EnvFrom, Env: env,
+		VolumeMounts: mounts, SecurityContext: containerSecurity(),
+		TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
+	}
+	if s.Resources != nil {
+		component.Resources = *s.Resources
+	}
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: name, Namespace: r.Namespace,
+			Labels: map[string]string{LabelReplay: r.Name, LabelStep: f.Step, LabelReplica: strconv.Itoa(f.Replica)},
+			OwnerReferences: []metav1.OwnerReference{{
+				APIVersion: v1alpha1.GroupVersion.String(), Kind: "StreamRun", Name: r.Name, UID: r.UID,
+			}},
+		},
+		Spec: corev1.PodSpec{
+			RestartPolicy:                corev1.RestartPolicyNever,
+			AutomountServiceAccountToken: ptr.To(false),
+			EnableServiceLinks:           ptr.To(false),
+			SecurityContext: &corev1.PodSecurityContext{
+				RunAsNonRoot: ptr.To(true), RunAsUser: ptr.To[int64](runUID), RunAsGroup: ptr.To[int64](runUID),
+				FSGroup: ptr.To[int64](runUID), SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+			},
+			InitContainers: []corev1.Container{{
+				Name: ReplayContainer, Image: agentImage, Args: []string{"-fetch-failure", prefix, "-dest", dir},
+				Env: storageEnv(r), VolumeMounts: mounts, SecurityContext: containerSecurity(),
+			}},
+			Containers: []corev1.Container{component},
+			Volumes: []corev1.Volume{{Name: "replay", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: s.Scratch}}}},
 		},
 	}, nil
 }

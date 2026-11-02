@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # Runs the end-to-end tests (SPEC 12.1) on the Vagrant test cluster: builds
-# and pushes the images, installs the CRD and the controller with the Helm
-# chart and those images, and runs test/e2e against Garage.
+# and pushes the images, installs the CRD, the controller and the UI with
+# the Helm chart and those images, and runs test/e2e against Garage. The
+# UI stays running on port 30717 of the VM (GO-143).
 #
 # Usage: hack/e2e.sh [go test flags], for example -run TestTestcase01
 #   SKIP_IMAGES=1  use the images in _out/images.env from the last run
+#   DEPLOY_ONLY=1  stop after installing, without the tests (make deploy)
 #   BENCH_*        the testcases' sizes (see test/e2e/e2e_test.go)
 #   HELM           the helm binary (helm)
 #   CHART          a released chart to install instead of charts/alpheus,
@@ -27,6 +29,8 @@ set -a
 . "$VAGRANT/_out/secrets.env"
 set +a
 
+IP="$("$VAGRANT/talos.sh" ip)"
+
 # The Helm chart with the images pinned by digest, from the test registry.
 REGISTRY_NAME="${CONTROLLER_IMAGE%%/*}"
 if [[ -n ${CHART:-} ]]; then
@@ -39,10 +43,17 @@ else
     --namespace alpheus-system --create-namespace --wait --timeout 180s --hide-notes \
     --set registry="$REGISTRY_NAME" \
     --set controller.image.digest="${CONTROLLER_IMAGE#*@}" \
-    --set agent.image.digest="${AGENT_IMAGE#*@}"
+    --set agent.image.digest="${AGENT_IMAGE#*@}" \
+    --set ui.enabled=true --set ui.image.digest="${UI_IMAGE#*@}" --set 'ui.namespaces={*}' \
+    --set ui.service.type=NodePort --set ui.service.nodePort=30717 --set "ui.hosts={$IP}"
 fi
 kubectl label namespace alpheus-system --overwrite pod-security.kubernetes.io/enforce=restricted >/dev/null
 kubectl -n alpheus-system rollout status deployment/alpheus-controller --timeout=180s
+if [[ -z ${CHART:-} ]]; then
+  kubectl -n alpheus-system rollout status deployment/alpheus-ui --timeout=180s
+  echo "alpheus ui on http://$IP:30717/"
+fi
+[[ ${DEPLOY_ONLY:-} == 1 ]] && exit 0
 
 # The key that can only read the results bucket, made by
 # vagrant/services.sh in Garage (GO-129).
@@ -57,7 +68,7 @@ ALPHEUS_E2E_S3_RESULTS_ACCESS_KEY="$RESULTS_ACCESS_KEY" \
 ALPHEUS_E2E_S3_RESULTS_SECRET_KEY="$RESULTS_SECRET_KEY" \
 ALPHEUS_E2E_S3_ACCESS_KEY="$GARAGE_DEFAULT_ACCESS_KEY" \
 ALPHEUS_E2E_S3_SECRET_KEY="$GARAGE_DEFAULT_SECRET_KEY" \
-ALPHEUS_E2E_S3_ENDPOINT="https://$("$VAGRANT/talos.sh" ip):30900" \
+ALPHEUS_E2E_S3_ENDPOINT="https://$IP:30900" \
 ALPHEUS_E2E_S3_CA_FILE="$VAGRANT/_out/ca.crt" \
 ALPHEUS_E2E_OUT="$OUT/bench" \
   go test -count=1 -v -timeout 20m ./test/e2e "$@"

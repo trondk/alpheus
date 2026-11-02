@@ -4,13 +4,6 @@
   --accent: #0e5f6b; --ok: #2f7d4a; --fail: #b3261e; --run: #8a6100; --code: #eef1ef;
   color-scheme: light;
 }
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #121618; --surface: #1b2124; --text: #e5eae8; --muted: #9aa5a8; --line: #313a3e;
-    --accent: #6cc3cf; --ok: #74c58f; --fail: #f2948d; --run: #e0b452; --code: #20282b;
-    color-scheme: dark;
-  }
-}
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 system-ui, sans-serif; }
 header { display: flex; gap: 1.5rem; align-items: center; padding: .6rem 1.2rem; border-bottom: 1px solid var(--line); background: var(--surface); }
@@ -68,3 +61,59 @@ pre { background: var(--code); border: 1px solid var(--line); border-radius: 4px
 .Warning { color: var(--fail); }
 code { font: 13px ui-monospace, monospace; background: var(--code); padding: 0 .25rem; border-radius: 3px; }
 @media (max-width: 40rem) { main { padding: .8rem; } th:nth-child(4), td:nth-child(4) { display: none; } }
+
+/* The dark look: a green-phosphor terminal in a dark room. The page starts
+   in the light look; the header's button switches, and the browser
+   remembers it. */
+:root[data-theme="dark"] {
+  --bg: #020805; --surface: #04110a; --text: #a6ffbf; --muted: #5fae78; --line: #124a2c;
+  --accent: #5fe8ff; --ok: #45ff86; --fail: #ff6b6b; --run: #e8f56a; --code: #031009;
+  --glow: rgba(70, 255, 140, .35);
+  color-scheme: dark;
+}
+:root[data-theme="dark"] body {
+  font-family: ui-monospace, "JetBrains Mono", "DejaVu Sans Mono", monospace;
+  font-size: 14px;
+  text-shadow: 0 0 6px var(--glow);
+  background:
+    repeating-linear-gradient(to bottom, rgba(0, 0, 0, 0) 0, rgba(0, 0, 0, 0) 2px, rgba(0, 0, 0, .22) 3px),
+    radial-gradient(ellipse at 50% 0%, #07301a 0%, var(--bg) 70%) fixed;
+}
+:root[data-theme="dark"] header { background: rgba(3, 16, 9, .92); border-bottom-color: var(--line); box-shadow: 0 0 18px rgba(40, 255, 120, .12); }
+:root[data-theme="dark"] .card,
+:root[data-theme="dark"] table,
+:root[data-theme="dark"] pre,
+:root[data-theme="dark"] .counts div {
+  background: rgba(4, 20, 11, .85);
+  border-color: var(--line);
+  box-shadow: inset 0 0 22px rgba(40, 255, 120, .07), 0 0 14px rgba(40, 255, 120, .08);
+}
+:root[data-theme="dark"] th { color: var(--accent); }
+:root[data-theme="dark"] tr.click:hover, :root[data-theme="dark"] tr.click:focus-within { background: rgba(60, 255, 140, .08); }
+:root[data-theme="dark"] .flow .box { fill: rgba(4, 20, 11, .9); filter: drop-shadow(0 0 4px var(--glow)); }
+:root[data-theme="dark"] .flow text { font-family: ui-monospace, monospace; }
+:root[data-theme="dark"] .flow .edge { stroke: var(--accent); color: var(--accent); }
+:root[data-theme="dark"] .flow .dot { filter: drop-shadow(0 0 3px currentColor); }
+:root[data-theme="dark"] button.primary { background: transparent; color: var(--ok); border-color: var(--ok); box-shadow: 0 0 10px var(--glow); }
+:root[data-theme="dark"] .ns input, :root[data-theme="dark"] .tabs select { background: var(--code); border-color: var(--line); color: var(--text); }
+.theme { margin-left: .5rem; }
+.live { margin-left: auto; }
+
+/* Cyberpunk: the Matrix's rain behind the page, a CRT vignette, neon. */
+#rain { position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: -1; pointer-events: none; display: none; }
+:root[data-theme="dark"] #rain { display: block; opacity: .22; }
+:root[data-theme="dark"] body::after {
+  content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 10;
+  background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0) 55%, rgba(0, 0, 0, .55) 100%);
+}
+:root[data-theme="dark"] h1, :root[data-theme="dark"] h2 {
+  text-transform: uppercase; letter-spacing: .12em; color: var(--ok);
+  text-shadow: 0 0 4px var(--ok), 0 0 14px rgba(69, 255, 134, .55);
+}
+:root[data-theme="dark"] .brand { color: var(--ok); text-transform: uppercase; letter-spacing: .25em; text-shadow: 0 0 6px var(--ok), 0 0 18px rgba(69, 255, 134, .6); }
+:root[data-theme="dark"] .brand::before { content: "> "; color: var(--accent); }
+:root[data-theme="dark"] a { color: var(--accent); text-shadow: 0 0 6px rgba(95, 232, 255, .5); }
+:root[data-theme="dark"] .status { letter-spacing: .05em; }
+:root[data-theme="dark"] .Failed { text-shadow: 0 0 8px rgba(255, 107, 107, .7); }
+:root[data-theme="dark"] .card { border-left: 3px solid var(--ok); }
+:root[data-theme="dark"] main { background: transparent; }
