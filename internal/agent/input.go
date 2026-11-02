@@ -251,7 +251,7 @@ func (a *Agent) waitForScratch(ctx context.Context, size int64) error {
 		return nil
 	}
 	if size > limit*9/10 {
-		return fmt.Errorf("chunk of %d bytes does not fit in the scratch folder of %d bytes", size, limit)
+		return fmt.Errorf("chunk of %d bytes %w of %d bytes", size, ErrScratchFull, limit)
 	}
 	return a.waitFor(ctx, func() (bool, error) { return a.scratch+size <= limit*9/10, nil })
 }
@@ -275,6 +275,7 @@ func (a *Agent) download(ctx context.Context, s *inStream, meta chunk.Chunk) (st
 		os.Remove(path)
 		return "", err
 	}
+	a.metrics.moved("in", meta.Bytes)
 	return path, nil
 }
 

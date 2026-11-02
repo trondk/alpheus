@@ -38,6 +38,9 @@ func TestTestcase13(t *testing.T) {
 	if r.Status.Phase != v1alpha1.RunFailed || !strings.Contains(r.Status.Message, "does not fit in the scratch folder") {
 		t.Fatalf("phase %s: %q, want Failed because a chunk does not fit in the scratch folder", r.Status.Phase, r.Status.Message)
 	}
+	if r.Status.Reason != v1alpha1.ReasonScratchFull || r.Status.FailedStep != "sink" {
+		t.Errorf("reason %q in step %q, want %s in sink (GO-138)", r.Status.Reason, r.Status.FailedStep, v1alpha1.ReasonScratchFull)
+	}
 	for _, ss := range r.Status.Steps {
 		for _, rs := range ss.Replicas {
 			if strings.Contains(strings.ToLower(rs.Message), "evict") {

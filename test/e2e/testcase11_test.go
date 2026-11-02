@@ -54,6 +54,9 @@ func TestTestcase11(t *testing.T) {
 		t.Fatalf("phase %s: %q, want Failed because the storage refused the keys", r.Status.Phase, r.Status.Message)
 	}
 	t.Logf("reason: %s", r.Status.Message)
+	if r.Status.Reason != v1alpha1.ReasonStorageRefused {
+		t.Errorf("reason %q, want %s (GO-138)", r.Status.Reason, v1alpha1.ReasonStorageRefused)
+	}
 	for _, ss := range r.Status.Steps {
 		for _, rs := range ss.Replicas {
 			if rs.Restarts != 0 {

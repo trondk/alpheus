@@ -1,0 +1,34 @@
+# testcase14 (SPEC 12.1, GO-138 to GO-141): a component with a bug. pass
+# fails on the chunk whose header has number 5, on every attempt, as a
+# component does when it cannot handle some data. One restart. The run must
+# fail saying why in codes and in the component's own words, keep both
+# attempts' logs and what they had open, and a replay of the last attempt
+# on its own must fail the same way, at debug level.
+# hack/e2e.sh sets the image, pinned by digest, the test sets the sizes,
+# and the test creates the Secret alpheus-s3 in its namespace.
+apiVersion: alpheus-dev.org/v1alpha1
+kind: StreamRun
+metadata:
+  name: testcase14
+spec:
+  steps:
+    - name: source
+      image: ${BENCH_IMAGE}
+      settings: {role: source, chunks: ${BENCH_CHUNKS}, size: ${BENCH_SIZE}, seed: 14}
+    - name: pass
+      image: ${BENCH_IMAGE}
+      maxRestarts: 1
+      maxOpen: 2
+      settings: {role: pass, fail: 5, delay: 1000}
+    - name: sink
+      image: ${BENCH_IMAGE}
+      settings: {role: sink, chunks: ${BENCH_CHUNKS}, size: ${BENCH_SIZE}, seed: 14}
+  edges:
+    - {from: source, to: pass}
+    - {from: pass, to: sink}
+  chunks: {maxBytes: 1Gi, maxUnacked: ${BENCH_MAX_UNACKED}}
+  storage:
+    endpoint: http://garage.storage.svc.cluster.local:3900
+    bucket: alpheus-data
+    region: garage
+    secretRef: alpheus-s3

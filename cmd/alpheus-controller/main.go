@@ -21,14 +21,18 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"strings"
 
 	"github.com/go-logr/logr"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
@@ -85,10 +89,18 @@ func run(agentImage string, allowTags bool, hubAddr, hubAddress, storageCA, metr
 	if err != nil {
 		return err
 	}
+	kube, err := kubernetes.NewForConfig(mgr.GetConfig())
+	if err != nil {
+		return err
+	}
 	rc := &controller.Reconciler{
 		Client:    mgr.GetClient(),
 		APIReader: mgr.GetAPIReader(),
 		Scheme:    scheme,
+		Recorder:  mgr.GetEventRecorder("alpheus-controller"),
+		Logs: func(ctx context.Context, namespace, pod, container string, previous bool) (io.ReadCloser, error) {
+			return kube.CoreV1().Pods(namespace).GetLogs(pod, &corev1.PodLogOptions{Container: container, Previous: previous}).Stream(ctx)
+		},
 		Options: controller.Options{
 			AgentImage:    agentImage,
 			AllowTags:     allowTags,

@@ -28,6 +28,9 @@ spec:
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
+    - jsonPath: .status.reason
+      name: Reason
+      type: string
     - jsonPath: .status.message
       name: Error
       type: string
@@ -591,6 +594,14 @@ spec:
                 x-kubernetes-list-map-keys:
                 - name
                 x-kubernetes-list-type: map
+              failedReplica:
+                format: int32
+                type: integer
+              failedStep:
+                description: |-
+                  FailedStep and FailedReplica are the replica whose failure stopped
+                  the run, when one did (GO-138).
+                type: string
               finishedAt:
                 description: FinishedAt is when the run reached Succeeded, Failed
                   or Cancelled.
@@ -614,6 +625,24 @@ spec:
                 - PartiallySucceeded
                 - Failed
                 - Cancelled
+                type: string
+              reason:
+                description: |-
+                  Reason is why the run did not succeed, as a code a program can rely
+                  on; Message says the same in words (GO-138).
+                enum:
+                - InvalidSpec
+                - Cancelled
+                - ComponentFailed
+                - AgentFailed
+                - StorageRefused
+                - StorageUnreachable
+                - StorageFull
+                - StorageError
+                - ScratchFull
+                - PodDeleted
+                - PodFailed
+                - FailedReplicas
                 type: string
               results:
                 description: |-
@@ -706,6 +735,18 @@ spec:
                     errorsDropped:
                       format: int64
                       type: integer
+                    failures:
+                      description: |-
+                        Failures is where failed attempts are kept, with the input chunks
+                        they had not finished, so each can be replayed on its own with
+                        alpheus replay: s3://<bucket>/results/<run>/<uid>/_failures/<step>/
+                        (GO-141).
+                      type: string
+                    logs:
+                      description: |-
+                        Logs is where the logs of the step's failed attempts are kept:
+                        s3://<bucket>/results/<run>/<uid>/_logs/<step>/ (GO-140).
+                      type: string
                     name:
                       description: Name of the step.
                       type: string
@@ -759,6 +800,24 @@ spec:
                           pod:
                             description: Pod is the name of the current attempt's
                               pod.
+                            type: string
+                          reason:
+                            description: |-
+                              Reason is why the replica's last attempt failed, as a code a program
+                              can rely on (GO-138). It is cleared when the replica succeeds.
+                            enum:
+                            - InvalidSpec
+                            - Cancelled
+                            - ComponentFailed
+                            - AgentFailed
+                            - StorageRefused
+                            - StorageUnreachable
+                            - StorageFull
+                            - StorageError
+                            - ScratchFull
+                            - PodDeleted
+                            - PodFailed
+                            - FailedReplicas
                             type: string
                           restarts:
                             description: Restarts is how many times the replica has

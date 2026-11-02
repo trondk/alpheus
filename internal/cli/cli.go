@@ -52,7 +52,10 @@ type Env struct {
 	OpenStore func(ctx context.Context, c client.Reader, r *v1alpha1.StreamRun, caFile string) (store.Store, error)
 	// NewS3 opens storage named by flags, for results gc.
 	NewS3 func(store.S3Config) (store.Store, error)
-	Now   func() time.Time
+	// RunCommand runs a program, such as podman for replay, and returns
+	// its exit code.
+	RunCommand func(ctx context.Context, args []string, stdout, stderr io.Writer) (int, error)
+	Now        func() time.Time
 }
 
 // Clients are the connections to one cluster.
@@ -67,13 +70,14 @@ type Clients struct {
 // storage.
 func DefaultEnv() *Env {
 	return &Env{
-		Stdin:     os.Stdin,
-		Stdout:    os.Stdout,
-		Stderr:    os.Stderr,
-		Connect:   connect,
-		OpenStore: controller.OpenStore,
-		NewS3:     func(c store.S3Config) (store.Store, error) { return store.NewS3(c) },
-		Now:       time.Now,
+		Stdin:      os.Stdin,
+		Stdout:     os.Stdout,
+		Stderr:     os.Stderr,
+		Connect:    connect,
+		OpenStore:  controller.OpenStore,
+		NewS3:      func(c store.S3Config) (store.Store, error) { return store.NewS3(c) },
+		RunCommand: runCommand,
+		Now:        time.Now,
 	}
 }
 
@@ -148,6 +152,8 @@ func commands() []command {
 		{"logs", "<run> [step]", "Show the logs of a run's containers", logsCmd},
 		{"cancel", "<run>", "Cancel a run", cancelCmd},
 		{"chunks", "<run> <edge>", "Show the manifest of an edge or a result", chunksCmd},
+		{"replay", "<run> <step>", "Run a failed attempt again on its own, on its inputs, at debug level", replayCmd},
+		{"ui", "", "Open a page in the browser that shows the runs live", uiCmd},
 		{"validate", "-f flow.yaml", "Check a flow file without creating it", validateCmd},
 		{"results", "gc [--dry-run]", "Delete results whose TTL has run out (GO-99)", resultsCmd},
 		{"version", "", "Show the CLI, controller and CRD versions", versionCmd},

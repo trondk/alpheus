@@ -37,6 +37,7 @@ _errors.jsonl next to them.
 """
 
 import json
+import logging
 import os
 import queue
 import re
@@ -300,6 +301,20 @@ class _Local(_Component):
             f.writelines(json.dumps(e) + "\n" for e in self._log)
 
 
+def _termination_message(msg):
+    """Leaves why the component failed where Kubernetes keeps it after the
+    pod is gone, so the run's status can say it (GO-139). The file exists
+    only in a container."""
+    path = "/dev/termination-log"
+    if not os.path.exists(path):
+        return
+    try:
+        with open(path, "w") as f:
+            f.write(msg[:2048])
+    except OSError:
+        pass
+
+
 def _stop(signum, frame):
     raise Stopped()
 
@@ -309,6 +324,13 @@ def run(handle):
     2 for a UsageError, 143 when stopped, and 1 for any other error."""
     global _current
     signal.signal(signal.SIGTERM, _stop)
+    # ALPHEUS_LOG_LEVEL sets the level of Python's logging; alpheus replay
+    # sets debug (GO-141).
+    level = os.environ.get("ALPHEUS_LOG_LEVEL", "")
+    if level:
+        levels = {"debug": logging.DEBUG, "info": logging.INFO, "warn": logging.WARNING, "error": logging.ERROR}
+        logging.basicConfig(level=levels.get(level.lower(), logging.INFO), stream=sys.stdout,
+                            format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     code = EXIT_OK
     try:
         settings = os.environ.get("ALPHEUS_SETTINGS", "")
@@ -330,4 +352,5 @@ def run(handle):
         code = {UsageError: EXIT_USAGE, Stopped: EXIT_STOPPED, KeyboardInterrupt: EXIT_STOPPED}.get(type(e), EXIT_FAILED)
         print(json.dumps({"time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "level": "ERROR",
                           "msg": "component failed", "error": str(e) or type(e).__name__, "exit_code": code}), flush=True)
+        _termination_message(f"{type(e).__name__}: {e}" if str(e) else type(e).__name__)
     sys.exit(code)

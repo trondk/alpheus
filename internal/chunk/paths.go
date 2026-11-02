@@ -124,6 +124,26 @@ func ErrorLogPrefix(run, uid, step string, replica int) string {
 	return path.Join("results", run, uid, "_errors", step, strconv.Itoa(replica)) + "/"
 }
 
+// LogsPrefix is where the logs of a failed attempt are kept:
+// results/<run>/<uid>/_logs/<step>/<replica>/attempt-<n>/ (GO-140). With a
+// replica below 0 it is the step's prefix, results/<run>/<uid>/_logs/<step>/.
+func LogsPrefix(run, uid, step string, replica, attempt int) string {
+	if replica < 0 {
+		return path.Join("results", run, uid, "_logs", step) + "/"
+	}
+	return path.Join("results", run, uid, "_logs", step, strconv.Itoa(replica), "attempt-"+strconv.Itoa(attempt)) + "/"
+}
+
+// FailurePrefix is where a failed attempt is kept for a replay:
+// results/<run>/<uid>/_failures/<step>/<replica>/attempt-<n>/ (GO-141).
+// With a replica below 0 it is the step's prefix.
+func FailurePrefix(run, uid, step string, replica, attempt int) string {
+	if replica < 0 {
+		return path.Join("results", run, uid, "_failures", step) + "/"
+	}
+	return path.Join("results", run, uid, "_failures", step, strconv.Itoa(replica), "attempt-"+strconv.Itoa(attempt)) + "/"
+}
+
 // Assign returns the consumer replica that gets chunk n of the stream from
 // producer replica p, when the consuming step has the given number of
 // replicas: (n + p) mod replicas (GO-76).

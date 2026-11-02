@@ -18,6 +18,7 @@ package cli
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -32,7 +33,9 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"alpheus-dev.org/alpheus/api/v1alpha1"
+	"alpheus-dev.org/alpheus/internal/chunk"
 	"alpheus-dev.org/alpheus/internal/controller"
+	"alpheus-dev.org/alpheus/internal/store"
 )
 
 // logLine is one line of a container's log, as logs prints it with -o.
@@ -51,6 +54,9 @@ func logsCmd(ctx context.Context, e *Env, args []string) error {
 	followLogs := fs.Bool("follow", false, "keep printing new lines until the pods end")
 	fs.BoolVar(followLogs, "f", false, "short for --follow")
 	tail := fs.Int64("tail", -1, "only the last lines of each container; -1 means all")
+	kept := fs.Bool("kept", false, "show the logs kept from failed attempts in the bucket, also after the pods are gone (GO-140)")
+	caFile := fs.String("ca-file", "", "with --kept: CA bundle for the storage endpoint")
+	endpoint := fs.String("endpoint", "", "with --kept: the S3 endpoint as seen from here, when spec.storage.endpoint is only reachable in the cluster")
 	pos, err := parse(fs, args, &o)
 	if err != nil {
 		return err
@@ -69,6 +75,13 @@ func logsCmd(ctx context.Context, e *Env, args []string) error {
 	if err := c.Client.Get(ctx, client.ObjectKey{Namespace: ns, Name: pos[0]}, &r); err != nil {
 		return notFound(err, ns, pos[0])
 	}
+	if *kept {
+		step := ""
+		if len(pos) == 2 {
+			step = pos[1]
+		}
+		return keptLogs(ctx, e, c, &r, step, *container, o.output, *caFile, *endpoint)
+	}
 	labels := client.MatchingLabels{controller.LabelRun: r.Name}
 	var order []string
 	for _, s := range r.Spec.Steps {
@@ -85,7 +98,7 @@ func logsCmd(ctx context.Context, e *Env, args []string) error {
 		return apiError(err)
 	}
 	if len(pods.Items) == 0 {
-		h := "pods are deleted when a run is cancelled or stopped, and after ttlAfterFinished"
+		h := "pods are deleted when a run is cancelled or stopped, and after ttlAfterFinished; the logs of failed attempts are kept: alpheus logs --kept " + r.Name
 		for _, s := range r.Status.Steps {
 			if s.ErrorLog != "" && (len(pos) == 1 || s.Name == pos[1]) {
 				h += "; the error log of " + s.Name + " is in " + s.ErrorLog
@@ -159,4 +172,63 @@ func logsCmd(ctx context.Context, e *Env, args []string) error {
 	}
 	wg.Wait()
 	return errors.Join(errs...)
+}
+
+// keptLogs prints the logs kept from failed attempts (GO-140), from
+// results/<run>/<uid>/_logs/<step>/<replica>/attempt-<n>/<container>.log.
+func keptLogs(ctx context.Context, e *Env, c *Clients, r *v1alpha1.StreamRun, step, container, output, caFile, endpoint string) error {
+	sr := r.DeepCopy()
+	if endpoint != "" {
+		sr.Spec.Storage.Endpoint = endpoint
+	}
+	st, err := e.OpenStore(ctx, c.Client, sr, caFile)
+	if err != nil {
+		return hint(err, "the kept logs are read with the keys in spec.storage.secretRef, so you need access to that Secret")
+	}
+	found := 0
+	for _, s := range r.Spec.Steps {
+		if step != "" && s.Name != step {
+			continue
+		}
+		prefix := chunk.LogsPrefix(r.Name, string(r.UID), s.Name, -1, 0)
+		for key, err := range st.List(ctx, prefix) {
+			if err != nil {
+				return hint(err, "if "+sr.Spec.Storage.Endpoint+" is only reachable inside the cluster, pass the address you reach it by with --endpoint")
+			}
+			// <replica>/attempt-<n>/<container>.log
+			parts := strings.Split(strings.TrimPrefix(key, prefix), "/")
+			if len(parts) != 3 || parts[2] != container+".log" {
+				continue
+			}
+			replica, _ := strconv.Atoi(parts[0])
+			attempt := strings.TrimPrefix(parts[1], "attempt-")
+			data, err := store.ReadAll(ctx, st, key)
+			if err != nil {
+				return err
+			}
+			found++
+			if output == "" {
+				fmt.Fprintf(e.Stdout, "==> %s replica %d attempt %s, %s <==\n", s.Name, replica, attempt, container)
+			}
+			sc := bufio.NewScanner(bytes.NewReader(data))
+			sc.Buffer(make([]byte, 64*1024), 1024*1024)
+			for sc.Scan() {
+				l := logLine{Pod: "attempt-" + attempt, Step: s.Name, Replica: replica, Container: container, Line: sc.Text()}
+				switch output {
+				case "json":
+					b, _ := json.Marshal(l)
+					fmt.Fprintf(e.Stdout, "%s\n", b)
+				case "yaml":
+					b, _ := yaml.Marshal(l)
+					fmt.Fprintf(e.Stdout, "---\n%s", b)
+				default:
+					fmt.Fprintln(e.Stdout, l.Line)
+				}
+			}
+		}
+	}
+	if found == 0 {
+		return fmt.Errorf("run %s has no kept logs of the %s container: they are kept when an attempt fails", r.Name, container)
+	}
+	return nil
 }

@@ -1,0 +1,52 @@
+{{- if .Values.metrics.serviceMonitor.enabled }}
+# The controller's metrics, for the Prometheus Operator (GO-51).
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: alpheus-controller
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "alpheus.labels" . | nindent 4 }}
+    {{- with .Values.metrics.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: alpheus-controller
+  endpoints:
+    - {port: metrics, interval: {{ .Values.metrics.serviceMonitor.interval }}}
+---
+# The agents' live metrics, in the step pods of every namespace.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: alpheus-agents
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "alpheus.labels" . | nindent 4 }}
+    {{- with .Values.metrics.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  namespaceSelector: {any: true}
+  selector:
+    matchExpressions:
+      - {key: alpheus-dev.org/run, operator: Exists}
+  podMetricsEndpoints:
+    - {port: metrics, interval: {{ .Values.metrics.serviceMonitor.interval }}}
+{{- end }}
+{{- if .Values.metrics.grafanaDashboard.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alpheus-dashboard
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "alpheus.labels" . | nindent 4 }}
+    {{- toYaml .Values.metrics.grafanaDashboard.labels | nindent 4 }}
+data:
+  alpheus.json: |-
+    {{- .Files.Get "files/dashboard.json" | nindent 4 }}
+{{- end }}

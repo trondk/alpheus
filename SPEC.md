@@ -1,11 +1,13 @@
 # Alpheus — implementeringsspecifikation (Go)
 
-Status: udkast, 2026-11-01. Trin 1–8 i afsnit 15 er bygget: API-typer og
+Status: udkast, 2026-11-02. Trin 1–8 i afsnit 15 er bygget: API-typer og
 CRD, chunks og lager, komponent-SDK'et, agenten, controlleren og
 end-to-end-tests på Kubernetes (Talos i en VM) med fan-out, fan-in,
 replikaer, genstart, backpressure og kaos, og fejltests (testcase09 til
-testcase13: lageret går ned, controlleren dør, afviste nøgler, fuld
-bucket, for lille scratch-mappe). Af trin 9 er CLI, Helm-chart,
+testcase14: lageret går ned, controlleren dør, afviste nøgler, fuld
+bucket, for lille scratch-mappe, en komponent med en fejl). Fejlsøgning
+(GO-138 til GO-142) er bygget: årsagskoder, events, gemte logs, genkørsel
+af et fejlet forsøg, `alpheus ui` og metrics. Af trin 9 er CLI, Helm-chart,
 skabeloner til komponenter i Go og Python og en guide til at skrive
 komponenter, flagskibet (ETL af store filer) og udgivelsesscriptet
 bygget; tilbage er infrastrukturen og første udgivelse. Åbne spørgsmål
@@ -105,7 +107,7 @@ alpheus/
 ├── examples/meter-etl/    flagskibet: ETL af store filer med elmåler-aflæsninger (findes)
 ├── test/
 │   ├── components/        testkomponenter: bench (findes), filter og sum i CSV (findes)
-│   ├── e2e/               testcase01 til testcase13 (findes)
+│   ├── e2e/               testcase01 til testcase14 (findes)
 │   └── internal/table/    CSV og decimaltal for testkomponenterne (findes)
 ├── vagrant/               testklyngen: Talos i en VM med Garage og Zot (findes)
 ├── docs/                  dokumentationen, som hjemmesiden henter ved byg (findes)
@@ -132,7 +134,7 @@ stadig kun foreslået.
 | gRPC | `google.golang.org/grpc`, `google.golang.org/protobuf` | Apache 2.0 / BSD | Godkendt, i brug (v1.83.2 og v1.36.12) |
 | Protobuf-generering | `protoc-gen-go`, `protoc-gen-go-grpc` (kun build, `go tool`), kørt af `buf` | BSD / Apache 2.0 | Godkendt sammen med gRPC (v1.36.12 og v1.6.2) |
 | CLI | `flag` fra standardbiblioteket; YAML med `sigs.k8s.io/yaml`, som Kubernetes-klienten allerede trækker med | BSD / Apache 2.0 | I brug. Cobra blev ikke godkendt |
-| Metrics | `github.com/prometheus/client_golang` | Apache 2.0 | Foreslået |
+| Metrics | `github.com/prometheus/client_golang` | Apache 2.0 | Godkendt, i brug (v1.24.0) |
 | Logning | `log/slog` fra standardbiblioteket | BSD | I brug |
 | Test | `sigs.k8s.io/controller-runtime/pkg/envtest`, `setup-envtest` (kun build, `go tool`) | Apache 2.0 | Godkendt, i brug (v0.25.2; Kubernetes 1.37.0) |
 | Sårbarheder | `golang.org/x/vuln` (`govulncheck`, kun build, `go tool`) | BSD | Godkendt, i brug (v1.9.0). Databasen hentes fra vuln.go.dev (USA) med `make vulndb`; den er offentlige data og kan spejles i EU |
@@ -417,6 +419,11 @@ Manifestformat (version 1):
 | GO-69 | SKAL | Lageret skal have stærk read-after-write-konsistens for nye objekter, overskrivninger og listning. Det gælder AWS S3, Garage og MinIO. Installationsdokumentationen nævner kravet, og agenten advarer ved opstart, hvis lageret ikke er på listen over testede lagre. |
 | GO-136 | SKAL | Er lageret nede eller svarer det med en midlertidig fejl (en afvist eller afbrudt forbindelse, 5xx, 429 eller 408), prøver agenten igen med eksponentiel backoff (0,5 til 15 sekunder) i op til `spec.storage.timeout` (standard `10m`, højst `24h`, uforanderlig) fra første fejl, uden at bruge en genstart. Komponenten mærker det som et langsomt kald, som ved backpressure. En læsning, der afbrydes midt i et objekt, fortsætter, hvor den slap, men kun fra samme version (ETag), så en læser aldrig får begyndelsen af én version og slutningen af en anden. En skrivning sendes igen; det er sikkert, fordi hver nøgle har én skriver (GO-30). Fejl, der siger, at forespørgslen er forkert, fx en afvist nøgle, en manglende bucket eller en fuld kvote, prøves ikke igen. Svarer lageret ikke inden for `timeout`, stopper agenten med årsagen "storage unreachable", som controlleren viser i trinnets status, og forsøget tæller som fejlet efter de almindelige regler (GO-67). Controlleren og CLI'en prøver ikke igen på denne måde: controlleren forsøger igen ved næste reconcile. |
 | GO-137 | SKAL | Afviser lageret runnets nøgler eller bucket (en ukendt nøgle, en forkert hemmelighed, ingen adgang eller ingen bucket), sætter controlleren runnet til `Failed` med det samme med årsagen "the storage refused the keys in Secret <navn>", uden at bruge genstarter, og sletter pod'erne. Det samme gælder oprydningen (GO-20): kan nøglerne ikke slette runnets data, logger controlleren, at data bliver liggende, og fjerner sine finalizers, så runnet og dets namespace kan slettes. |
+| GO-138 | SKAL | Et run, der ikke lykkes, har en årsag som en kode, der er en del af API'et, i `status.reason` og i `Ready`-betingelsens reason, ud over beskeden i ord: `InvalidSpec`, `Cancelled`, `ComponentFailed`, `AgentFailed`, `StorageRefused`, `StorageUnreachable`, `StorageFull`, `StorageError`, `ScratchFull`, `PodDeleted`, `PodFailed` og `FailedReplicas`. Hver replika har årsagen til sit sidste fejlede forsøg i `status.steps[].replicas[].reason`, og `status.failedStep` og `failedReplica` er den replika, hvis fejl stoppede runnet. Agenten sætter sin årsag foran sin termination message; er agenten fejlet, er dens årsag replikaens, da komponenten så kun fik SIGTERM. |
+| GO-139 | SKAL | En komponent, der fejler, siger hvorfor med egne ord: SDK'et i Go og Python-modulet skriver fejlen til `/dev/termination-log`, og komponent-containeren har `terminationMessagePolicy: FallbackToLogsOnError`, så slutningen af loggen bruges, når intet er skrevet. Controlleren skriver Kubernetes-events (events.k8s.io) på runnet, når det starter, ved hvert fejlet forsøg og genstart, når en replika giver op, og når runnet slutter, med årsagerne fra GO-138. Events og metrics skrives først, når statussen er skrevet, så et gentaget pas ikke tæller to gange. |
+| GO-140 | SKAL | Før controlleren erstatter eller sletter et fejlet forsøgs pod, gemmer den slutningen af hver containers log, højst 4 MiB, under `results/<run>/<uid>/_logs/<trin>/<replika>/attempt-<n>/` (`component.log`, `agent.log` og `agent-previous.log`, når agenten genstartede på stedet), med samme TTL som resultater. `status.steps[].logs` siger hvor, og `alpheus logs --kept` viser dem. Det er best effort og stopper aldrig runnet. |
+| GO-141 | SKAL | Et fejlet forsøg gemmes, så det kan køres igen for sig selv: `results/<run>/<uid>/_failures/<trin>/<replika>/attempt-<n>/failure.json` med årsag, besked, image (låst med digest), settings og input-chunks, og kopier af de input-chunks, forsøget havde fået og ikke var færdigt med, under `input/`: de første `maxOpen` i hver strøm, højst 16. Lageret kopierer dem selv (server-side copy). Fejl i lageret gemmer intet. `alpheus replay` henter dem, kontrollerer hver mod sin SHA-256 og kører samme image på dem i local mode med podman eller docker, som replika 0 af 1, uden netværk og med `ALPHEUS_LOG_LEVEL=debug`; `--with none` henter kun. SDK'erne sætter log-niveauet fra `ALPHEUS_LOG_LEVEL`, og Go-SDK'et tager flere porte i `ALPHEUS_LOCAL_INPUTS`. |
+| GO-142 | SKAL | `alpheus ui` serverer en side på brugerens maskine (standard `127.0.0.1:7171`) med brugerens kubeconfig, uden noget installeret i klyngen: runs, ét run med flow, replikaer, resultater og events, og én replika med tællere, fejllog, logs (live eller gemte) og fejlede forsøg med en knap, der kører `alpheus replay`. Den opdateres live med server-sent events. Den er skrivebeskyttet, bortset fra replay, svarer kun på forespørgsler til localhost (mod DNS rebinding), og replay kræver et token, som kun siden har. Siden er indlejret i CLI'en, i Go og ren HTML, CSS og JavaScript uden afhængigheder. |
 | GO-34 | BØR | Lokale kopier af chunks i scratch-mappen slettes, så snart de er ackede eller skrevet. |
 
 ### 7.4 Backpressure og genstart
@@ -606,7 +613,7 @@ sdk.Progress(ctx, "4,2 mio. rækker behandlet")
 | ID | Niveau | Krav |
 |---|---|---|
 | GO-50 | SKAL | Logs skrives med `log/slog` som JSON til stdout. Faste felter: `run`, `step`, `edge`, `chunk`, `component`. |
-| GO-51 | SKAL | Metrics eksponeres på `:9090/metrics`. Navne har præfikset `alpheus_`, fx `alpheus_chunks_total`, `alpheus_bytes_total`, `alpheus_edge_lag`, `alpheus_backpressure_seconds`, `alpheus_step_restarts_total`. |
+| GO-51 | SKAL | Metrics eksponeres på `:9090/metrics`, af controlleren og af hver agent i trin-pod'en (som har `prometheus.io/scrape`-annotationer; en komponent må ikke lytte på 9090). Navne har præfikset `alpheus_`: agenten har `alpheus_chunks_total`, `alpheus_bytes_total`, `alpheus_backpressure_seconds_total`, `alpheus_storage_retries_total`, `alpheus_component_count_total` og `alpheus_component_log_entries_total` med labels run, trin og replika; controlleren har `alpheus_runs_started_total`, `alpheus_runs_finished_total`, `alpheus_step_restarts_total` og `alpheus_edge_lag`. Chartet kan installere en ServiceMonitor, en PodMonitor og et Grafana-dashboard. |
 | GO-52 | SKAL | Controller og agent har `/healthz` og `/readyz`. |
 | GO-53 | BØR | OpenTelemetry-tracing kan slås til, med et span pr. chunk fra skrivning til ack. |
 
@@ -619,7 +626,7 @@ sdk.Progress(ctx, "4,2 mio. rækker behandlet")
 | Integration | controller mod API-server | envtest |
 | Integration | agent mod S3 | Garage i en container |
 | Driver | `builtin` | hub og klient i samme proces, og agenter gennem hub'en mod Garage |
-| E2E | testcase01 til testcase13 | Talos i en VM med Vagrant og libvirt (`vagrant/` i repo'ets rod) med Garage og Zot (12.2) |
+| E2E | testcase01 til testcase14 | Talos i en VM med Vagrant og libvirt (`vagrant/` i repo'ets rod) med Garage og Zot (12.2) |
 
 | ID | Niveau | Krav |
 |---|---|---|
@@ -882,6 +889,17 @@ bucketen før og efter.
 chunk med en fejl, der nævner scratch-mappen, før mappen bliver fuld og
 Kubernetes evicter pod'en; runnet er `Failed` med den årsag, og `sink`
 har brugt sin ene genstart.
+
+**testcase14: en komponent med en fejl (GO-138 til GO-141, GO-51).**
+`pass` fejler på den chunk, hvis header har nummer 5, i hvert forsøg, og
+har én genstart. Mens den arbejder, serverer `sink`s agent sine metrics
+(`alpheus_chunks_total`). Runnet skal være `Failed` med årsagen
+`ComponentFailed`, `failedStep` `pass`, komponentens egne ord i beskeden,
+events for start, genstart, opgivelse og slut, begge forsøgs logs i
+bucketen, og det sidste forsøg gemt med den chunk, det fejlede på, som
+første input. `alpheus replay --with none` henter inputs, og
+bench-komponenten fejler på dem i local mode på samme måde med
+debug-linjer i loggen.
 
 **Agent-test: hvert commit-punkt (GO-74).** En pod, der slås ihjel,
 rammer ikke et bestemt sted mellem to skrivninger til S3. Derfor kører

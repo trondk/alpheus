@@ -40,6 +40,22 @@ signalHub:
   enabled: true
   port: 7070
 
+metrics:
+  # prometheus.io/scrape annotations on the controller's pods; step pods
+  # always have them, for the agent's metrics on port 9090 (GO-51).
+  annotations: true
+  # A ServiceMonitor for the controller and a PodMonitor for the agents in
+  # every namespace, for the Prometheus Operator. Needs its CRDs.
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    labels: {}
+  # The Grafana dashboard as a ConfigMap, for Grafana's sidecar that loads
+  # dashboards by label.
+  grafanaDashboard:
+    enabled: false
+    labels: {grafana_dashboard: "1"}
+
 crds:
   # Installs and upgrades the StreamRun CRD. It is kept when the release is
   # uninstalled, since deleting it deletes every StreamRun.

@@ -61,6 +61,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 )
 
@@ -168,6 +169,13 @@ const (
 	EnvReplicas = "ALPHEUS_REPLICAS"
 	// EnvSocket is the agent's Unix socket, set by the controller.
 	EnvSocket = "ALPHEUS_SOCKET"
+	// EnvLocalInputs gives local mode several ports, as
+	// port=folder,port=folder; alpheus replay sets it (GO-141).
+	EnvLocalInputs = "ALPHEUS_LOCAL_INPUTS"
+	// EnvLogLevel is the level of the log, and of slog's default logger:
+	// debug, info (the default), warn or error. alpheus replay sets debug
+	// (GO-141).
+	EnvLogLevel = "ALPHEUS_LOG_LEVEL"
 )
 
 // Run runs the component and exits the process with its exit code. It
@@ -177,15 +185,39 @@ const (
 // ALPHEUS_LOCAL_INPUT and ALPHEUS_LOCAL_OUTPUT; otherwise it connects to
 // the agent at ALPHEUS_SOCKET.
 func Run(h Handler) {
-	log := slog.New(slog.NewJSONHandler(os.Stdout, nil)).With("component", component())
+	var level slog.Level
+	if err := level.UnmarshalText([]byte(os.Getenv(EnvLogLevel))); err != nil {
+		level = slog.LevelInfo
+	}
+	log := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level})).With("component", component())
+	// A component that logs with slog logs at the same level, to the same
+	// place.
+	slog.SetDefault(log)
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	err := run(ctx, log, h)
-	stop()
+	// The code first: stop cancels ctx, which would make every error look
+	// like SIGTERM.
 	code := exitCode(ctx, err)
+	stop()
 	if err != nil {
 		log.Error("component failed", "error", err.Error(), "exit_code", code)
+		terminationMessage(err.Error())
 	}
 	os.Exit(code)
+}
+
+// terminationMessage leaves why the component failed where Kubernetes
+// keeps it after the pod is gone, so the run's status can say it (GO-139).
+// The file exists only in a container.
+func terminationMessage(msg string) {
+	const path = "/dev/termination-log"
+	if _, err := os.Stat(path); err != nil {
+		return
+	}
+	if len(msg) > 2048 {
+		msg = msg[:2048]
+	}
+	_ = os.WriteFile(path, []byte(msg), 0o644)
 }
 
 func run(ctx context.Context, log *slog.Logger, h Handler) error {
@@ -235,6 +267,16 @@ func localConfigFromEnv() (LocalConfig, error) {
 	}
 	if dir := os.Getenv(EnvLocalInput); dir != "" {
 		cfg.Inputs = map[string]string{DefaultPort: dir}
+	}
+	if v := os.Getenv(EnvLocalInputs); v != "" {
+		cfg.Inputs = map[string]string{}
+		for _, pair := range strings.Split(v, ",") {
+			port, dir, ok := strings.Cut(pair, "=")
+			if !ok || port == "" || dir == "" {
+				return cfg, fmt.Errorf("%w: %s=%q, want port=folder,port=folder", ErrUsage, EnvLocalInputs, v)
+			}
+			cfg.Inputs[port] = dir
+		}
 	}
 	var err error
 	if cfg.Replica, err = intEnv(EnvReplica, 0); err != nil {

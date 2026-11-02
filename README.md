@@ -13,7 +13,7 @@ chunk is a file in any format, and Alpheus never opens it.
 
 > **Status: design phase.** The API, the chunk format, the component
 > SDK, the agent, the controller, the `alpheus` CLI and the Helm chart
-> exist, and thirteen test flows run end to end on a test cluster,
+> exist, and fourteen test flows run end to end on a test cluster,
 > including restarts, pods killed at random, storage that goes down and a
 > controller that dies. Nothing is released and no images
 > are published. Nothing here is ready for use, and everything may change.
@@ -52,6 +52,11 @@ appears in the next.
 - **Results stay.** A step's output that no other step reads is a
   result. It is kept after the run is cleaned up, and the run's status
   says where it is and which credentials read it.
+- **Failures you can find.** A failed run says why, as a code a program
+  can rely on and in the component's own words. The logs of failed
+  attempts and the chunks they had open are kept, `alpheus replay` runs
+  such an attempt again on its own at debug level, and `alpheus ui` shows
+  it all in the browser.
 
 **Alpheus moves files; it does not process data.** A chunk is a file
 in whatever format the components agree on: CSV, Parquet, JSON lines,

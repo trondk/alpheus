@@ -23,16 +23,21 @@ package controller
 import (
 	"context"
 	"fmt"
+	"io"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/tools/events"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -92,6 +97,13 @@ type Reconciler struct {
 	Scheme    *runtime.Scheme
 	Options   Options
 
+	// Recorder writes the run's Kubernetes events (GO-139); nil writes
+	// none.
+	Recorder events.EventRecorder
+	// Logs reads a container's log, for keeping the logs of failed
+	// attempts (GO-140); nil keeps none.
+	Logs func(ctx context.Context, namespace, pod, container string, previous bool) (io.ReadCloser, error)
+
 	caOnce sync.Mutex
 	ca     *CA
 }
@@ -102,7 +114,8 @@ type Reconciler struct {
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;create;delete;deletecollection;patch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,verbs=get;list;watch;create;update;patch
-// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups="",resources=pods/log,verbs=get
+// +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 
 // SetupWithManager registers the reconciler; it watches the pods it owns.
 func (rc *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
@@ -139,16 +152,20 @@ func (rc *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Res
 	}
 
 	before := r.DeepCopy()
-	res, err := rc.reconcile(ctx, &r)
+	ev := &eventBuffer{}
+	res, err := rc.reconcile(withEvents(ctx, ev), &r)
 	if !equality.Semantic.DeepEqual(before.Status, r.Status) {
 		r.Status.ObservedGeneration = r.Generation
 		if perr := rc.Status().Patch(ctx, &r, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})); perr != nil {
 			if apierrors.IsConflict(perr) {
+				// The events of this pass go with it: the next pass sees
+				// the same changes and records them again.
 				return ctrl.Result{Requeue: true}, nil
 			}
 			return ctrl.Result{}, perr
 		}
 	}
+	ev.flush(rc.Recorder, &r)
 	return res, err
 }
 
@@ -170,13 +187,13 @@ func (rc *Reconciler) reconcile(ctx context.Context, r *v1alpha1.StreamRun) (ctr
 	}
 	g, err := newGraph(&r.Spec)
 	if err != nil {
-		rc.fail(ctx, r, "invalid graph: "+err.Error())
+		rc.fail(ctx, r, v1alpha1.ReasonInvalidSpec, "invalid graph: "+err.Error())
 		return ctrl.Result{}, nil
 	}
 	if !rc.Options.AllowTags {
 		for _, s := range r.Spec.Steps {
 			if !Pinned(s.Image) {
-				rc.fail(ctx, r, fmt.Sprintf("step %s: image %s is not pinned by digest (@sha256:...)", s.Name, s.Image))
+				rc.fail(ctx, r, v1alpha1.ReasonInvalidSpec, fmt.Sprintf("step %s: image %s is not pinned by digest (@sha256:...)", s.Name, s.Image))
 				return ctrl.Result{}, nil
 			}
 		}
@@ -184,12 +201,14 @@ func (rc *Reconciler) reconcile(ctx context.Context, r *v1alpha1.StreamRun) (ctr
 	if st.Phase == "" {
 		st.Phase = v1alpha1.RunPending
 		st.StartedAt = ptrNow()
+		emit(ctx, corev1.EventTypeNormal, "Started", "Start", "started %d steps", len(r.Spec.Steps))
+		afterWrite(ctx, func() { runsStarted.WithLabelValues(r.Namespace).Inc() })
 	}
 	initStatus(r)
 
 	if r.Spec.Cancel {
 		// afterFinish deletes the pods once the phase is written.
-		st.Phase, st.Message = v1alpha1.RunCancelled, "cancelled"
+		st.Phase, st.Message, st.Reason = v1alpha1.RunCancelled, "cancelled", v1alpha1.ReasonCancelled
 		rc.finish(ctx, r, g)
 		return ctrl.Result{}, nil
 	}
@@ -197,17 +216,17 @@ func (rc *Reconciler) reconcile(ctx context.Context, r *v1alpha1.StreamRun) (ctr
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	stop := ""
+	var stop *stopped
 	for i := range r.Spec.Steps {
 		s := &r.Spec.Steps[i]
 		ss := &st.Steps[i]
 		for j := range ss.Replicas {
-			msg, err := rc.replica(ctx, r, g, s, &ss.Replicas[j], pods)
+			why, err := rc.replica(ctx, r, g, s, &ss.Replicas[j], pods)
 			if err != nil {
 				return ctrl.Result{}, err
 			}
-			if msg != "" && stop == "" {
-				stop = msg
+			if why != nil && stop == nil {
+				stop = why
 			}
 		}
 		ss.Phase = stepPhase(ss.Replicas)
@@ -215,8 +234,9 @@ func (rc *Reconciler) reconcile(ctx context.Context, r *v1alpha1.StreamRun) (ctr
 
 	// No agent can work with keys the storage refuses, and no restart
 	// helps, so the run fails at once (GO-137).
-	if err := rc.refreshStorage(ctx, r, g); store.Refused(err) && stop == "" {
-		stop = fmt.Sprintf("the storage refused the keys in Secret %s: %v", r.Spec.Storage.SecretRef, err)
+	if err := rc.refreshStorage(ctx, r, g); store.Refused(err) && !store.QuotaExceeded(err) && stop == nil {
+		stop = &stopped{reason: v1alpha1.ReasonStorageRefused,
+			msg: fmt.Sprintf("the storage refused the keys in Secret %s: %v", r.Spec.Storage.SecretRef, err)}
 	}
 
 	finished, failed, running := 0, 0, false
@@ -233,17 +253,20 @@ func (rc *Reconciler) reconcile(ctx context.Context, r *v1alpha1.StreamRun) (ctr
 	}
 	st.StepsFinished = fmt.Sprintf("%d/%d", finished, len(st.Steps))
 	switch {
-	case stop != "":
+	case stop != nil:
 		// The pods go in afterFinish, once the phase is written: deleted
 		// now, a status write that conflicts would leave the last attempt
 		// looking deleted instead of failed.
-		st.Phase, st.Message = v1alpha1.RunFailed, stop
+		st.Phase, st.Message, st.Reason = v1alpha1.RunFailed, stop.msg, stop.reason
+		if stop.step != "" {
+			st.FailedStep, st.FailedReplica = stop.step, ptr.To(stop.replica)
+		}
 		rc.finish(ctx, r, g)
 		return ctrl.Result{}, nil
 	case finished == len(st.Steps):
-		st.Phase, st.Message = v1alpha1.RunSucceeded, ""
+		st.Phase, st.Message, st.Reason = v1alpha1.RunSucceeded, "", ""
 		if failed > 0 {
-			st.Phase, st.Message = v1alpha1.RunPartiallySucceeded, fmt.Sprintf("%d steps had failed replicas", failed)
+			st.Phase, st.Message, st.Reason = v1alpha1.RunPartiallySucceeded, fmt.Sprintf("%d steps had failed replicas", failed), v1alpha1.ReasonFailedReplicas
 		}
 		rc.finish(ctx, r, g)
 		return ctrl.Result{}, nil
@@ -271,11 +294,11 @@ func initStatus(r *v1alpha1.StreamRun) {
 
 // replica advances one replica: it creates the pod of the current attempt,
 // follows it, and starts a new attempt when it failed and its pod is
-// confirmed gone (GO-67, GO-77). It returns a message when the replica
-// failed for good and the run must stop.
-func (rc *Reconciler) replica(ctx context.Context, r *v1alpha1.StreamRun, g *graph, s *v1alpha1.Step, rs *v1alpha1.ReplicaStatus, pods map[string]*corev1.Pod) (string, error) {
+// confirmed gone (GO-67, GO-77). It says why when the replica failed for
+// good and the run must stop.
+func (rc *Reconciler) replica(ctx context.Context, r *v1alpha1.StreamRun, g *graph, s *v1alpha1.Step, rs *v1alpha1.ReplicaStatus, pods map[string]*corev1.Pod) (*stopped, error) {
 	if rs.Phase == v1alpha1.StepSucceeded || rs.Phase == v1alpha1.StepFailed {
-		return "", nil
+		return nil, nil
 	}
 	name := podName(r.Name, s.Name, int(rs.Index), rs.Attempt)
 	pod := pods[name]
@@ -285,125 +308,160 @@ func (rc *Reconciler) replica(ctx context.Context, r *v1alpha1.StreamRun, g *gra
 			// server can confirm that it is gone.
 			gone, err := rc.podGone(ctx, r.Namespace, name)
 			if err != nil || !gone {
-				return "", err
+				return nil, err
 			}
 			// The attempt's pod existed and is gone, so it is safe to start
 			// another (GO-67). If the controller deleted it for the agent's
 			// restarts, that is the reason.
-			msg := "the pod was deleted"
+			reason, msg := v1alpha1.ReasonPodDeleted, "the pod was deleted"
 			if strings.HasPrefix(rs.Message, "the agent restarted ") {
-				msg = rs.Message
+				reason, msg = rs.Reason, rs.Message
 			}
-			return rc.failedAttempt(ctx, r, g, s, rs, msg)
+			return rc.failedAttempt(ctx, r, g, s, rs, reason, msg)
 		}
 		if rc.Options.HubAddress != "" {
 			if err := rc.ensureSignalSecret(ctx, r, s.Name, int(rs.Index), rs.Attempt); err != nil {
-				return "", err
+				return nil, err
 			}
 		}
 		p, err := rc.pod(r, g, s, int(rs.Index), rs.Attempt)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
 		if err := controllerutil.SetControllerReference(r, p, rc.Scheme); err != nil {
-			return "", err
+			return nil, err
 		}
 		if err := rc.Create(ctx, p); err != nil && !apierrors.IsAlreadyExists(err) {
-			return "", err
+			return nil, err
 		}
 		rs.Pod, rs.Phase = name, v1alpha1.StepPending
-		return "", nil
+		return nil, nil
 	}
 
 	rs.Pod = name
 	switch pod.Status.Phase {
 	case corev1.PodSucceeded:
-		rs.Phase, rs.Message = v1alpha1.StepSucceeded, ""
+		rs.Phase, rs.Message, rs.Reason = v1alpha1.StepSucceeded, "", ""
 	case corev1.PodFailed:
-		// Every container has stopped, so the attempt is over (GO-67).
-		return rc.failedAttempt(ctx, r, g, s, rs, failure(pod))
+		// Every container has stopped, so the attempt is over (GO-67). Its
+		// logs are kept before the next attempt replaces it (GO-140).
+		reason, msg := failure(pod)
+		rc.keepLogs(ctx, r, s, rs, pod)
+		return rc.failedAttempt(ctx, r, g, s, rs, reason, msg)
 	case corev1.PodRunning:
 		rs.Phase = v1alpha1.StepRunning
-		if agentRestarts(pod) >= agentRestartLimit {
-			rs.Message = fmt.Sprintf("the agent restarted %d times", agentRestarts(pod))
-			if m := agentMessage(pod); m != "" {
-				rs.Message += ": " + m
+		if agentRestarts(pod) >= agentRestartLimit && pod.DeletionTimestamp.IsZero() {
+			rs.Reason, rs.Message = v1alpha1.ReasonAgentFailed, fmt.Sprintf("the agent restarted %d times", agentRestarts(pod))
+			if reason, m := agentFailure(pod); m != "" {
+				rs.Reason, rs.Message = reason, rs.Message+": "+m
 			}
+			rc.keepLogs(ctx, r, s, rs, pod)
 			if err := rc.Delete(ctx, pod); err != nil && !apierrors.IsNotFound(err) {
-				return "", err
+				return nil, err
 			}
 		}
 	default:
 		// Pending, or Unknown: a pod on a node without contact blocks a new
 		// attempt until it is deleted (GO-67).
 	}
-	return "", nil
+	return nil, nil
+}
+
+// stopped is why a run must stop: a replica that failed for good, or keys
+// the storage refuses.
+type stopped struct {
+	reason  v1alpha1.Reason
+	msg     string
+	step    string
+	replica int32
 }
 
 // failedAttempt starts the next attempt, or fails the replica when it has
 // used all of its restarts. With failurePolicy continue the replica's
 // streams are closed instead of stopping the run (GO-97).
-func (rc *Reconciler) failedAttempt(ctx context.Context, r *v1alpha1.StreamRun, g *graph, s *v1alpha1.Step, rs *v1alpha1.ReplicaStatus, msg string) (string, error) {
+func (rc *Reconciler) failedAttempt(ctx context.Context, r *v1alpha1.StreamRun, g *graph, s *v1alpha1.Step, rs *v1alpha1.ReplicaStatus, reason v1alpha1.Reason, msg string) (*stopped, error) {
+	rs.Reason = reason
+	rc.captureFailure(ctx, r, g, s, rs, reason, msg)
 	if rs.Restarts < maxRestarts(s) {
+		emit(ctx, corev1.EventTypeWarning, string(reason), "Restart", "step %s replica %d attempt %d failed, restarting (%d of %d): %s",
+			s.Name, rs.Index, rs.Attempt, rs.Restarts+1, maxRestarts(s), msg)
+		afterWrite(ctx, func() { stepRestarts.WithLabelValues(r.Namespace, s.Name, string(reason)).Inc() })
 		rs.Restarts++
 		rs.Attempt++
 		rs.Pod, rs.Phase, rs.Message = "", v1alpha1.StepPending, fmt.Sprintf("attempt %d failed: %s", rs.Attempt-1, msg)
-		return "", nil
+		return nil, nil
 	}
+	emit(ctx, corev1.EventTypeWarning, string(reason), "GiveUp", "step %s replica %d attempt %d failed after %d restarts: %s",
+		s.Name, rs.Index, rs.Attempt, rs.Restarts, msg)
 	rs.Phase, rs.Message = v1alpha1.StepFailed, msg
 	if s.FailurePolicy == v1alpha1.FailureContinue {
 		failed, err := rc.closeStreams(ctx, r, g, s, int(rs.Index), int64(rs.Attempt)+1)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
 		rs.FailedChunks = failed
-		return "", nil
+		return nil, nil
 	}
-	return fmt.Sprintf("step %s replica %d failed after %d restarts: %s", s.Name, rs.Index, rs.Restarts, msg), nil
+	return &stopped{reason: reason, step: s.Name, replica: rs.Index,
+		msg: fmt.Sprintf("step %s replica %d failed after %d restarts: %s", s.Name, rs.Index, rs.Restarts, msg)}, nil
 }
 
-// failure describes why a pod failed, from the component's exit and, when
-// the agent failed too, the agent's reason, such as "storage unreachable"
-// (GO-136).
-func failure(pod *corev1.Pod) string {
-	msg := ""
+// failure says why a pod failed (GO-138): from the component's exit and
+// what it left in its termination message or log (GO-139), and when the
+// agent failed too, the agent's reason, such as storage that is
+// unreachable (GO-136). When the agent failed, its reason is the reason:
+// the component then only got SIGTERM.
+func failure(pod *corev1.Pod) (v1alpha1.Reason, string) {
+	reason, msg := v1alpha1.Reason(""), ""
 	for _, cs := range pod.Status.ContainerStatuses {
 		if cs.Name == ComponentContainer && cs.State.Terminated != nil {
 			t := cs.State.Terminated
-			msg = fmt.Sprintf("the component exited with code %d", t.ExitCode)
-			if t.Message != "" {
-				msg += ": " + t.Message
+			reason, msg = v1alpha1.ReasonComponentFailed, fmt.Sprintf("the component exited with code %d", t.ExitCode)
+			if m := strings.TrimSpace(t.Message); m != "" {
+				msg += ": " + m
 			}
 		}
 	}
 	if msg == "" {
-		msg = pod.Status.Message
+		reason, msg = v1alpha1.ReasonPodFailed, pod.Status.Message
 	}
-	if m := agentMessage(pod); m != "" {
+	if ar, m := agentFailure(pod); m != "" {
 		if msg == "" {
-			return "the agent failed: " + m
+			return ar, "the agent failed: " + m
 		}
-		return msg + "; the agent failed: " + m
+		return ar, msg + "; the agent failed: " + m
 	}
 	if msg == "" {
-		return "the pod failed"
+		return v1alpha1.ReasonPodFailed, "the pod failed"
 	}
-	return msg
+	return reason, msg
 }
 
-// agentMessage is the reason the agent last failed with, if it did.
-func agentMessage(pod *corev1.Pod) string {
+// agentFailure is the reason and message the agent last failed with, if it
+// did. The agent puts its reason in front of the message (GO-138).
+func agentFailure(pod *corev1.Pod) (v1alpha1.Reason, string) {
 	for _, cs := range pod.Status.InitContainerStatuses {
 		if cs.Name != AgentContainer {
 			continue
 		}
 		for _, t := range []*corev1.ContainerStateTerminated{cs.State.Terminated, cs.LastTerminationState.Terminated} {
 			if t != nil && t.ExitCode != 0 && t.Message != "" {
-				return strings.TrimSpace(t.Message)
+				return splitReason(strings.TrimSpace(t.Message))
 			}
 		}
 	}
-	return ""
+	return "", ""
+}
+
+// splitReason takes the reason off the front of an agent's message, such
+// as "StorageUnreachable: …". A message without one is AgentFailed.
+func splitReason(msg string) (v1alpha1.Reason, string) {
+	if code, rest, ok := strings.Cut(msg, ": "); ok {
+		if slices.Contains(v1alpha1.Reasons(), v1alpha1.Reason(code)) {
+			return v1alpha1.Reason(code), rest
+		}
+	}
+	return v1alpha1.ReasonAgentFailed, msg
 }
 
 func agentRestarts(pod *corev1.Pod) int32 {
@@ -460,8 +518,8 @@ func (rc *Reconciler) deletePods(ctx context.Context, r *v1alpha1.StreamRun) err
 }
 
 // fail ends a run that cannot start, such as one with an invalid graph.
-func (rc *Reconciler) fail(ctx context.Context, r *v1alpha1.StreamRun, msg string) {
-	r.Status.Phase, r.Status.Message = v1alpha1.RunFailed, msg
+func (rc *Reconciler) fail(ctx context.Context, r *v1alpha1.StreamRun, reason v1alpha1.Reason, msg string) {
+	r.Status.Phase, r.Status.Message, r.Status.Reason = v1alpha1.RunFailed, msg, reason
 	if r.Status.StartedAt == nil {
 		r.Status.StartedAt = ptrNow()
 	}
@@ -476,11 +534,28 @@ func (rc *Reconciler) finish(ctx context.Context, r *v1alpha1.StreamRun, g *grap
 	if r.Status.Phase != v1alpha1.RunSucceeded {
 		status = metav1.ConditionFalse
 	}
-	setCondition(r, v1alpha1.ConditionReady, status, string(r.Status.Phase), r.Status.Message)
+	reason := string(r.Status.Phase)
+	if r.Status.Reason != "" {
+		reason = string(r.Status.Reason)
+	}
+	setCondition(r, v1alpha1.ConditionReady, status, reason, r.Status.Message)
 	setCondition(r, v1alpha1.ConditionProgressing, metav1.ConditionFalse, string(r.Status.Phase), "")
 	if r.Status.Phase == v1alpha1.RunPartiallySucceeded {
-		setCondition(r, v1alpha1.ConditionDegraded, metav1.ConditionTrue, "FailedReplicas", r.Status.Message)
+		setCondition(r, v1alpha1.ConditionDegraded, metav1.ConditionTrue, string(v1alpha1.ReasonFailedReplicas), r.Status.Message)
 	}
+	typ, note := corev1.EventTypeNormal, "the run "+strings.ToLower(string(r.Status.Phase))
+	if r.Status.Phase != v1alpha1.RunSucceeded {
+		typ = corev1.EventTypeWarning
+	}
+	if r.Status.Message != "" {
+		note += ": " + r.Status.Message
+	}
+	emit(ctx, typ, reason, "Finish", "%s", note)
+	phase, ns, name := string(r.Status.Phase), r.Namespace, r.Name
+	afterWrite(ctx, func() {
+		runsFinished.WithLabelValues(ns, phase, string(r.Status.Reason)).Inc()
+		edgeLag.DeletePartialMatch(prometheus.Labels{"namespace": ns, "run": name})
+	})
 	if g != nil {
 		rc.refreshStorage(ctx, r, g)
 	}
@@ -537,6 +612,7 @@ func (rc *Reconciler) afterFinish(ctx context.Context, r *v1alpha1.StreamRun) (c
 // finalize deletes the run's storage prefix, not its results (GO-20,
 // GO-78), and lets the run go.
 func (rc *Reconciler) finalize(ctx context.Context, r *v1alpha1.StreamRun) error {
+	edgeLag.DeletePartialMatch(prometheus.Labels{"namespace": r.Namespace, "run": r.Name})
 	if !controllerutil.ContainsFinalizer(r, Finalizer) {
 		return nil
 	}

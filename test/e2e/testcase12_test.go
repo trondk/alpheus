@@ -60,6 +60,9 @@ func TestTestcase12(t *testing.T) {
 	if !strings.Contains(strings.ToLower(r.Status.Message), "quota") {
 		t.Errorf("the reason does not say the bucket is full: %s", r.Status.Message)
 	}
+	if r.Status.Reason != v1alpha1.ReasonStorageFull || r.Status.FailedStep != "source" {
+		t.Errorf("reason %q in step %q, want %s in source (GO-138)", r.Status.Reason, r.Status.FailedStep, v1alpha1.ReasonStorageFull)
+	}
 
 	stream := chunk.EdgeStream(string(r.UID), chunk.EdgeName("source", chunk.DefaultOutput, "sink"), 0)
 	m, err := manifestOf(t.Context(), quota, stream)

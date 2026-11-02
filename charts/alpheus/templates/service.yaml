@@ -13,3 +13,18 @@ spec:
   ports:
     - {name: signal-hub, port: {{ .Values.signalHub.port }}, targetPort: signal-hub}
 {{- end }}
+---
+# The controller's metrics (GO-51), for a ServiceMonitor or a scraper that
+# finds Services.
+apiVersion: v1
+kind: Service
+metadata:
+  name: alpheus-controller-metrics
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "alpheus.labels" . | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: alpheus-controller
+  ports:
+    - {name: metrics, port: 9090, targetPort: metrics}

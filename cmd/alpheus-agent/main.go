@@ -28,6 +28,8 @@ limitations under the License.
 //	ALPHEUS_S3_RESULTS_BUCKET  optional bucket for results/ (GO-129)
 //	ALPHEUS_S3_TIMEOUT     how long to keep trying while the storage is
 //	                       unreachable, as a Go duration; empty means 0 (GO-136)
+//	ALPHEUS_METRICS_LISTEN where /metrics is served, such as :9090; empty
+//	                       serves none (GO-51)
 //	ALPHEUS_SIGNAL_HUB     the builtin signal hub; empty means poll only
 //	ALPHEUS_SIGNAL_CA      the hub's CA, and this agent's certificate and
 //	ALPHEUS_SIGNAL_CERT    key, issued by the controller per run (GO-41)
@@ -46,11 +48,16 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"google.golang.org/grpc/credentials"
 
 	"alpheus-dev.org/alpheus/internal/agent"
@@ -67,15 +74,22 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 	if err := run(ctx, log, *exitOnFinish); err != nil {
+		if ctx.Err() != nil && errors.Is(err, context.Canceled) {
+			// Stopped, as Kubernetes stops a sidecar once the component
+			// has exited: not a failure, so no reason to report that
+			// would hide the component's (GO-138).
+			log.Info("agent stopped")
+			os.Exit(143)
+		}
 		log.Error("agent failed", "error", err.Error())
-		terminationMessage(err.Error())
+		terminationMessage(string(agent.Reason(err)) + ": " + err.Error())
 		os.Exit(1)
 	}
 }
 
 // terminationMessage leaves why the agent failed where Kubernetes shows it
-// in the pod's status, and the controller in the step's (GO-136). The file
-// exists only in a container.
+// in the pod's status, and the controller in the step's (GO-136), with the
+// reason code in front (GO-138). The file exists only in a container.
 func terminationMessage(msg string) {
 	const path = "/dev/termination-log"
 	if _, err := os.Stat(path); err != nil {
@@ -92,6 +106,17 @@ func run(ctx context.Context, log *slog.Logger, exitOnFinish bool) error {
 	if err != nil {
 		return err
 	}
+	reg := prometheus.NewRegistry()
+	reg.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
+	metrics := agent.NewMetrics(reg, cfg)
+	if addr := os.Getenv("ALPHEUS_METRICS_LISTEN"); addr != "" {
+		stopMetrics, err := serveMetrics(addr, reg, log)
+		if err != nil {
+			return err
+		}
+		defer stopMetrics()
+	}
+
 	s3 := store.S3Config{
 		Endpoint:  os.Getenv("ALPHEUS_S3_ENDPOINT"),
 		Bucket:    os.Getenv("ALPHEUS_S3_BUCKET"),
@@ -101,6 +126,7 @@ func run(ctx context.Context, log *slog.Logger, exitOnFinish bool) error {
 		CAFile:    os.Getenv("ALPHEUS_S3_CA_FILE"),
 		OnRetry: func(err error, wait time.Duration) {
 			log.Warn("storage unreachable; trying again", "error", err.Error(), "retry_in", wait.String())
+			metrics.Retried()
 		},
 	}
 	if t := os.Getenv("ALPHEUS_S3_TIMEOUT"); t != "" {
@@ -141,6 +167,7 @@ func run(ctx context.Context, log *slog.Logger, exitOnFinish bool) error {
 	if err != nil {
 		return err
 	}
+	a.SetMetrics(metrics)
 	if err := a.Run(ctx); err != nil {
 		return err
 	}
@@ -148,6 +175,28 @@ func run(ctx context.Context, log *slog.Logger, exitOnFinish bool) error {
 		<-ctx.Done()
 	}
 	return nil
+}
+
+// serveMetrics serves reg on addr's /metrics (GO-51) until the returned
+// function is called.
+func serveMetrics(addr string, reg *prometheus.Registry, log *slog.Logger) (func(), error) {
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return nil, fmt.Errorf("metrics: %w", err)
+	}
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
+	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	go func() {
+		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Warn("metrics server stopped", "error", err.Error())
+		}
+	}()
+	return func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(ctx)
+	}, nil
 }
 
 // hubCredentials is mTLS with the certificate the controller issued for the

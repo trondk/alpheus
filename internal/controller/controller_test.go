@@ -19,8 +19,10 @@ package controller
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
@@ -32,15 +34,18 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/go-logr/logr"
 	"github.com/minio/minio-go/v7"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"google.golang.org/grpc/credentials"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -70,7 +75,38 @@ var (
 	k8s client.Client
 	mem = store.NewMemory()
 	nsN atomic.Int32
+	rec = &recorder{}
 )
+
+// recorder keeps the events the controller records, per run.
+type recorder struct {
+	mu     sync.Mutex
+	events []recorded
+}
+
+type recorded struct {
+	namespace, name, typ, reason, action, note string
+}
+
+func (r *recorder) Eventf(regarding runtime.Object, _ runtime.Object, typ, reason, action, note string, args ...any) {
+	obj := regarding.(client.Object)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.events = append(r.events, recorded{obj.GetNamespace(), obj.GetName(), typ, reason, action, fmt.Sprintf(note, args...)})
+}
+
+// of returns the events recorded for a run.
+func (r *recorder) of(namespace, name string) []recorded {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []recorded
+	for _, e := range r.events {
+		if e.namespace == namespace && e.name == name {
+			out = append(out, e)
+		}
+	}
+	return out
+}
 
 // envtestAssets finds kube-apiserver and etcd: KUBEBUILDER_ASSETS, as
 // make test sets it, or the folder setup-envtest uses by default.
@@ -124,6 +160,11 @@ func runTests(m *testing.M, cfg *rest.Config) (int, error) {
 		Client:    mgr.GetClient(),
 		APIReader: mgr.GetAPIReader(),
 		Scheme:    scheme,
+		Recorder:  rec,
+		// envtest has no kubelet, so a container's log is made up.
+		Logs: func(_ context.Context, namespace, pod, container string, previous bool) (io.ReadCloser, error) {
+			return io.NopCloser(strings.NewReader(fmt.Sprintf("log of %s/%s %s previous=%t\n", namespace, pod, container, previous))), nil
+		},
 		Options: Options{
 			AgentImage: agentImage,
 			HubAddress: "alpheus-signal-hub.alpheus-system.svc:7070",
@@ -358,34 +399,56 @@ func TestPodsAndSuccess(t *testing.T) {
 }
 
 // A pod's failure names the agent's reason when the agent failed, such as
-// storage that stayed unreachable (GO-136).
+// storage that stayed unreachable (GO-136), with a reason code a program can
+// rely on (GO-138), and what the component left in its termination message
+// (GO-139).
 func TestFailureReason(t *testing.T) {
 	component := corev1.ContainerStatus{Name: ComponentContainer, State: corev1.ContainerState{
 		Terminated: &corev1.ContainerStateTerminated{ExitCode: 1},
 	}}
+	componentSaid := corev1.ContainerStatus{Name: ComponentContainer, State: corev1.ContainerState{
+		Terminated: &corev1.ContainerStateTerminated{ExitCode: 1, Message: "open input.csv: no such file\n"},
+	}}
+	stopped := corev1.ContainerStatus{Name: ComponentContainer, State: corev1.ContainerState{
+		Terminated: &corev1.ContainerStateTerminated{ExitCode: 143},
+	}}
 	agentFailed := corev1.ContainerStatus{Name: AgentContainer, LastTerminationState: corev1.ContainerState{
-		Terminated: &corev1.ContainerStateTerminated{ExitCode: 1, Message: "storage unreachable for 10m0s: put x: connection refused\n"},
+		Terminated: &corev1.ContainerStateTerminated{ExitCode: 1, Message: "StorageUnreachable: storage unreachable for 10m0s: put x: connection refused\n"},
+	}}
+	agentScratch := corev1.ContainerStatus{Name: AgentContainer, State: corev1.ContainerState{
+		Terminated: &corev1.ContainerStateTerminated{ExitCode: 1, Message: "ScratchFull: chunk of 4 bytes does not fit in the scratch folder of 1 bytes"},
+	}}
+	agentOld := corev1.ContainerStatus{Name: AgentContainer, State: corev1.ContainerState{
+		Terminated: &corev1.ContainerStateTerminated{ExitCode: 1, Message: "Unknown: something"},
 	}}
 	agentDone := corev1.ContainerStatus{Name: AgentContainer, State: corev1.ContainerState{
 		Terminated: &corev1.ContainerStateTerminated{ExitCode: 0, Message: "ignored"},
 	}}
 	for _, c := range []struct {
-		name  string
-		init  []corev1.ContainerStatus
-		conts []corev1.ContainerStatus
-		want  string
+		name   string
+		init   []corev1.ContainerStatus
+		conts  []corev1.ContainerStatus
+		reason v1alpha1.Reason
+		want   string
 	}{
-		{"component only", nil, []corev1.ContainerStatus{component}, "the component exited with code 1"},
-		{"agent finished", []corev1.ContainerStatus{agentDone}, []corev1.ContainerStatus{component}, "the component exited with code 1"},
-		{"both", []corev1.ContainerStatus{agentFailed}, []corev1.ContainerStatus{component},
+		{"component only", nil, []corev1.ContainerStatus{component}, v1alpha1.ReasonComponentFailed, "the component exited with code 1"},
+		{"component says why", nil, []corev1.ContainerStatus{componentSaid}, v1alpha1.ReasonComponentFailed,
+			"the component exited with code 1: open input.csv: no such file"},
+		{"agent finished", []corev1.ContainerStatus{agentDone}, []corev1.ContainerStatus{component}, v1alpha1.ReasonComponentFailed,
+			"the component exited with code 1"},
+		{"both", []corev1.ContainerStatus{agentFailed}, []corev1.ContainerStatus{component}, v1alpha1.ReasonStorageUnreachable,
 			"the component exited with code 1; the agent failed: storage unreachable for 10m0s: put x: connection refused"},
-		{"agent only", []corev1.ContainerStatus{agentFailed}, nil,
+		{"scratch", []corev1.ContainerStatus{agentScratch}, []corev1.ContainerStatus{stopped}, v1alpha1.ReasonScratchFull,
+			"the component exited with code 143; the agent failed: chunk of 4 bytes does not fit in the scratch folder of 1 bytes"},
+		{"agent only", []corev1.ContainerStatus{agentFailed}, nil, v1alpha1.ReasonStorageUnreachable,
 			"the agent failed: storage unreachable for 10m0s: put x: connection refused"},
-		{"nothing", nil, nil, "the pod failed"},
+		{"agent without a known reason", []corev1.ContainerStatus{agentOld}, nil, v1alpha1.ReasonAgentFailed,
+			"the agent failed: Unknown: something"},
+		{"nothing", nil, nil, v1alpha1.ReasonPodFailed, "the pod failed"},
 	} {
 		pod := &corev1.Pod{Status: corev1.PodStatus{InitContainerStatuses: c.init, ContainerStatuses: c.conts}}
-		if got := failure(pod); got != c.want {
-			t.Errorf("%s: %q, want %q", c.name, got, c.want)
+		if reason, got := failure(pod); reason != c.reason || got != c.want {
+			t.Errorf("%s: %s %q, want %s %q", c.name, reason, got, c.reason, c.want)
 		}
 	}
 }
@@ -397,12 +460,86 @@ func TestRestartsThenStop(t *testing.T) {
 	r := testcase03(ns, 1)
 	r.Spec.Steps[1].MaxRestarts = ptr.To[int32](1)
 	create(t, r)
+	uid := string(get(t, r).UID)
+
+	// generate committed two chunks, which filter never acked.
+	gen := chunk.NewManifest("sales", uid, "generate-filter", 0, 1)
+	for n := int64(1); n <= 2; n++ {
+		body := fmt.Sprintf("rows of chunk %d\n", n)
+		sum := sha256.Sum256([]byte(body))
+		gen.Append(chunk.Chunk{N: n, Ext: "csv", Bytes: int64(len(body)), SHA256: hex.EncodeToString(sum[:])})
+		mem.Put(t.Context(), chunk.EdgeStream(uid, "generate-filter", 0).ChunkKey(n, "csv"), strings.NewReader(body), int64(len(body)))
+	}
+	put(t, chunk.EdgeStream(uid, "generate-filter", 0).ManifestKey(), gen)
 
 	exit(t, waitPod(t, ns, "sales-filter-0-1"), 1)
 	exit(t, waitPod(t, ns, "sales-filter-0-2"), 1)
 	got := waitPhase(t, r, v1alpha1.RunFailed)
 	if rs := got.Status.Steps[1].Replicas[0]; rs.Restarts != 1 || rs.Attempt != 2 || !strings.Contains(got.Status.Message, "code 1") {
 		t.Errorf("replica %+v, message %q", rs, got.Status.Message)
+	}
+
+	// The failure says why in codes a program can rely on (GO-138).
+	st := got.Status
+	if st.Reason != v1alpha1.ReasonComponentFailed || st.FailedStep != "filter" || st.FailedReplica == nil || *st.FailedReplica != 0 {
+		t.Errorf("reason %q, failed step %q replica %v", st.Reason, st.FailedStep, st.FailedReplica)
+	}
+	if rs := st.Steps[1].Replicas[0]; rs.Reason != v1alpha1.ReasonComponentFailed {
+		t.Errorf("replica reason %q", rs.Reason)
+	}
+	if c := meta.FindStatusCondition(st.Conditions, v1alpha1.ConditionReady); c == nil || c.Reason != string(v1alpha1.ReasonComponentFailed) {
+		t.Errorf("Ready condition %+v", c)
+	}
+
+	// Each failed attempt is kept for a replay, with the chunks it had not
+	// finished (GO-141).
+	data, err := store.ReadAll(t.Context(), mem, chunk.FailurePrefix("sales", uid, "filter", 0, 1)+"failure.json")
+	var f Failure
+	if err == nil {
+		err = json.Unmarshal(data, &f)
+	}
+	if err != nil || f.Reason != v1alpha1.ReasonComponentFailed || f.Image != r.Spec.Steps[1].Image || len(f.Inputs) != 2 || f.Inputs[0].Port != "default" {
+		t.Fatalf("failure %+v (%v)", f, err)
+	}
+	copied, err := store.ReadAll(t.Context(), mem, chunk.FailurePrefix("sales", uid, "filter", 0, 1)+"input/"+f.Inputs[1].File)
+	if err != nil || string(copied) != "rows of chunk 2\n" {
+		t.Errorf("copied chunk %q (%v)", copied, err)
+	}
+	if want := "s3://alpheus-data/" + chunk.FailurePrefix("sales", uid, "filter", -1, 0); st.Steps[1].Failures != want {
+		t.Errorf("failures %q, want %q", st.Steps[1].Failures, want)
+	}
+
+	// Both attempts' logs are kept (GO-140).
+	for attempt := 1; attempt <= 2; attempt++ {
+		key := chunk.LogsPrefix("sales", uid, "filter", 0, attempt) + "component.log"
+		data, err := store.ReadAll(t.Context(), mem, key)
+		if err != nil || !strings.Contains(string(data), fmt.Sprintf("sales-filter-0-%d component", attempt)) {
+			t.Errorf("%s: %q (%v)", key, data, err)
+		}
+	}
+	if want := "s3://alpheus-data/" + chunk.LogsPrefix("sales", uid, "filter", -1, 0); st.Steps[1].Logs != want {
+		t.Errorf("logs %q, want %q", st.Steps[1].Logs, want)
+	}
+
+	// The metrics count the restart and the failed run (GO-51), once each.
+	eventually(t, "metrics", func() string {
+		restarts := testutil.ToFloat64(stepRestarts.WithLabelValues(ns, "filter", string(v1alpha1.ReasonComponentFailed)))
+		failed := testutil.ToFloat64(runsFinished.WithLabelValues(ns, string(v1alpha1.RunFailed), string(v1alpha1.ReasonComponentFailed)))
+		if restarts != 1 || failed != 1 {
+			return fmt.Sprintf("restarts %v, failed runs %v", restarts, failed)
+		}
+		return ""
+	})
+
+	// The events tell the story (GO-139).
+	var actions []string
+	for _, e := range rec.of(ns, "sales") {
+		actions = append(actions, e.action+"/"+e.reason)
+	}
+	for _, want := range []string{"Start/Started", "Restart/ComponentFailed", "GiveUp/ComponentFailed", "Finish/ComponentFailed"} {
+		if !slices.Contains(actions, want) {
+			t.Errorf("events %v, want %s", actions, want)
+		}
 	}
 	eventually(t, "pods deleted", func() string {
 		if n := len(pods(t, ns)); n > 0 {
@@ -460,6 +597,9 @@ func TestFailurePolicyContinue(t *testing.T) {
 		exit(t, waitPod(t, ns, name), 0)
 	}
 	got := waitPhase(t, r, v1alpha1.RunPartiallySucceeded)
+	if got.Status.Reason != v1alpha1.ReasonFailedReplicas {
+		t.Errorf("reason %q", got.Status.Reason)
+	}
 	if rs := got.Status.Steps[1].Replicas[0]; rs.Phase != v1alpha1.StepFailed || rs.FailedChunks != 2 {
 		t.Errorf("replica %+v, want failed with 2 failed chunks, 4 and 6", rs)
 	}
@@ -541,9 +681,13 @@ func TestCancel(t *testing.T) {
 	ns := namespace(t)
 	r := create(t, testcase03(ns, 1))
 	waitPod(t, ns, "sales-sum-0-1")
-	cur := get(t, r)
-	cur.Spec.Cancel = true
-	if err := k8s.Update(t.Context(), cur); err != nil {
+	// The controller writes the status meanwhile, so the update may need
+	// the latest version.
+	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		cur := get(t, r)
+		cur.Spec.Cancel = true
+		return k8s.Update(t.Context(), cur)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	waitPhase(t, r, v1alpha1.RunCancelled)
@@ -634,6 +778,9 @@ func TestRefusedKeys(t *testing.T) {
 	r.Spec.Storage.Bucket = refusedBucket
 	create(t, r)
 	got := waitPhase(t, r, v1alpha1.RunFailed)
+	if got.Status.Reason != v1alpha1.ReasonStorageRefused || got.Status.FailedStep != "" {
+		t.Errorf("reason %q, failed step %q", got.Status.Reason, got.Status.FailedStep)
+	}
 	if !strings.Contains(got.Status.Message, "the storage refused the keys in Secret alpheus-s3") ||
 		!strings.Contains(got.Status.Message, "InvalidAccessKeyId") && !strings.Contains(got.Status.Message, "access key") {
 		t.Errorf("message %q", got.Status.Message)

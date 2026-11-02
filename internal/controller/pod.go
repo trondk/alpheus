@@ -45,12 +45,15 @@ const (
 const (
 	ComponentContainer = "component"
 	AgentContainer     = "agent"
-	sharedVolume       = "alpheus"
-	sharedPath         = "/run/alpheus"
-	socketPath         = sharedPath + "/agent.sock"
-	signalVolume       = "signal"
-	signalPath         = "/etc/alpheus/signal"
-	runUID             = 65532
+	// AgentMetricsPort is where the agent serves /metrics (GO-51). The
+	// component shares the pod's network, so it must not listen on it.
+	AgentMetricsPort = 9090
+	sharedVolume     = "alpheus"
+	sharedPath       = "/run/alpheus"
+	socketPath       = sharedPath + "/agent.sock"
+	signalVolume     = "signal"
+	signalPath       = "/etc/alpheus/signal"
+	runUID           = 65532
 )
 
 // podName is unique per run, step, replica and attempt, and at most 63
@@ -124,6 +127,7 @@ func (rc *Reconciler) pod(r *v1alpha1.StreamRun, g *graph, s *v1alpha1.Step, rep
 
 	agentEnv := []corev1.EnvVar{
 		{Name: "ALPHEUS_AGENT_CONFIG", Value: string(cfg)},
+		{Name: "ALPHEUS_METRICS_LISTEN", Value: fmt.Sprintf(":%d", AgentMetricsPort)},
 		{Name: "ALPHEUS_S3_ENDPOINT", Value: r.Spec.Storage.Endpoint},
 		{Name: "ALPHEUS_S3_BUCKET", Value: r.Spec.Storage.Bucket},
 		{Name: "ALPHEUS_S3_REGION", Value: r.Spec.Storage.Region},
@@ -165,6 +169,9 @@ func (rc *Reconciler) pod(r *v1alpha1.StreamRun, g *graph, s *v1alpha1.Step, rep
 		},
 		VolumeMounts:    []corev1.VolumeMount{{Name: sharedVolume, MountPath: sharedPath}},
 		SecurityContext: containerSecurity(),
+		// A component that fails without writing /dev/termination-log
+		// still says why: Kubernetes keeps the end of its log (GO-139).
+		TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
 	}
 	if s.Resources != nil {
 		component.Resources = *s.Resources
@@ -179,6 +186,13 @@ func (rc *Reconciler) pod(r *v1alpha1.StreamRun, g *graph, s *v1alpha1.Step, rep
 				LabelStep:    s.Name,
 				LabelReplica: strconv.Itoa(replica),
 				LabelAttempt: strconv.Itoa(int(attempt)),
+			},
+			// The agent's live metrics, for a Prometheus that scrapes by
+			// annotation (GO-51).
+			Annotations: map[string]string{
+				"prometheus.io/scrape": "true",
+				"prometheus.io/port":   strconv.Itoa(AgentMetricsPort),
+				"prometheus.io/path":   "/metrics",
 			},
 		},
 		Spec: corev1.PodSpec{
@@ -197,6 +211,7 @@ func (rc *Reconciler) pod(r *v1alpha1.StreamRun, g *graph, s *v1alpha1.Step, rep
 				Image:           rc.Options.AgentImage,
 				RestartPolicy:   ptr.To(corev1.ContainerRestartPolicyAlways),
 				Env:             agentEnv,
+				Ports:           []corev1.ContainerPort{{Name: "metrics", ContainerPort: AgentMetricsPort}},
 				VolumeMounts:    agentMounts,
 				SecurityContext: containerSecurity(),
 				Resources: corev1.ResourceRequirements{

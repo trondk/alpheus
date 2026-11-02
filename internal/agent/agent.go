@@ -37,6 +37,7 @@ import (
 
 	"google.golang.org/grpc"
 
+	"alpheus-dev.org/alpheus/api/v1alpha1"
 	"alpheus-dev.org/alpheus/internal/chunk"
 	"alpheus-dev.org/alpheus/internal/pb/componentpb"
 	"alpheus-dev.org/alpheus/internal/signal"
@@ -49,6 +50,28 @@ var ErrNotDeterministic = errors.New("the source is not deterministic")
 
 // ErrNoComponent means the component did not connect in time (GO-29).
 var ErrNoComponent = errors.New("the component did not connect")
+
+// ErrScratchFull is returned when a chunk cannot fit in the scratch folder,
+// even an empty one (GO-106).
+var ErrScratchFull = errors.New("does not fit in the scratch folder")
+
+// Reason is the code the agent fails with for err, which it puts in front
+// of its termination message for the controller (GO-138).
+func Reason(err error) v1alpha1.Reason {
+	switch {
+	case errors.Is(err, ErrScratchFull):
+		return v1alpha1.ReasonScratchFull
+	case errors.Is(err, store.ErrUnreachable):
+		return v1alpha1.ReasonStorageUnreachable
+	case store.QuotaExceeded(err):
+		return v1alpha1.ReasonStorageFull
+	case store.Refused(err):
+		return v1alpha1.ReasonStorageRefused
+	case store.Answered(err):
+		return v1alpha1.ReasonStorageError
+	}
+	return v1alpha1.ReasonAgentFailed
+}
 
 // gracePeriod is how long Run waits for the component's calls to end after
 // Finish, before it closes the socket.
@@ -82,6 +105,7 @@ type Agent struct {
 	rr       map[string]int // deterministic order's next stream, per port
 	scratch  int64          // bytes of known files in the scratch folder
 	obs      *observer
+	metrics  *Metrics
 	contact  bool // the component has called the agent
 	finished bool
 	err      error // fatal; stops the agent
@@ -117,6 +141,10 @@ func New(cfg Config, st store.Store, sig signal.Driver, log *slog.Logger) (*Agen
 	})
 	return a, nil
 }
+
+// SetMetrics makes the agent record its live metrics in m (GO-51). Call it
+// before Run.
+func (a *Agent) SetMetrics(m *Metrics) { a.metrics = m }
 
 // source reports whether the step has no incoming edges (GO-91).
 func (a *Agent) source() bool { return len(a.cfg.Inputs) == 0 }
@@ -203,7 +231,11 @@ func (a *Agent) fail(err error) {
 	defer a.mu.Unlock()
 	if a.err == nil && !a.finished {
 		a.err = err
-		a.log.Error("agent failed", "error", err.Error())
+		if errors.Is(err, context.Canceled) {
+			a.log.Info("agent stopping") // SIGTERM, not a failure
+		} else {
+			a.log.Error("agent failed", "error", err.Error())
+		}
 	}
 	a.notify()
 }

@@ -19,8 +19,13 @@ package cli
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -97,6 +102,10 @@ type harness struct {
 	stdin  string
 	stdout bytes.Buffer
 	stderr bytes.Buffer
+	// commands are the programs RunCommand was asked to run, and exitCode
+	// what it answers.
+	commands [][]string
+	exitCode int
 }
 
 func newHarness(t *testing.T) *harness {
@@ -121,6 +130,11 @@ func (h *harness) env() *Env {
 		},
 		NewS3: func(store.S3Config) (store.Store, error) { return h.mem, nil },
 		Now:   func() time.Time { return h.now },
+		RunCommand: func(_ context.Context, args []string, stdout, _ io.Writer) (int, error) {
+			h.commands = append(h.commands, args)
+			fmt.Fprintln(stdout, "component output")
+			return h.exitCode, nil
+		},
 	}
 }
 
@@ -530,4 +544,150 @@ func TestReference(t *testing.T) {
 	if strings.Count(ref, "`--kubeconfig`") != 1 {
 		t.Error("the common flags are listed more than once")
 	}
+}
+
+// replay fetches a failed attempt's inputs, checked, and runs the same
+// image on them in local mode at debug level (GO-141); logs --kept shows
+// the attempt's logs (GO-140).
+func TestReplayAndKeptLogs(t *testing.T) {
+	h := newHarness(t)
+	h.mustRun("run", "-f", h.file("flow.yaml", flow("rp", `  ttlAfterFinished: 1h`)))
+	r := h.get("rp")
+	uid, ctx := string(r.UID), context.Background()
+
+	body := "a,b\n1,2\n"
+	sum := sha256.Sum256([]byte(body))
+	prefix := chunk.FailurePrefix("rp", uid, "filter", 1, 2)
+	h.mem.Put(ctx, prefix+"input/read-filter-0-000003.csv", strings.NewReader(body), int64(len(body)))
+	f := controller.Failure{Version: 1, Run: "rp", UID: uid, Step: "filter", Replica: 1, Replicas: 2, Attempt: 2,
+		Reason: v1alpha1.ReasonComponentFailed, Message: "the component exited with code 1: bad row",
+		Image: "registry.example/filter" + pin, Settings: json.RawMessage(`{"match":"ERROR"}`),
+		Inputs: []controller.FailureInput{{Port: "default", Edge: "read-filter", N: 3, Bytes: int64(len(body)), SHA256: hex.EncodeToString(sum[:]), File: "read-filter-0-000003.csv"}}}
+	data, _ := json.Marshal(f)
+	h.mem.Put(ctx, prefix+"failure.json", bytes.NewReader(data), int64(len(data)))
+	// An older attempt, which replay passes over for the last one.
+	h.mem.Put(ctx, chunk.FailurePrefix("rp", uid, "filter", 1, 1)+"failure.json", strings.NewReader("{}"), 2)
+
+	dir := filepath.Join(t.TempDir(), "replay")
+	h.exitCode = 1
+	out := h.mustRun("replay", "rp", "filter", "--replica", "1", "--dir", dir, "-e", "TOKEN=x")
+	got, err := os.ReadFile(filepath.Join(dir, "in", "default", "read-filter-0-000003.csv"))
+	if err != nil || string(got) != body {
+		t.Fatalf("input %q (%v)", got, err)
+	}
+	if len(h.commands) != 1 {
+		t.Fatalf("commands %v", h.commands)
+	}
+	cmd := strings.Join(h.commands[0], " ")
+	for _, want := range []string{"podman run --rm --network=none", ":/replay:Z", "ALPHEUS_MODE=local", "ALPHEUS_LOG_LEVEL=debug",
+		"ALPHEUS_LOCAL_INPUT=/replay/in/default", `ALPHEUS_SETTINGS={"match":"ERROR"}`, "TOKEN=x", "registry.example/filter" + pin} {
+		if !strings.Contains(cmd, want) {
+			t.Errorf("command has no %q: %s", want, cmd)
+		}
+	}
+	for _, want := range []string{"attempt 2: ComponentFailed", "bad row", "1 chunks", "component output", "exited with code 1, as in the run"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("replay: no %q in\n%s", want, out)
+		}
+	}
+
+	// A chunk that changed is refused.
+	h.mem.Put(ctx, prefix+"input/read-filter-0-000003.csv", strings.NewReader("changed"), 7)
+	if code := h.run("replay", "rp", "filter", "--replica", "1", "--dir", dir, "--with", "none"); code != 1 || !strings.Contains(h.stderr.String(), "SHA-256") {
+		t.Errorf("changed chunk: exit %d, %q", code, h.stderr.String())
+	}
+	if code := h.run("replay", "rp", "filter", "--replica", "0", "--with", "none"); code != 1 || !strings.Contains(h.stderr.String(), "no kept failure") {
+		t.Errorf("no failure: exit %d, %q", code, h.stderr.String())
+	}
+
+	logPrefix := chunk.LogsPrefix("rp", uid, "filter", 1, 2)
+	h.mem.Put(ctx, logPrefix+"component.log", strings.NewReader("line one\nline two\n"), 18)
+	out = h.mustRun("logs", "rp", "filter", "--kept")
+	if !strings.Contains(out, "filter replica 1 attempt 2, component") || !strings.Contains(out, "line two") {
+		t.Errorf("logs --kept: %q", out)
+	}
+	if code := h.run("logs", "rp", "--kept", "-c", "agent"); code != 1 || !strings.Contains(h.stderr.String(), "no kept logs") {
+		t.Errorf("no agent logs: exit %d, %q", code, h.stderr.String())
+	}
+}
+
+// The ui answers only on localhost, serves the runs, a replica's kept logs
+// and failures, and runs replay only with the page's token (GO-142).
+func TestUI(t *testing.T) {
+	h := newHarness(t)
+	h.mustRun("run", "-f", h.file("flow.yaml", flow("u", "")))
+	r := h.get("u")
+	uid, ctx := string(r.UID), context.Background()
+	h.mem.Put(ctx, chunk.LogsPrefix("u", uid, "filter", 0, 1)+"component.log", strings.NewReader("boom\n"), 5)
+	f := controller.Failure{Version: 1, Run: "u", Step: "filter", Attempt: 1, Reason: v1alpha1.ReasonComponentFailed, Image: "x" + pin, Inputs: []controller.FailureInput{}}
+	data, _ := json.Marshal(f)
+	h.mem.Put(ctx, chunk.FailurePrefix("u", uid, "filter", 0, 1)+"failure.json", bytes.NewReader(data), int64(len(data)))
+	h.mem.Put(ctx, chunk.ErrorLogPrefix("u", uid, "filter", 0)+"log-000001.jsonl", strings.NewReader(`{"level":"error","code":"bad_row","message":"row 3"}`+"\n"), 53)
+
+	c, _ := h.env().Connect(Kube{})
+	u := &ui{e: h.env(), c: c, namespace: h.ns, token: "secret"}
+	srv := httptest.NewServer(u.handler())
+	defer srv.Close()
+	get := func(path string, host string) (int, string) {
+		req, _ := http.NewRequest("GET", srv.URL+path, nil)
+		if host != "" {
+			req.Host = host
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(b)
+	}
+	if code, body := get("/", ""); code != 200 || !strings.Contains(body, `content="secret"`) || !strings.Contains(body, h.ns) {
+		t.Errorf("page: %d %q", code, body)
+	}
+	if code, _ := get("/api/runs", "attacker.example:7171"); code != http.StatusForbidden {
+		t.Errorf("another host: %d, want 403", code)
+	}
+	if code, body := get("/api/runs", ""); code != 200 || !strings.Contains(body, `"name":"u"`) {
+		t.Errorf("runs: %d %q", code, body)
+	}
+	if code, body := get("/api/runs/"+h.ns+"/u", ""); code != 200 || !strings.Contains(body, `"events":[]`) {
+		t.Errorf("run: %d %q", code, body)
+	}
+	q := "?step=filter&replica=0"
+	if code, body := get("/api/runs/"+h.ns+"/u/attempts"+q, ""); code != 200 || !strings.Contains(body, `{"attempt":1,"logs":true,"failure":true}`) {
+		t.Errorf("attempts: %d %q", code, body)
+	}
+	if code, body := get("/api/runs/"+h.ns+"/u/logs"+q+"&attempt=1", ""); code != 200 || body != "boom\n" {
+		t.Errorf("logs: %d %q", code, body)
+	}
+	if code, body := get("/api/runs/"+h.ns+"/u/errors"+q, ""); code != 200 || !strings.Contains(body, "bad_row") {
+		t.Errorf("errors: %d %q", code, body)
+	}
+	if code, body := get("/api/runs/"+h.ns+"/u/failure"+q, ""); code != 200 || !strings.Contains(body, "ComponentFailed") {
+		t.Errorf("failure: %d %q", code, body)
+	}
+	if code, _ := get("/api/runs/"+h.ns+"/nope", ""); code != 404 {
+		t.Errorf("missing run: %d", code)
+	}
+
+	post := func(tok string) (int, string) {
+		req, _ := http.NewRequest("POST", srv.URL+"/api/runs/"+h.ns+"/u/replay"+q+"&attempt=1", nil)
+		if tok != "" {
+			req.Header.Set("X-Alpheus-Token", tok)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(b)
+	}
+	if code, _ := post(""); code != http.StatusForbidden || len(h.commands) != 0 {
+		t.Errorf("replay without the token: %d, commands %v", code, h.commands)
+	}
+	if code, body := post("secret"); code != 200 || len(h.commands) != 1 || !strings.Contains(body, "component output") {
+		t.Errorf("replay: %d %q, commands %v", code, body, h.commands)
+	}
+	os.RemoveAll("alpheus-replay") // replay's default folder, in the test's working directory
 }

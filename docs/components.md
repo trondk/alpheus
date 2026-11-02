@@ -2,7 +2,7 @@
 title: Writing components
 description: What a component is, how a run moves its files step by step, and how to write one in Go or Python, with templates to start from.
 weight: 10
-lastmod: 2026-11-01
+lastmod: 2026-11-02
 ---
 
 A component is a container image that does one step of a flow. It reads
@@ -218,6 +218,11 @@ component must write the same output for the same input. The old attempt
 is shut out: its certificate no longer works at the hub, and its writes
 to the manifests are refused.
 
+When an attempt fails, the controller keeps its logs and the input
+chunks it had open in the bucket, says why in `status.steps[].replicas[].reason`,
+and records an event. `alpheus replay` runs that attempt again on its own,
+on those chunks, at debug level. See [When a run fails](/docs/debugging/).
+
 If the storage goes down, no pod fails. The agents try again, waiting a
 little longer each time, up to 15 seconds, and the components' calls take
 longer meanwhile, as under backpressure. Only when the storage has not
@@ -273,6 +278,13 @@ The SDK exits with these codes, and the Python template does the same:
 | 1 | It failed; the replica is restarted |
 | 2 | Wrong settings or wrong use of the API |
 | 143 | It was stopped (SIGTERM) |
+
+When a component fails, the SDK writes the error to Kubernetes'
+termination message, so the run's status says why in the component's own
+words. Log what helps find a bug at debug level: `ALPHEUS_LOG_LEVEL` sets
+the level, of slog's default logger in Go and of the `logging` module in
+Python, and `alpheus replay` sets it to debug. Port 9090 of the pod is the
+agent's metrics, so a component must not listen on it.
 
 ## Components in Go
 
@@ -609,6 +621,8 @@ $ ALPHEUS_MODE=local \
   can be run step by step. That is what the log-report test does.
 - `ALPHEUS_REPLICA` and `ALPHEUS_REPLICAS` make the component read only
   the chunks that replica would get.
+- `ALPHEUS_LOCAL_INPUTS=port=folder,port=folder` gives a Go component
+  several ports.
 
 In Go, tests call `sdk.RunLocal` with the handler directly. See
 {{< repolink "templates/component-go/main_test.go" >}}.

@@ -70,8 +70,11 @@ Shows the component's log, or the agent's with `-c agent`, of every step or one.
 | Flag | What it does |
 |---|---|
 | `-c string` | the container: component or agent (default "component") |
+| `--ca-file string` | with --kept: CA bundle for the storage endpoint |
+| `--endpoint string` | with --kept: the S3 endpoint as seen from here, when spec.storage.endpoint is only reachable in the cluster |
 | `-f` | short for --follow |
 | `--follow` | keep printing new lines until the pods end |
+| `--kept` | show the logs kept from failed attempts in the bucket, also after the pods are gone (GO-140) |
 | `--tail int` | only the last lines of each container; -1 means all (default -1) |
 
 ## alpheus cancel
@@ -98,6 +101,40 @@ Reads the manifests of an edge, such as `filter-sum`, or of a result, `<step>.<o
 |---|---|
 | `--ca-file string` | CA bundle for the storage endpoint |
 | `--endpoint string` | the S3 endpoint as seen from here, when spec.storage.endpoint is only reachable in the cluster |
+
+## alpheus replay
+
+Run a failed attempt again on its own, on its inputs, at debug level.
+
+```
+alpheus replay <run> <step>
+```
+
+| Flag | What it does |
+|---|---|
+| `--attempt int` | the failed attempt; default: the last one kept |
+| `--ca-file string` | CA bundle for the storage endpoint |
+| `--dir string` | where the inputs go; default: ./alpheus-replay/RUN-STEP-REPLICA-ATTEMPT |
+| `-e value` | KEY=VALUE for the component, such as what the step's envFrom gives; can be repeated |
+| `--endpoint string` | the S3 endpoint as seen from here, when spec.storage.endpoint is only reachable in the cluster |
+| `--image string` | pull the component from here instead, such as a mirror's address for the same digest |
+| `--replica int` | the replica; default: the one that stopped the run, else 0 (default -1) |
+| `--with string` | run the component with podman or docker, or none to only fetch the inputs (default "podman") |
+
+## alpheus ui
+
+Open a page in the browser that shows the runs live.
+
+```
+alpheus ui
+```
+
+| Flag | What it does |
+|---|---|
+| `--ca-file string` | CA bundle for the storage endpoint |
+| `--endpoint string` | the S3 endpoint as seen from here, when spec.storage.endpoint is only reachable in the cluster |
+| `--listen string` | where the page is served; keep it on this machine (default "127.0.0.1:7171") |
+| `--no-open` | do not open the page in the browser |
 
 ## alpheus validate
 

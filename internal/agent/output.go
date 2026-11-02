@@ -458,6 +458,7 @@ func (a *Agent) upload(ctx context.Context, key string, f *outFile) error {
 	if err := a.store.Put(ctx, key, r, f.size); err != nil {
 		return fmt.Errorf("upload %s: %w", key, err)
 	}
+	a.metrics.moved("out", f.size)
 	return nil
 }
 
@@ -540,6 +541,7 @@ func (a *Agent) waitForConsumers(ctx context.Context, output string) error {
 			ts = append(ts, t)
 		}
 	}
+	var since time.Time // when the output started to wait
 	for {
 		blocked := false
 		for _, t := range ts {
@@ -573,7 +575,13 @@ func (a *Agent) waitForConsumers(ctx context.Context, output string) error {
 			}
 		}
 		if !blocked {
+			if !since.IsZero() {
+				a.metrics.waited(time.Since(since).Seconds())
+			}
 			return nil
+		}
+		if since.IsZero() {
+			since = time.Now()
 		}
 		a.mu.Lock()
 		ch := a.changed

@@ -100,10 +100,16 @@ func describe(w io.Writer, r *v1alpha1.StreamRun, now time.Time) {
 	fmt.Fprintf(w, "Namespace:\t%s\n", r.Namespace)
 	fmt.Fprintf(w, "UID:\t%s\n", r.UID)
 	phase := dash(string(st.Phase))
+	if st.Reason != "" {
+		phase += ": " + string(st.Reason)
+	}
 	if st.Message != "" {
 		phase += " (" + st.Message + ")"
 	}
 	fmt.Fprintf(w, "Phase:\t%s\n", phase)
+	if st.FailedStep != "" && st.FailedReplica != nil {
+		fmt.Fprintf(w, "Failed:\tstep %s replica %d\n", st.FailedStep, *st.FailedReplica)
+	}
 	fmt.Fprintf(w, "Steps finished:\t%s\n", dash(st.StepsFinished))
 	fmt.Fprintf(w, "Started:\t%s\n", when(st.StartedAt, now))
 	fmt.Fprintf(w, "Finished:\t%s\n", when(st.FinishedAt, now))
@@ -121,14 +127,14 @@ func describe(w io.Writer, r *v1alpha1.StreamRun, now time.Time) {
 			fmt.Fprintf(w, "%s\t%s\t%d/%d\t%d\t%d\t%d\t%s\n", s.Name, dash(string(s.Phase)), done, len(s.Replicas),
 				restarts, s.Errors, s.Warnings, counts(s.Counts))
 		}
-		fmt.Fprintln(w, "\nSTEP\tREPLICA\tPHASE\tATTEMPT\tPOD\tMESSAGE")
+		fmt.Fprintln(w, "\nSTEP\tREPLICA\tPHASE\tATTEMPT\tPOD\tREASON\tMESSAGE")
 		for _, s := range st.Steps {
 			for _, rep := range s.Replicas {
 				msg := rep.Message
 				if rep.FailedChunks > 0 {
 					msg = fmt.Sprintf("%s (%d chunks not processed)", msg, rep.FailedChunks)
 				}
-				fmt.Fprintf(w, "%s\t%d\t%s\t%d\t%s\t%s\n", s.Name, rep.Index, dash(string(rep.Phase)), rep.Attempt, dash(rep.Pod), msg)
+				fmt.Fprintf(w, "%s\t%d\t%s\t%d\t%s\t%s\t%s\n", s.Name, rep.Index, dash(string(rep.Phase)), rep.Attempt, dash(rep.Pod), dash(string(rep.Reason)), msg)
 			}
 		}
 	}
@@ -151,6 +157,12 @@ func describe(w io.Writer, r *v1alpha1.StreamRun, now time.Time) {
 	for _, s := range st.Steps {
 		if s.Errors+s.Warnings+s.ErrorsDropped > 0 {
 			fmt.Fprintf(w, "\nError log of %s: %s (%d errors, %d warnings, %d dropped)\n", s.Name, s.ErrorLog, s.Errors, s.Warnings, s.ErrorsDropped)
+		}
+		if s.Logs != "" {
+			fmt.Fprintf(w, "\nLogs of %s's failed attempts: %s\n  alpheus logs --kept %s %s\n", s.Name, s.Logs, r.Name, s.Name)
+		}
+		if s.Failures != "" {
+			fmt.Fprintf(w, "Replay %s's last failed attempt on its inputs: alpheus replay %s %s\n", s.Name, r.Name, s.Name)
 		}
 	}
 }

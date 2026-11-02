@@ -86,6 +86,14 @@ func (rc *Reconciler) readStorage(ctx context.Context, st store.Store, r *v1alph
 		}
 	}
 	r.Status.Edges = edges
+	if !terminal(r.Status.Phase) {
+		ns, name := r.Namespace, r.Name
+		afterWrite(ctx, func() {
+			for _, e := range edges {
+				edgeLag.WithLabelValues(ns, name, e.Name).Set(float64(e.Chunks - e.Acked))
+			}
+		})
+	}
 
 	var results []v1alpha1.ResultStatus
 	for i := range r.Status.Steps {

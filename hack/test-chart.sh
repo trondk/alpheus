@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Lints the Helm chart and checks what it renders: images from GitHub
-# Container Registry or the registry value, pinned by digest, the agent's
-# digest required, the hub's address in the release's namespace, and the CRD
-# kept on uninstall. Needs no cluster.
+# Lints the Helm chart and checks what it renders: images from the
+# project's registry or the registry value, pinned by digest, the agent's
+# digest required, the hub's address in the release's namespace, the CRD
+# kept on uninstall, and the metrics: annotations, the ServiceMonitor,
+# PodMonitor and dashboard when enabled. Needs no cluster.
 #
 # Usage: hack/test-chart.sh
 #   HELM  the helm binary (helm)
@@ -52,6 +53,17 @@ out=$(render --set controller.allowTags=true --set agent.image.tag=dev)
 check "tags when allowed" "-agent-image=registry.alpheus-dev.org/alpheus-dev/agent:dev" "$out"
 check "controller tag from appVersion" "image: registry.alpheus-dev.org/alpheus-dev/controller:v0.1.0" "$out"
 check "allow-tags flag" "-allow-tags" "$out"
+
+out=$(render "${PINNED[@]}")
+check "controller metrics Service" "name: alpheus-controller-metrics" "$out"
+check "scrape annotations" 'prometheus.io/scrape: "true"' "$out"
+reject "no ServiceMonitor by default" "kind: ServiceMonitor" "$out"
+reject "no dashboard by default" "name: alpheus-dashboard" "$out"
+out=$(render "${PINNED[@]}" --set metrics.serviceMonitor.enabled=true --set metrics.grafanaDashboard.enabled=true --set metrics.annotations=false)
+check "ServiceMonitor" "kind: ServiceMonitor" "$out"
+check "PodMonitor for the agents" "kind: PodMonitor" "$out"
+check "dashboard" '"uid": "alpheus"' "$out"
+reject "annotations off" "prometheus.io/scrape" "$out"
 
 out=$(render "${PINNED[@]}" --set signalHub.enabled=false --set crds.install=false)
 check "hub disabled" "-hub-listen=" "$out"

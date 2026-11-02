@@ -26,7 +26,9 @@ limitations under the License.
 //
 //   - pass copies each input chunk to the default output unchanged. With
 //     drop, it drops the chunks whose number in its input stream is a
-//     multiple of drop, and counts them in the unit dropped.
+//     multiple of drop, and counts them in the unit dropped. With fail, it
+//     fails on the chunk whose header has that number, as a component
+//     with a bug does, and logs each chunk at debug level first (GO-141).
 //
 //   - sink reads each chunk, notes when it got it, and checks its bytes
 //     against the generator. It expects every chunk once on each of its
@@ -54,6 +56,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"math/rand/v2"
 	"os"
 	"slices"
@@ -80,6 +83,9 @@ type settings struct {
 	Delay int `json:"delay"`
 	// Fixed makes source write the time 0 in the header.
 	Fixed bool `json:"fixed"`
+	// Fail makes pass fail on the chunk with this number in its header;
+	// 0 means never.
+	Fail uint64 `json:"fail"`
 }
 
 func main() {
@@ -177,6 +183,16 @@ func pass(ctx context.Context, s settings, in sdk.Input, out sdk.Output) error {
 		src, err := c.Open()
 		if err != nil {
 			return err
+		}
+		if s.Fail > 0 {
+			var header [8]byte
+			_, err := src.ReadAt(header[:], 0)
+			number := binary.LittleEndian.Uint64(header[:])
+			slog.Debug("read chunk", "n", c.N, "file", c.Path, "bytes", c.Bytes, "header_number", number)
+			if err == nil && number == s.Fail {
+				src.Close()
+				return fmt.Errorf("chunk %d (source chunk %d) is one this component cannot handle", c.N, number)
+			}
 		}
 		dst, err := out.Create(ctx, sdk.DefaultOutput, c.Ext)
 		if err == nil {

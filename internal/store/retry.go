@@ -23,6 +23,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strings"
 	"syscall"
 	"time"
 
@@ -71,6 +72,24 @@ func Refused(err error) bool {
 		return true
 	}
 	return r.StatusCode == http.StatusUnauthorized || r.StatusCode == http.StatusForbidden
+}
+
+// QuotaExceeded reports whether the storage refused a write because the
+// bucket's quota is reached. S3 has no common code for it, so the message
+// is checked too.
+func QuotaExceeded(err error) bool {
+	var r minio.ErrorResponse
+	if !errors.As(err, &r) {
+		return false
+	}
+	return r.Code == "QuotaExceeded" || strings.Contains(strings.ToLower(r.Message), "quota")
+}
+
+// Answered reports whether err is an error the storage answered with, as
+// opposed to one on the way to it.
+func Answered(err error) bool {
+	var r minio.ErrorResponse
+	return errors.As(err, &r)
 }
 
 // retrier repeats an operation while it fails with a transient error, for at

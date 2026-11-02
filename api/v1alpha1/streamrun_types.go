@@ -36,6 +36,7 @@ import (
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
 // +kubebuilder:printcolumn:name="Steps",type=string,JSONPath=`.status.stepsFinished`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
+// +kubebuilder:printcolumn:name="Reason",type=string,JSONPath=`.status.reason`
 // +kubebuilder:printcolumn:name="Error",type=string,JSONPath=`.status.message`
 // +kubebuilder:validation:XValidation:rule="size(self.metadata.name) <= 40",message="name must be at most 40 characters, so pod names <run>-<step> stay within 63"
 type StreamRun struct {
@@ -234,6 +235,51 @@ const (
 	FailureStop     FailurePolicy = "stop"
 	FailureContinue FailurePolicy = "continue"
 )
+
+// Reason is a stable code for why a run or a replica did not succeed
+// (GO-138). Messages may be reworded; reasons are part of the API.
+//
+// +kubebuilder:validation:Enum=InvalidSpec;Cancelled;ComponentFailed;AgentFailed;StorageRefused;StorageUnreachable;StorageFull;StorageError;ScratchFull;PodDeleted;PodFailed;FailedReplicas
+type Reason string
+
+const (
+	// ReasonInvalidSpec: the graph is invalid or an image is not pinned.
+	ReasonInvalidSpec Reason = "InvalidSpec"
+	// ReasonCancelled: spec.cancel was set.
+	ReasonCancelled Reason = "Cancelled"
+	// ReasonComponentFailed: the component exited with an error.
+	ReasonComponentFailed Reason = "ComponentFailed"
+	// ReasonAgentFailed: the agent failed for another reason, or
+	// restarted too often.
+	ReasonAgentFailed Reason = "AgentFailed"
+	// ReasonStorageRefused: the storage refused the keys (GO-137).
+	ReasonStorageRefused Reason = "StorageRefused"
+	// ReasonStorageUnreachable: the storage was down for longer than
+	// spec.storage.timeout (GO-136).
+	ReasonStorageUnreachable Reason = "StorageUnreachable"
+	// ReasonStorageFull: the bucket's quota is reached.
+	ReasonStorageFull Reason = "StorageFull"
+	// ReasonStorageError: the storage answered with another error.
+	ReasonStorageError Reason = "StorageError"
+	// ReasonScratchFull: a chunk did not fit in the scratch folder
+	// (GO-106).
+	ReasonScratchFull Reason = "ScratchFull"
+	// ReasonPodDeleted: the pod disappeared, such as by eviction, a lost
+	// node or a deletion.
+	ReasonPodDeleted Reason = "PodDeleted"
+	// ReasonPodFailed: the pod failed without a container saying why.
+	ReasonPodFailed Reason = "PodFailed"
+	// ReasonFailedReplicas: the run finished, but replicas with
+	// failurePolicy continue gave up (GO-97).
+	ReasonFailedReplicas Reason = "FailedReplicas"
+)
+
+// Reasons returns all reasons, for checking a code from outside the API.
+func Reasons() []Reason {
+	return []Reason{ReasonInvalidSpec, ReasonCancelled, ReasonComponentFailed, ReasonAgentFailed,
+		ReasonStorageRefused, ReasonStorageUnreachable, ReasonStorageFull, ReasonStorageError,
+		ReasonScratchFull, ReasonPodDeleted, ReasonPodFailed, ReasonFailedReplicas}
+}
 
 // InputOrder is the order input chunks are given to the component in.
 //
@@ -442,6 +488,20 @@ type StreamRunStatus struct {
 	// +optional
 	Message string `json:"message,omitempty"`
 
+	// Reason is why the run did not succeed, as a code a program can rely
+	// on; Message says the same in words (GO-138).
+	//
+	// +optional
+	Reason Reason `json:"reason,omitempty"`
+
+	// FailedStep and FailedReplica are the replica whose failure stopped
+	// the run, when one did (GO-138).
+	//
+	// +optional
+	FailedStep string `json:"failedStep,omitempty"`
+	// +optional
+	FailedReplica *int32 `json:"failedReplica,omitempty"`
+
 	// StepsFinished is "<finished>/<total>", for kubectl get.
 	//
 	// +optional
@@ -530,6 +590,20 @@ type StepStatus struct {
 	//
 	// +optional
 	ErrorLog string `json:"errorLog,omitempty"`
+
+	// Logs is where the logs of the step's failed attempts are kept:
+	// s3://<bucket>/results/<run>/<uid>/_logs/<step>/ (GO-140).
+	//
+	// +optional
+	Logs string `json:"logs,omitempty"`
+
+	// Failures is where failed attempts are kept, with the input chunks
+	// they had not finished, so each can be replayed on its own with
+	// alpheus replay: s3://<bucket>/results/<run>/<uid>/_failures/<step>/
+	// (GO-141).
+	//
+	// +optional
+	Failures string `json:"failures,omitempty"`
 }
 
 // ReplicaStatus is the state of one replica of a step.
@@ -566,6 +640,12 @@ type ReplicaStatus struct {
 	//
 	// +optional
 	Message string `json:"message,omitempty"`
+
+	// Reason is why the replica's last attempt failed, as a code a program
+	// can rely on (GO-138). It is cleared when the replica succeeds.
+	//
+	// +optional
+	Reason Reason `json:"reason,omitempty"`
 
 	// FailedChunks is how many input chunks assigned to the replica were
 	// never processed, because it gave up with failurePolicy continue

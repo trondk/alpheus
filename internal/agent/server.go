@@ -320,8 +320,13 @@ func (s *server) Observe(stream componentpb.Agent_ObserveServer) error {
 		if err != nil {
 			return err
 		}
-		if p, ok := msg.Report.(*componentpb.ObserveRequest_Progress); ok {
-			a.log.Info("progress", "text", p.Progress)
+		switch m := msg.Report.(type) {
+		case *componentpb.ObserveRequest_Progress:
+			a.log.Info("progress", "text", m.Progress)
+		case *componentpb.ObserveRequest_Count:
+			a.metrics.count(m.Count.GetUnit(), m.Count.GetN())
+		case *componentpb.ObserveRequest_Log:
+			a.metrics.entry(m.Log.GetLevel())
 		}
 		a.mu.Lock()
 		a.obs.add(msg)
