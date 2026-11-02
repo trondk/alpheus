@@ -17,6 +17,9 @@
 #   CA_FILE          CA of the registry's certificate, if not a public one
 #   COSIGN_KEY       the private key (cosign.key); COSIGN_PASSWORD unlocks it
 #   COSIGN_PUB       the public key published with the release (cosign.pub)
+#   VULNDB           a copy of the Go vulnerability database (make vulndb);
+#                    _out/vulndb by default
+#   VULNDB_MAX_AGE   how many days old the copy may be (7)
 #   ALLOW_DIRTY      1 builds from uncommitted changes and without the tag
 #                    (testing only)
 #   HELM, SYFT, COSIGN  the tools, if not on PATH
@@ -41,6 +44,8 @@ COSIGN_PUB="${COSIGN_PUB:-cosign.pub}"
 HELM="${HELM:-helm}"
 SYFT="${SYFT:-syft}"
 COSIGN="${COSIGN:-cosign}"
+VULNDB="${VULNDB:-$ROOT/_out/vulndb}"
+VULNDB_MAX_AGE="${VULNDB_MAX_AGE:-7}"
 
 die() { echo "release: $*" >&2; exit 1; }
 [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] ||
@@ -50,6 +55,10 @@ if [[ "${ALLOW_DIRTY:-}" != 1 ]]; then
   # Go stamps the tag into the binaries, so it must be the one released.
   [[ "$(git tag --points-at HEAD)" == *"$VERSION"* ]] || die "HEAD is not tagged $VERSION"
 fi
+[[ -f "$VULNDB/index/db.json" ]] || die "no vulnerability database in $VULNDB; run make vulndb"
+VULNDB_DATE="$(sed -n 's/.*"modified":"\([^"]*\)".*/\1/p' "$VULNDB/index/db.json")"
+(( $(date +%s) - $(date -d "$VULNDB_DATE" +%s) <= VULNDB_MAX_AGE * 86400 )) ||
+  die "the vulnerability database is from $VULNDB_DATE, more than $VULNDB_MAX_AGE days ago; run make vulndb"
 [[ -f "$COSIGN_KEY" && -f "$COSIGN_PUB" ]] || die "COSIGN_KEY and COSIGN_PUB must be files"
 [[ -n "${COSIGN_PASSWORD+set}" ]] || die "COSIGN_PASSWORD must be set (it may be empty)"
 for t in "$HELM" "$SYFT" "$COSIGN" podman skopeo go; do
@@ -105,6 +114,17 @@ sbom() {
 }
 
 echo "release $VERSION from $COMMIT"
+
+# --- Vulnerabilities ------------------------------------------------------
+
+# A known vulnerability in code Alpheus calls stops the release (GO-11).
+# govulncheck reads the local copy of the database, not vuln.go.dev.
+go mod download
+offline go tool govulncheck -db "file://$(cd "$VULNDB" && pwd)" ./... >"$WORK/govulncheck.txt" 2>&1 || {
+  cat "$WORK/govulncheck.txt" >&2
+  die "govulncheck found known vulnerabilities in code Alpheus calls"
+}
+echo "  no known vulnerabilities in called code (database from $VULNDB_DATE)"
 
 # --- Binaries -------------------------------------------------------------
 

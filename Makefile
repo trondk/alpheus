@@ -1,4 +1,4 @@
-.PHONY: all generate proto check-generated check-deps test test-crd test-chart test-templates cli test-s3 test-agent-s3 vet images e2e bench bench-etl release verify-release
+.PHONY: all generate proto check-generated check-deps test test-crd test-chart test-templates cli test-s3 test-agent-s3 vet images e2e bench bench-etl release verify-release vulndb vuln
 
 all: generate vet check-deps test
 
@@ -92,6 +92,22 @@ bench:
 # hack/release.sh for its settings.
 release:
 	hack/release.sh
+
+# A copy of the Go vulnerability database in _out/vulndb, for make vuln
+# and the release. VULNDB_URL may point at a mirror of vulndb.zip.
+VULNDB ?= _out/vulndb
+VULNDB_URL ?= https://vuln.go.dev/vulndb.zip
+vulndb:
+	rm -rf $(VULNDB) $(VULNDB).zip && mkdir -p $(VULNDB)
+	curl -fsSL -o $(VULNDB).zip $(VULNDB_URL)
+	unzip -q -d $(VULNDB) $(VULNDB).zip && rm $(VULNDB).zip
+	@sed 's/.*"modified":"\([^"]*\)".*/vulnerability database from \1/' $(VULNDB)/index/db.json ; echo
+
+# Known vulnerabilities in code Alpheus calls, from the copy in $(VULNDB)
+# and without the network (GO-11).
+vuln:
+	@test -f $(VULNDB)/index/db.json || { echo "no vulnerability database in $(VULNDB); run make vulndb"; exit 1; }
+	go tool govulncheck -db file://$(abspath $(VULNDB)) ./...
 
 # Checks a release with its public key: make verify-release VERSION=vX.Y.Z
 verify-release:

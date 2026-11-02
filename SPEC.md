@@ -135,11 +135,12 @@ stadig kun foreslået.
 | Metrics | `github.com/prometheus/client_golang` | Apache 2.0 | Foreslået |
 | Logning | `log/slog` fra standardbiblioteket | BSD | I brug |
 | Test | `sigs.k8s.io/controller-runtime/pkg/envtest`, `setup-envtest` (kun build, `go tool`) | Apache 2.0 | Godkendt, i brug (v0.25.2; Kubernetes 1.37.0) |
+| Sårbarheder | `golang.org/x/vuln` (`govulncheck`, kun build, `go tool`) | BSD | Godkendt, i brug (v1.9.0). Databasen hentes fra vuln.go.dev (USA) med `make vulndb`; den er offentlige data og kan spejles i EU |
 
 | ID | Niveau | Krav |
 |---|---|---|
 | GO-10 | SKAL | Kun licenser, der er forenelige med Apache 2.0. Ingen GPL, AGPL, BSL eller "community"-licenser. |
-| GO-11 | SKAL | `govulncheck` kører i CI og blokerer en udgivelse ved kendte sårbarheder i brugt kode. |
+| GO-11 | SKAL | `govulncheck` blokerer en udgivelse ved kendte sårbarheder i kode, Alpheus kalder: `hack/release.sh` kører den uden netværk mod en lokal kopi af Gos sårbarhedsdatabase, højst `VULNDB_MAX_AGE` dage gammel (standard 7), og `make vuln` kører den samme kontrol. `make vulndb` henter kopien fra vuln.go.dev eller et spejl (`VULNDB_URL`). Kontrollen kører også i CI, når CI findes (GO-54). |
 | GO-12 | BØR | minio-go vælges frem for AWS SDK, fordi den er mindre og testet mod S3-kompatible lagre som Garage. Begge ligger bag `internal/store`, så valget kan ændres. |
 
 Parquet og Arrow (`github.com/apache/arrow-go`) er ikke en afhængighed
@@ -976,7 +977,7 @@ for EU. GitHub er kun et spejl af kildekoden, der læses fra (hjemmesidens
 | GO-132 | SKAL | Hver udgivelse har en SBOM i SPDX-format for hver binær og hvert image, med på `https://alpheus-dev.org/releases/vX.Y.Z/` og vedhæftet hvert image i registryet. |
 | GO-133 | SKAL | `https://alpheus-dev.org/releases/vX.Y.Z/` har en `SHA256SUMS`-fil over alle filer i udgivelsen, signeret med projektets nøgle (`SHA256SUMS.bundle`). Dokumentationen viser, hvordan man kontrollerer den, et image og chartet med `cosign verify` og den offentlige nøgle. |
 | GO-134 | SKAL | Hver udgivelses side oplyser, hvor længe versionen får sikkerhedsopdateringer, og hvor sårbarheder rapporteres (`/security/`). |
-| GO-135 | SKAL | `hack/release.sh` bygger, skubber og signerer en udgivelse, og `hack/verify-release.sh` kontrollerer den med den offentlige nøgle. cosign og syft kører bag en proxy, der ikke findes, med kun registryet lukket igennem, så et kald til en tjeneste uden for projektets infrastruktur får udgivelsen til at fejle i stedet for at ske i det stille (GO-130). |
+| GO-135 | SKAL | `hack/release.sh` bygger, skubber og signerer en udgivelse, og `hack/verify-release.sh` kontrollerer den med den offentlige nøgle. cosign, syft og govulncheck kører bag en proxy, der ikke findes, med kun registryet lukket igennem, så et kald til en tjeneste uden for projektets infrastruktur får udgivelsen til at fejle i stedet for at ske i det stille (GO-130). |
 
 
 ## 15. Rækkefølge for implementeringen
