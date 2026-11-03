@@ -1,16 +1,18 @@
 #!/usr/bin/env bash
-# Host-side setup of the Talos VM. Called by Vagrant triggers, but each
+# Host-side setup of the two Talos VMs. Called by Vagrant triggers, but each
 # command can also be run by hand:
 #
 #   ./talos.sh fetch-iso   download the Talos ISO
 #   ./talos.sh bootstrap   install Talos on the VM and bootstrap Kubernetes
-#   ./talos.sh ip          print the VM's IP address
+#   ./talos.sh ip          print the control plane's IP address
+#   ./talos.sh ip worker   print the worker's IP address
 #   ./talos.sh clean       remove generated config
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TALOS_VERSION="${TALOS_VERSION:-v1.14.2}"
 VM_NAME="${VM_NAME:-alpheus-talos}"
+WORKER_NAME="${WORKER_NAME:-alpheus-talos-worker}"
 TALOS_ISO="${TALOS_ISO:-$HERE/.cache/talos-$TALOS_VERSION-metal-amd64.iso}"
 CLUSTER_NAME="alpheus"
 OUT="$HERE/_out"
@@ -48,14 +50,14 @@ fetch_iso() {
   mv "$TALOS_ISO.part" "$TALOS_ISO"
 }
 
-# The VM's only NIC is on the Vagrant management network, which hands out
+# A VM's only NIC is on the Vagrant management network, which hands out
 # addresses by DHCP.
-vm_ip() {
-  virsh -c "$LIBVIRT_URI" domifaddr "$VM_NAME" --source lease 2>/dev/null \
+vm_ip() {  # [vm]
+  virsh -c "$LIBVIRT_URI" domifaddr "${1:-$VM_NAME}" --source lease 2>/dev/null \
     | awk '$3 == "ipv4" { sub(/\/.*/, "", $4); print $4; exit }'
 }
 
-has_ip() { [[ -n $(vm_ip) ]]; }
+has_ip() { [[ -n $(vm_ip "$1") ]]; }
 
 # Bootstrap is refused until Talos has installed to disk and started etcd,
 # so this is retried. A cluster that is already bootstrapped counts as done.
@@ -99,13 +101,22 @@ EOF
 }
 
 bootstrap() {
-  need talosctl kubectl virsh openssl
+  need talosctl kubectl virsh openssl flock
 
-  log "waiting for the VM to get an IP address"
-  wait_for 300 "a DHCP lease for $VM_NAME" has_ip
-  local ip
-  ip=$(vm_ip)
-  log "VM address: $ip"
+  # One bootstrap at a time: two would each generate a config with new
+  # secrets, and a node installed with one could not be reached with the
+  # other.
+  mkdir -p "$OUT"
+  exec 9>"$OUT/.bootstrap.lock"
+  flock 9
+
+  log "waiting for the VMs to get IP addresses"
+  wait_for 300 "a DHCP lease for $VM_NAME" has_ip "$VM_NAME"
+  wait_for 300 "a DHCP lease for $WORKER_NAME" has_ip "$WORKER_NAME"
+  local ip wip
+  ip=$(vm_ip "$VM_NAME")
+  wip=$(vm_ip "$WORKER_NAME")
+  log "control plane: $ip, worker: $wip"
 
   if [[ -f $TALOSCONFIG ]] && talosctl -n "$ip" -e "$ip" version >/dev/null 2>&1; then
     log "Talos is already configured"
@@ -118,16 +129,20 @@ bootstrap() {
       --talos-version "$TALOS_VERSION" \
       --install-disk /dev/vda \
       --config-patch-control-plane @"$HERE/patch.yaml" \
-      --config-patch-control-plane @"$OUT/registry-patch.yaml" \
+      --config-patch-worker @"$HERE/worker-patch.yaml" \
+      --config-patch @"$OUT/registry-patch.yaml" \
       --additional-sans "$ip" \
       --output "$OUT" --force
 
-    log "waiting for Talos maintenance mode"
+    log "waiting for Talos maintenance mode on both nodes"
     wait_for 300 "Talos API on $ip" \
       talosctl -n "$ip" -e "$ip" get disks --insecure
+    wait_for 300 "Talos API on $wip" \
+      talosctl -n "$wip" -e "$wip" get disks --insecure
 
     log "applying config; Talos installs to disk and reboots"
     talosctl apply-config --insecure -n "$ip" -e "$ip" --file "$OUT/controlplane.yaml"
+    talosctl apply-config --insecure -n "$wip" -e "$wip" --file "$OUT/worker.yaml"
 
     talosctl config endpoint "$ip"
     talosctl config node "$ip"
@@ -136,8 +151,8 @@ bootstrap() {
     wait_for 900 "etcd bootstrap" try_bootstrap
   fi
 
-  log "waiting for Kubernetes"
-  talosctl health --wait-timeout 10m
+  log "waiting for Kubernetes on both nodes"
+  talosctl health --wait-timeout 10m --control-plane-nodes "$ip" --worker-nodes "$wip"
   talosctl kubeconfig "$OUT/kubeconfig" --force --merge=false
 
   log "cluster ready"
@@ -151,7 +166,7 @@ clean() {
 case "${1:-}" in
   fetch-iso) fetch_iso ;;
   bootstrap) bootstrap ;;
-  ip) vm_ip ;;
+  ip) if [[ ${2:-} == worker ]]; then vm_ip "$WORKER_NAME"; else vm_ip "$VM_NAME"; fi ;;
   clean) clean ;;
-  *) die "usage: $0 fetch-iso|bootstrap|ip|clean" ;;
+  *) die "usage: $0 fetch-iso|bootstrap|ip [worker]|clean" ;;
 esac

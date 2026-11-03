@@ -1067,3 +1067,26 @@ func TestResultsBucket(t *testing.T) {
 		return ""
 	})
 }
+
+// A step's nodeSelector, tolerations and affinity go to its pods (GO-144).
+func TestScheduling(t *testing.T) {
+	ns := namespace(t)
+	r := testcase03(ns, 1)
+	r.Spec.Steps[1].NodeSelector = map[string]string{"kubernetes.io/hostname": "worker"}
+	r.Spec.Steps[1].Tolerations = []corev1.Toleration{{Key: "dedicated", Value: "etl", Effect: corev1.TaintEffectNoSchedule}}
+	r.Spec.Steps[1].Affinity = &corev1.Affinity{NodeAffinity: &corev1.NodeAffinity{
+		PreferredDuringSchedulingIgnoredDuringExecution: []corev1.PreferredSchedulingTerm{{Weight: 1, Preference: corev1.NodeSelectorTerm{
+			MatchExpressions: []corev1.NodeSelectorRequirement{{Key: "zone", Operator: corev1.NodeSelectorOpIn, Values: []string{"a"}}}}}},
+	}}
+	create(t, r)
+	p := waitPod(t, ns, "sales-filter-0-1")
+	// The API server adds its own default tolerations next to the step's.
+	ours := slices.ContainsFunc(p.Spec.Tolerations, func(t corev1.Toleration) bool { return t.Key == "dedicated" && t.Value == "etl" })
+	if p.Spec.NodeSelector["kubernetes.io/hostname"] != "worker" || !ours ||
+		p.Spec.Affinity == nil || p.Spec.Affinity.NodeAffinity == nil {
+		t.Errorf("pod scheduling: %v %v %v", p.Spec.NodeSelector, p.Spec.Tolerations, p.Spec.Affinity)
+	}
+	if g := waitPod(t, ns, "sales-generate-0-1"); g.Spec.NodeSelector != nil || g.Spec.Affinity != nil {
+		t.Errorf("a step without them has %v %v", g.Spec.NodeSelector, g.Spec.Affinity)
+	}
+}

@@ -120,6 +120,20 @@ Both run as a user without privileges, with a read-only root file system.
 The component can only write in the scratch folder, in the files the agent
 gives it.
 
+A step chooses where its pods run with `nodeSelector`, `tolerations` and
+`affinity`, as in a pod's spec, such as nodes with a GPU or a fast disk:
+
+```yaml
+    - name: clean
+      image: registry.example/clean@sha256:…
+      nodeSelector: {disktype: nvme}
+      tolerations: [{key: dedicated, value: etl, effect: NoSchedule}]
+```
+
+Replicas of a step, and steps of a run, can run on different nodes: they
+only meet through object storage and small signals. If a node is lost,
+its pods are started again on another, from the last committed chunk.
+
 ### 3. The source writes chunks
 
 `generate` asks the agent for an output file (`Create`), writes 5,000 log

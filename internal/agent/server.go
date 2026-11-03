@@ -102,7 +102,10 @@ func (s *server) Next(ctx context.Context, req *componentpb.NextRequest) (*compo
 		return nil, s.rpcErr(err)
 	}
 	if eos {
-		return &componentpb.NextResponse{Eos: true}, nil
+		a.mu.Lock()
+		ended := a.ended
+		a.mu.Unlock()
+		return &componentpb.NextResponse{Eos: true, Ended: ended}, nil
 	}
 	return &componentpb.NextResponse{Chunk: &componentpb.InputChunk{
 		Id:      c.id,

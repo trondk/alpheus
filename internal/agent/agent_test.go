@@ -578,6 +578,47 @@ func TestRestartFilter(t *testing.T) { restart(t, 12, 3, 2, 3) }
 // again and the sum is still right (GO-95, GO-100).
 func TestRestartStatefulSum(t *testing.T) { restart(t, 12, 3, 4, 5) }
 
+// A stateful step restarted after it committed and ended its output, as
+// when its pod dies between that write and the end of the pod, has nothing
+// left to do: its OnEOS must not run on an empty state, which would make a
+// careful component fail on every restart (GO-95; found by testcase06).
+func TestRestartAfterStatefulEnded(t *testing.T) {
+	st := store.NewMemory()
+	rs := pipeline(12, 3)
+	if err := run(t, st, nil, rs...); err != nil {
+		t.Fatal(err)
+	}
+	checkPipeline(t, st, 12, 3)
+
+	s := rs[len(rs)-1]
+	s.cfg.Attempt = 2
+	ranEOS := false
+	s.h = func(ctx context.Context, in sdk.Input, out sdk.Output) error {
+		read := 0
+		in.OnEOS(func(ctx context.Context, out sdk.Output) error {
+			ranEOS = true
+			if read == 0 {
+				return errors.New("on EOS with no input: the state is gone")
+			}
+			return nil
+		})
+		for _, err := range in.Chunks(ctx) {
+			if err != nil {
+				return err
+			}
+			read++
+		}
+		return nil
+	}
+	if err := run(t, st, nil, s); err != nil {
+		t.Fatalf("second attempt: %v", err)
+	}
+	if ranEOS {
+		t.Error("OnEOS ran although the output had ended")
+	}
+	checkPipeline(t, st, 12, 3)
+}
+
 // An agent stops when a newer attempt owns its stream (GO-68).
 func TestFencing(t *testing.T) {
 	st := store.NewMemory()

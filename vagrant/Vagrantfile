@@ -1,69 +1,89 @@
 # on fedora remember -> vagrant plugin install vagrant-libvirt
 #
-# Single-node Talos Kubernetes cluster for testing Alpheus.
+# Two-node Talos Kubernetes cluster for testing Alpheus: a control plane
+# that also runs workloads and the test services, and a worker, so runs
+# span two nodes and a node can be lost (testcase16, testcase17).
 #
-#   ./deploy.sh    boot the VM, install Talos, bootstrap Kubernetes and print
+#   ./deploy.sh    boot the VMs, install Talos, bootstrap Kubernetes and print
 #                  the credentials (credentials.sh)
-#   ./destroy.sh   remove the VM and the generated cluster config
+#   ./destroy.sh   remove the VMs and the generated cluster config
 #
-# Talos has no SSH, so the VM is boxless and boots the Talos ISO. It gets its
-# IP by DHCP on the Vagrant management network; a private_network with a fixed
-# IP would need SSH to configure. Talos is configured from the host with
-# talosctl by talos.sh, which runs as a trigger.
+# Talos has no SSH, so the VMs are boxless and boot the Talos ISO. They get
+# their IPs by DHCP on the Vagrant management network; a private_network with
+# a fixed IP would need SSH to configure. Talos is configured from the host
+# with talosctl by talos.sh, which runs as a trigger once both VMs are up.
 Vagrant.require_version ">= 2.2.9"
 
 TALOS_VERSION = ENV.fetch("TALOS_VERSION", "v1.14.2")
 VM_NAME       = "alpheus-talos"
+WORKER_NAME   = "alpheus-talos-worker"
 CPUS          = Integer(ENV.fetch("ALPHEUS_VM_CPUS", "4"))
 MEMORY_MB     = Integer(ENV.fetch("ALPHEUS_VM_MEMORY", "8192"))
 DISK_SIZE     = ENV.fetch("ALPHEUS_VM_DISK", "40G")
+WORKER_CPUS   = Integer(ENV.fetch("ALPHEUS_WORKER_CPUS", "2"))
+WORKER_MEMORY = Integer(ENV.fetch("ALPHEUS_WORKER_MEMORY", "4096"))
+WORKER_DISK   = ENV.fetch("ALPHEUS_WORKER_DISK", "20G")
 
 HERE = File.expand_path(__dir__)
 ISO  = File.join(HERE, ".cache", "talos-#{TALOS_VERSION}-metal-amd64.iso")
 
 Vagrant.configure("2") do |config|
-  config.vm.define VM_NAME do |node|
-    node.vm.hostname = VM_NAME
-    node.vm.synced_folder ".", "/vagrant", disabled: true
+  [[VM_NAME, CPUS, MEMORY_MB, DISK_SIZE], [WORKER_NAME, WORKER_CPUS, WORKER_MEMORY, WORKER_DISK]].each do |name, cpus, memory, disk|
+    config.vm.define name do |node|
+      node.vm.hostname = name
+      node.vm.synced_folder ".", "/vagrant", disabled: true
 
-    node.vm.provider :libvirt do |lv|
-      lv.qemu_use_session = false
-      lv.default_prefix = ""
-      lv.cpu_mode = "host-passthrough"
-      lv.cpus = CPUS
-      lv.memory = MEMORY_MB
-      lv.storage :file, :device => :cdrom, :path => ISO
-      lv.storage :file, :size => DISK_SIZE, :type => "qcow2"
-      # Empty disk on first boot falls through to the ISO; after Talos is
-      # installed, the VM boots from disk.
-      lv.boot "hd"
-      lv.boot "cdrom"
+      node.vm.provider :libvirt do |lv|
+        lv.qemu_use_session = false
+        lv.default_prefix = ""
+        lv.cpu_mode = "host-passthrough"
+        lv.cpus = cpus
+        lv.memory = memory
+        lv.storage :file, :device => :cdrom, :path => ISO
+        lv.storage :file, :size => disk, :type => "qcow2"
+        # Empty disk on first boot falls through to the ISO; after Talos is
+        # installed, the VM boots from disk.
+        lv.boot "hd"
+        lv.boot "cdrom"
+      end
     end
   end
 
-  env = { "TALOS_VERSION" => TALOS_VERSION, "VM_NAME" => VM_NAME, "TALOS_ISO" => ISO }
+  # only_on takes a pattern; anchored, it matches one VM and not the other,
+  # whose name starts the same.
+  only_cp     = /\A#{Regexp.escape(VM_NAME)}\z/
+  only_worker = /\A#{Regexp.escape(WORKER_NAME)}\z/
+
+  env = { "TALOS_VERSION" => TALOS_VERSION, "VM_NAME" => VM_NAME, "WORKER_NAME" => WORKER_NAME, "TALOS_ISO" => ISO }
 
   config.trigger.before :up do |t|
+    t.only_on = only_cp
     t.info = "Fetching Talos #{TALOS_VERSION} ISO"
     t.run = { path: File.join(HERE, "talos.sh"), args: ["fetch-iso"], env: env }
   end
 
+  # Once the worker is up both VMs are, so the cluster is made then.
   config.trigger.after :up do |t|
-    t.info = "Installing Talos and bootstrapping Kubernetes"
+    t.only_on = only_worker
+    t.info = "Installing Talos and bootstrapping Kubernetes on both nodes"
     t.run = { path: File.join(HERE, "talos.sh"), args: ["bootstrap"], env: env }
   end
 
   config.trigger.after :up do |t|
+    t.only_on = only_worker
     t.info = "Installing Garage, Zot and the HTTPS gateway"
     t.run = { path: File.join(HERE, "services.sh") }
   end
 
   config.trigger.after :up do |t|
+    t.only_on = only_worker
     t.info = "Credentials and how to connect"
     t.run = { path: File.join(HERE, "credentials.sh") }
   end
 
+  # vagrant destroy removes the worker first, then the control plane.
   config.trigger.after :destroy do |t|
+    t.only_on = only_cp
     t.info = "Removing generated cluster config"
     t.run = { path: File.join(HERE, "talos.sh"), args: ["clean"], env: env }
   end

@@ -45,7 +45,9 @@ else
     --set controller.image.digest="${CONTROLLER_IMAGE#*@}" \
     --set agent.image.digest="${AGENT_IMAGE#*@}" \
     --set ui.enabled=true --set ui.image.digest="${UI_IMAGE#*@}" --set 'ui.namespaces={*}' \
-    --set ui.service.type=NodePort --set ui.service.nodePort=30717 --set "ui.hosts={$IP}"
+    --set ui.service.type=NodePort --set ui.service.nodePort=30717 --set "ui.hosts={$IP}" \
+    --set 'controller.nodeSelector.kubernetes\.io/hostname=alpheus-talos' \
+    --set 'ui.nodeSelector.kubernetes\.io/hostname=alpheus-talos'
 fi
 kubectl label namespace alpheus-system --overwrite pod-security.kubernetes.io/enforce=restricted >/dev/null
 kubectl -n alpheus-system rollout status deployment/alpheus-controller --timeout=180s
@@ -69,6 +71,7 @@ ALPHEUS_E2E_S3_RESULTS_SECRET_KEY="$RESULTS_SECRET_KEY" \
 ALPHEUS_E2E_S3_ACCESS_KEY="$GARAGE_DEFAULT_ACCESS_KEY" \
 ALPHEUS_E2E_S3_SECRET_KEY="$GARAGE_DEFAULT_SECRET_KEY" \
 ALPHEUS_E2E_S3_ENDPOINT="https://$IP:30900" \
+ALPHEUS_E2E_WORKER_VM=alpheus-talos-worker \
 ALPHEUS_E2E_S3_CA_FILE="$VAGRANT/_out/ca.crt" \
 ALPHEUS_E2E_OUT="$OUT/bench" \
-  go test -count=1 -v -timeout 20m ./test/e2e "$@"
+  go test -count=1 -v -timeout 45m ./test/e2e "$@"

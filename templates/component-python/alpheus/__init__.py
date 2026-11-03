@@ -128,6 +128,9 @@ class _Component:
     def __init__(self, settings, replica, replicas):
         self._settings, self._replica, self._replicas = settings, replica, replicas
         self._eos, self._open, self._broken = [], [], False
+        # Set when the agent says an earlier attempt already ended all
+        # output, so the on_eos functions must not run on an empty state.
+        self._ended = False
 
     def settings(self):
         """The step's settings from the StreamRun, as a dict."""
@@ -167,6 +170,8 @@ class _Component:
         if self._broken:
             raise RuntimeError("component returned in the middle of an input chunk")
         for fn in self._eos:
+            if self._ended:
+                break
             fn(self)
         for f in list(self._open):
             f.close()
@@ -212,6 +217,7 @@ class _Agent(_Component):
     def _next(self, port):
         resp = self._call("Next", self._pb.NextRequest(port=port, stateful=bool(self._eos)))
         if resp.eos:
+            self._ended = self._ended or resp.ended
             return None
         c = resp.chunk
         self._input = c.id

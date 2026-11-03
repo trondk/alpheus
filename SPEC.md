@@ -2,11 +2,11 @@
 
 Status: udkast, 2026-11-02. Trin 1–8 i afsnit 15 er bygget: API-typer og
 CRD, chunks og lager, komponent-SDK'et, agenten, controlleren og
-end-to-end-tests på Kubernetes (Talos i en VM) med fan-out, fan-in,
+end-to-end-tests på Kubernetes (Talos på to VM'er) med fan-out, fan-in,
 replikaer, genstart, backpressure og kaos, og fejltests (testcase09 til
-testcase15: lageret går ned, controlleren dør, afviste nøgler, fuld
+testcase17: lageret går ned, controlleren dør, afviste nøgler, fuld
 bucket, for lille scratch-mappe, en komponent med en fejl, set gennem UI'et
-i klyngen). Fejlsøgning (GO-138 til GO-143) er bygget: årsagskoder, events,
+i klyngen, et run på to noder og en node, der forsvinder). Fejlsøgning (GO-138 til GO-143) er bygget: årsagskoder, events,
 gemte logs, genkørsel af et fejlet forsøg, `alpheus ui` på maskinen og i
 klyngen, og metrics. Af trin 9 er CLI, Helm-chart,
 skabeloner til komponenter i Go og Python og en guide til at skrive
@@ -108,9 +108,9 @@ alpheus/
 ├── examples/meter-etl/    flagskibet: ETL af store filer med elmåler-aflæsninger (findes)
 ├── test/
 │   ├── components/        testkomponenter: bench (findes), filter og sum i CSV (findes)
-│   ├── e2e/               testcase01 til testcase15 (findes)
+│   ├── e2e/               testcase01 til testcase17 (findes)
 │   └── internal/table/    CSV og decimaltal for testkomponenterne (findes)
-├── vagrant/               testklyngen: Talos i en VM med Garage og Zot (findes)
+├── vagrant/               testklyngen: Talos på to VM'er med Garage og Zot (findes)
 ├── docs/                  dokumentationen, som hjemmesiden henter ved byg (findes)
 ├── GOVERNANCE.md
 ├── SECURITY.md
@@ -426,6 +426,7 @@ Manifestformat (version 1):
 | GO-141 | SKAL | Et fejlet forsøg gemmes, så det kan køres igen for sig selv: `results/<run>/<uid>/_failures/<trin>/<replika>/attempt-<n>/failure.json` med årsag, besked, image (låst med digest), settings og input-chunks, og kopier af de input-chunks, forsøget havde fået og ikke var færdigt med, under `input/`: de første `maxOpen` i hver strøm, højst 16. Lageret kopierer dem selv (server-side copy). Fejl i lageret gemmer intet. `alpheus replay` henter dem, kontrollerer hver mod sin SHA-256 og kører samme image på dem i local mode med podman eller docker, som replika 0 af 1, uden netværk og med `ALPHEUS_LOG_LEVEL=debug`; `--with none` henter kun. SDK'erne sætter log-niveauet fra `ALPHEUS_LOG_LEVEL`, og Go-SDK'et tager flere porte i `ALPHEUS_LOCAL_INPUTS`. |
 | GO-142 | SKAL | `alpheus ui` serverer en side på brugerens maskine (standard `127.0.0.1:7171`) med brugerens kubeconfig, uden noget installeret i klyngen: runs, ét run med flow, replikaer, resultater og events, og én replika med tællere, fejllog, logs (live eller gemte) og fejlede forsøg med en knap, der kører `alpheus replay`. Den opdateres live med server-sent events. Den er skrivebeskyttet, bortset fra replay, svarer kun på forespørgsler til localhost (mod DNS rebinding), og replay kræver et token, som kun siden har. Siden er indlejret i CLI'en, i Go og ren HTML, CSS og JavaScript uden afhængigheder. |
 | GO-143 | SKAL | Chartet kan køre `alpheus ui --in-cluster` som en Deployment (`ui.enabled`, standard fra), med CLI'ens binær i sit eget image, bygget, signeret og udgivet med de andre. Den viser runs og events i alle namespaces; logs, fejllog og fejlede forsøg kun i `ui.namespaces`, hvor dens service account må læse Secrets og pod-logs (`["*"]` er alle). Replay-knappen kører `alpheus replay --with cluster`: en pod i runnets namespace, ejet af runnet, hvor agentens image (`-fetch-failure`) henter og kontrollerer chunks, og trinnets image kører på dem i local mode med trinnets ressourcer, `envFrom` og scratch-størrelse; podden slettes bagefter. `ui.replay: false` slår knappen fra og fjerner retten til at oprette pods. Siden svarer kun på forespørgsler til localhost (gennem `kubectl port-forward`), Ingress'ens vært og værterne i `ui.hosts` (`--host`), og den har ingen login: en Ingress eller en NodePort (`ui.service`) skal have en proxy, der autentificerer, foran, uden for testklyngen. I testklyngen kører UI'et altid efter `make deploy` eller `make e2e` på VM'ens port 30717. Siden starter lyst og har et mørkt cyberpunk-look, som brugeren slår til; browseren husker valget. |
+| GO-144 | SKAL | Et trin kan vælge sine noder med `spec.steps[].nodeSelector`, `tolerations` og `affinity`, som i en pods spec; trinnets pods og replay-pods får dem. |
 | GO-34 | BØR | Lokale kopier af chunks i scratch-mappen slettes, så snart de er ackede eller skrevet. |
 
 ### 7.4 Backpressure og genstart
@@ -454,7 +455,7 @@ Et nedbrud mellem trin 2 og 3 giver derfor ikke dubleret output.
 | GO-91 | SKAL | En kilde er et trin uden indgående kanter. For en kilde er hver lukket output-chunk et commit-punkt: den skrives i manifestet, så snart den er lukket. Når komponenten kalder `Finish` (GO-125), skriver agenten `eos: true`. `sdk.Run` kalder `Finish`, når handleren returnerer `nil`. |
 | GO-92 | SKAL | En kilde skal være deterministisk: samme settings giver de samme chunks i samme rækkefølge. Ved genstart læser agenten manifestet, og hvis det har *k* chunks, kasserer den de første *k* chunks, komponenten lukker, og committer først fra chunk *k*+1. Agenten sammenligner checksum (GO-31) for de kasserede chunks med manifestet. Ved forskel sættes trinnet til `Failed` med årsagen "kilden er ikke deterministisk". |
 | GO-93 | SKAL | Kilder, der læser ekstern tilstand (fx et S3-prefix eller et share), er ikke deterministiske og understøttes ikke i v0.1.0. En senere version giver dem en genoptagelsesposition via SDK'et. Dokumentationen siger det tydeligt. |
-| GO-95 | SKAL | Et trin, hvis komponent har registreret `OnEOS` (GO-48), er tilstandsfuldt: dets tilstand findes kun i komponentens hukommelse. For et sådant trin flytter agenten ikke `consumed` i de udgående manifester, før `OnEOS`-outputtet er skrevet. Chunks fra `OnEOS`, `consumed` for alle indgående strømme og `eos: true` committes i samme skrivning af hvert udgående manifest. Ved genstart før denne skrivning behandles alle tildelte input-chunks forfra, så tilstanden genopbygges. |
+| GO-95 | SKAL | Et trin, hvis komponent har registreret `OnEOS` (GO-48), er tilstandsfuldt: dets tilstand findes kun i komponentens hukommelse. For et sådant trin flytter agenten ikke `consumed` i de udgående manifester, før `OnEOS`-outputtet er skrevet. Chunks fra `OnEOS`, `consumed` for alle indgående strømme og `eos: true` committes i samme skrivning af hvert udgående manifest. Ved genstart før denne skrivning behandles alle tildelte input-chunks forfra, så tilstanden genopbygges. Ved genstart efter den, når alle replikaens udgående manifester har `eos: true`, er der intet at gøre: agenten svarer `Next` med `eos` og `ended`, og SDK'erne kører ikke `OnEOS` på en tom tilstand (fundet af testcase06, testet af `TestRestartAfterStatefulEnded`). |
 | GO-96 | SKAL | Et tilstandsfuldt trin acker stadig sine input-chunks løbende (GO-36), så producenterne ikke blokeres af backpressure. En ack er derfor ikke en garanti for, at chunken er committet. Input-chunks må først slettes fra lageret, når alle forbrugende replikaer har dem i `consumed`, ikke når de er ackede. v0.1.0 sletter ingen chunks under et run: et run kræver lager til hele sin mellemliggende datamængde, indtil `runs/<uid>/` slettes efter `ttlAfterFinished` (6.1). `maxUnacked` begrænser arbejdet undervejs, ikke lagerforbruget. |
 | GO-72 | SKAL | Resultater (5.2) tæller som udgående manifester, så et trin med resultater får exactly-once som ved kanter. For et trin uden udgående kanter og uden resultater er ack-filen commit-punktet. Effekter uden for Alpheus (fx skrivning til en database) er at-least-once, og dokumentationen for komponent-SDK'et siger det tydeligt. |
 
@@ -628,7 +629,7 @@ sdk.Progress(ctx, "4,2 mio. rækker behandlet")
 | Integration | controller mod API-server | envtest |
 | Integration | agent mod S3 | Garage i en container |
 | Driver | `builtin` | hub og klient i samme proces, og agenter gennem hub'en mod Garage |
-| E2E | testcase01 til testcase15 | Talos i en VM med Vagrant og libvirt (`vagrant/` i repo'ets rod) med Garage og Zot (12.2) |
+| E2E | testcase01 til testcase17 | Talos på to VM'er (control plane og worker) med Vagrant og libvirt (`vagrant/` i repo'ets rod) med Garage og Zot (12.2) |
 
 | ID | Niveau | Krav |
 |---|---|---|
@@ -911,6 +912,20 @@ replay-knappen skal køre det sidste forsøg som en pod i runnets namespace,
 der henter inputs, fejler på samme måde med debug-linjer og slettes
 bagefter.
 
+**testcase16: et run på to noder (GO-144).** `source` og `sink` kører på
+control plane, `pass` med to replikaer på workeren, så hver chunk krydser
+netværket to gange, og agenterne signalerer til hinanden fra node til node.
+Runnet skal lykkes med hver chunk én gang og præcise tællere, og hver pod
+skal køre på den node, dens trin bad om.
+
+**testcase17: en node forsvinder (GO-67, GO-144).** `pass` foretrækker
+workeren og er langsom. Midt i runnet slukker testen workerens VM og
+sletter dens Node, som en cloud-udbyder gør med en død maskine. Kubernetes
+sletter podden, der var på den, controlleren starter et nyt forsøg, som
+kører på control plane, og runnet skal lykkes med hver chunk én gang og
+præcise tællere. Bagefter tænder testen workeren igen og venter, til den
+er klar. Testen springes over uden `ALPHEUS_E2E_WORKER_VM`.
+
 **Agent-test: hvert commit-punkt (GO-74).** En pod, der slås ihjel,
 rammer ikke et bestemt sted mellem to skrivninger til S3. Derfor kører
 `TestCrashAtEveryWrite` to pipelines i hukommelsen: testcase03's form
@@ -926,8 +941,14 @@ GO-118).
 
 ### 12.2 Testmiljø (Vagrant)
 
-`vagrant/deploy.sh` laver en Talos-VM med de samme tjenester som MCPipe
-bruger, i de samme versioner: Garage (S3) og Zot (container-registry).
+`vagrant/deploy.sh` laver en Kubernetes-klynge på Talos med to VM'er:
+`alpheus-talos`, control plane, som også kører workloads (4 CPU'er, 8 GiB),
+og `alpheus-talos-worker` (2 CPU'er, 4 GiB); størrelserne kan sættes med
+miljøvariabler. Klyngen har de samme tjenester som MCPipe bruger, i de
+samme versioner: Garage (S3) og Zot (container-registry). Tjenesterne,
+controlleren og UI'et er låst til control plane, så workeren kan forsvinde
+uden at tage dem med (testcase17). `talos.sh ip` viser control planes IP,
+som tjenesterne nås på, og `talos.sh ip worker` workerens.
 Hver `deploy.sh` laver nye nøgler, og `vagrant/credentials.sh` viser dem.
 Bruges Alpheus uden Vagrant, sættes S3-lager og registry op manuelt.
 

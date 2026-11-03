@@ -91,6 +91,9 @@ type agentConn struct {
 	open    []*File // output files created and not closed
 	eosFns  []func(context.Context, Output) error
 	broken  bool // a loop over chunks was left before a chunk was done
+	// ended is set when the agent says an earlier attempt already ended
+	// all output, so OnEOS must not run on an empty state (GO-95).
+	ended bool
 }
 
 func (c *agentConn) Replica() int  { return c.cfg.Replica }
@@ -124,6 +127,7 @@ func (c *agentConn) chunks(ctx context.Context, port string) iter.Seq2[Chunk, er
 				return
 			}
 			if resp.Eos {
+				c.ended = c.ended || resp.Ended
 				return
 			}
 			in := resp.Chunk
@@ -220,6 +224,9 @@ func (c *agentConn) finish(ctx context.Context) error {
 		return errors.New("component returned in the middle of an input chunk")
 	}
 	for _, fn := range c.eosFns {
+		if c.ended {
+			break
+		}
 		if err := fn(ctx, c); err != nil {
 			return fmt.Errorf("on EOS: %w", err)
 		}

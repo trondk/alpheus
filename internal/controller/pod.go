@@ -213,8 +213,11 @@ func (rc *Reconciler) pod(r *v1alpha1.StreamRun, g *graph, s *v1alpha1.Step, rep
 					},
 				},
 			}},
-			Containers: []corev1.Container{component},
-			Volumes:    volumes,
+			Containers:   []corev1.Container{component},
+			Volumes:      volumes,
+			NodeSelector: s.NodeSelector,
+			Tolerations:  s.Tolerations,
+			Affinity:     s.Affinity,
 		},
 	}, nil
 }
@@ -294,8 +297,11 @@ func ReplayPod(r *v1alpha1.StreamRun, f *replay.Failure, prefix, agentImage, nam
 				Name: ReplayContainer, Image: agentImage, Args: []string{"-fetch-failure", prefix, "-dest", dir},
 				Env: storageEnv(r), VolumeMounts: mounts, SecurityContext: containerSecurity(),
 			}},
-			Containers: []corev1.Container{component},
-			Volumes: []corev1.Volume{{Name: "replay", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: s.Scratch}}}},
+			Containers:   []corev1.Container{component},
+			NodeSelector: s.NodeSelector,
+			Tolerations:  s.Tolerations,
+			Affinity:     s.Affinity,
+			Volumes:      []corev1.Volume{{Name: "replay", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: s.Scratch}}}},
 		},
 	}, nil
 }

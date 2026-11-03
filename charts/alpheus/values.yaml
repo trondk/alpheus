@@ -61,6 +61,9 @@ ui:
   resources:
     requests: {cpu: 20m, memory: 64Mi}
     limits: {memory: 256Mi}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
   # How the UI's Service is reached: ClusterIP for kubectl port-forward,
   # or NodePort on nodePort, as the test cluster does. A NodePort reaches
   # it from outside the cluster without a login.

@@ -15,6 +15,10 @@ spec:
       labels:
         app: garage
     spec:
+      # On the control plane, so losing the worker never takes the test
+      # services down (testcase17).
+      nodeSelector:
+        kubernetes.io/hostname: alpheus-talos
       # Time for Garage to close its database cleanly; LMDB can be
       # corrupted by a hard kill.
       terminationGracePeriodSeconds: 60

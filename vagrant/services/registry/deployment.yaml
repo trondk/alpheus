@@ -15,6 +15,10 @@ spec:
       labels:
         app: zot
     spec:
+      # On the control plane, so losing the worker never takes the test
+      # services down (testcase17).
+      nodeSelector:
+        kubernetes.io/hostname: alpheus-talos
       securityContext:
         runAsNonRoot: true
         runAsUser: 65534

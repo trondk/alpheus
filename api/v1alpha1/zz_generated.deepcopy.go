@@ -148,6 +148,25 @@ func (in *Step) DeepCopyInto(out *Step) {
 		*out = new(corev1.ResourceRequirements)
 		(*in).DeepCopyInto(*out)
 	}
+	if in.NodeSelector != nil {
+		in, out := &in.NodeSelector, &out.NodeSelector
+		*out = make(map[string]string, len(*in))
+		for key, val := range *in {
+			(*out)[key] = val
+		}
+	}
+	if in.Tolerations != nil {
+		in, out := &in.Tolerations, &out.Tolerations
+		*out = make([]corev1.Toleration, len(*in))
+		for i := range *in {
+			(*in)[i].DeepCopyInto(&(*out)[i])
+		}
+	}
+	if in.Affinity != nil {
+		in, out := &in.Affinity, &out.Affinity
+		*out = new(corev1.Affinity)
+		(*in).DeepCopyInto(*out)
+	}
 	if in.Replicas != nil {
 		in, out := &in.Replicas, &out.Replicas
 		*out = new(int32)

@@ -61,6 +61,11 @@ message NextResponse {
   // chunks for this replica; chunk is then empty.
   bool eos = 1;
   InputChunk chunk = 2;
+  // Ended is true with eos when an earlier attempt of this replica has
+  // already committed and ended all its output: there is nothing left to
+  // do, and the component must not run its end-of-stream code, whose
+  // state is gone with that attempt (GO-95).
+  bool ended = 3;
 }
 
 message InputChunk {

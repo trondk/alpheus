@@ -102,8 +102,13 @@ type NextResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// EOS is true when the input (or the port asked for) has no more
 	// chunks for this replica; chunk is then empty.
-	Eos           bool        `protobuf:"varint,1,opt,name=eos,proto3" json:"eos,omitempty"`
-	Chunk         *InputChunk `protobuf:"bytes,2,opt,name=chunk,proto3" json:"chunk,omitempty"`
+	Eos   bool        `protobuf:"varint,1,opt,name=eos,proto3" json:"eos,omitempty"`
+	Chunk *InputChunk `protobuf:"bytes,2,opt,name=chunk,proto3" json:"chunk,omitempty"`
+	// Ended is true with eos when an earlier attempt of this replica has
+	// already committed and ended all its output: there is nothing left to
+	// do, and the component must not run its end-of-stream code, whose
+	// state is gone with that attempt (GO-95).
+	Ended         bool `protobuf:"varint,3,opt,name=ended,proto3" json:"ended,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -150,6 +155,13 @@ func (x *NextResponse) GetChunk() *InputChunk {
 		return x.Chunk
 	}
 	return nil
+}
+
+func (x *NextResponse) GetEnded() bool {
+	if x != nil {
+		return x.Ended
+	}
+	return false
 }
 
 type InputChunk struct {
@@ -928,10 +940,11 @@ const file_component_proto_rawDesc = "" +
 	"\x0fcomponent.proto\x12\x14alpheus.component.v1\"=\n" +
 	"\vNextRequest\x12\x12\n" +
 	"\x04port\x18\x01 \x01(\tR\x04port\x12\x1a\n" +
-	"\bstateful\x18\x02 \x01(\bR\bstateful\"X\n" +
+	"\bstateful\x18\x02 \x01(\bR\bstateful\"n\n" +
 	"\fNextResponse\x12\x10\n" +
 	"\x03eos\x18\x01 \x01(\bR\x03eos\x126\n" +
-	"\x05chunk\x18\x02 \x01(\v2 .alpheus.component.v1.InputChunkR\x05chunk\"\xa8\x01\n" +
+	"\x05chunk\x18\x02 \x01(\v2 .alpheus.component.v1.InputChunkR\x05chunk\x12\x14\n" +
+	"\x05ended\x18\x03 \x01(\bR\x05ended\"\xa8\x01\n" +
 	"\n" +
 	"InputChunk\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x12\n" +

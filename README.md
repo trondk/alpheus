@@ -13,9 +13,9 @@ chunk is a file in any format, and Alpheus never opens it.
 
 > **Status: design phase.** The API, the chunk format, the component
 > SDK, the agent, the controller, the `alpheus` CLI and the Helm chart
-> exist, and fifteen test flows run end to end on a test cluster,
-> including restarts, pods killed at random, storage that goes down and a
-> controller that dies. Nothing is released and no images
+> exist, and seventeen test flows run end to end on a test cluster,
+> including restarts, pods killed at random, storage that goes down, a
+> controller that dies and a node that is lost. Nothing is released and no images
 > are published. Nothing here is ready for use, and everything may change.
 
 

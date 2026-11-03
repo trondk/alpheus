@@ -1,0 +1,35 @@
+# testcase16 (SPEC 12.1, GO-144): a run across two nodes. source and sink
+# run on the control plane, pass with two replicas on the worker, so every
+# chunk crosses the network twice and the agents signal each other from
+# node to node. The run must succeed with every chunk once and exact
+# counts, and each pod must run where its step asked.
+# hack/e2e.sh sets the image, pinned by digest, the test sets the sizes,
+# and the test creates the Secret alpheus-s3 in its namespace.
+apiVersion: alpheus-dev.org/v1alpha1
+kind: StreamRun
+metadata:
+  name: testcase16
+spec:
+  steps:
+    - name: source
+      image: ${BENCH_IMAGE}
+      nodeSelector: {kubernetes.io/hostname: alpheus-talos}
+      settings: {role: source, chunks: ${BENCH_CHUNKS}, size: ${BENCH_SIZE}, seed: 16}
+    - name: pass
+      image: ${BENCH_IMAGE}
+      replicas: 2
+      nodeSelector: {kubernetes.io/hostname: alpheus-talos-worker}
+      settings: {role: pass}
+    - name: sink
+      image: ${BENCH_IMAGE}
+      nodeSelector: {kubernetes.io/hostname: alpheus-talos}
+      settings: {role: sink, chunks: ${BENCH_CHUNKS}, size: ${BENCH_SIZE}, seed: 16}
+  edges:
+    - {from: source, to: pass}
+    - {from: pass, to: sink}
+  chunks: {maxBytes: 1Gi, maxUnacked: ${BENCH_MAX_UNACKED}}
+  storage:
+    endpoint: http://garage.storage.svc.cluster.local:3900
+    bucket: alpheus-data
+    region: garage
+    secretRef: alpheus-s3

@@ -1,0 +1,6 @@
+# Vagrant cannot set the hostname without SSH, so Talos sets it.
+apiVersion: v1alpha1
+kind: HostnameConfig
+auto:
+  $patch: delete
+hostname: alpheus-talos-worker

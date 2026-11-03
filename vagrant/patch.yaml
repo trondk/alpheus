@@ -1,5 +1,6 @@
-# Single node: the control plane also runs workloads. Since Talos 1.14 this
-# is done by removing the taint, not with cluster.allowSchedulingOnControlPlanes.
+# The control plane also runs workloads: the test services and Alpheus live
+# there, and step pods run on both nodes. Since Talos 1.14 this is done by
+# removing the taint, not with cluster.allowSchedulingOnControlPlanes.
 apiVersion: v1alpha1
 kind: KubeNodeConfig
 taints:

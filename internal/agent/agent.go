@@ -98,6 +98,9 @@ type Agent struct {
 	fetching bool // fetchers started, at the first Next or Finish
 	stateful bool
 	asked    bool // the component has called Next, so stateful is known
+	// ended is true when an earlier attempt committed and ended all of
+	// this replica's output (GO-95); set by resume.
+	ended    bool
 	nextID   int64
 	inputs   map[int64]*inChunk // delivered and not done
 	files    map[int64]*outFile // created and not committed
@@ -327,6 +330,9 @@ func (a *Agent) resume(ctx context.Context) error {
 	for _, t := range a.targets {
 		allEnded = allEnded && t.m.EOS
 	}
+	a.mu.Lock()
+	a.ended = allEnded
+	a.mu.Unlock()
 	if stateful && !allEnded {
 		// The state is lost with the old attempt, so every chunk is read
 		// again; output already committed for a chunk is discarded (GO-95).

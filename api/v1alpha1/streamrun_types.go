@@ -165,6 +165,17 @@ type Step struct {
 	// +optional
 	Resources *corev1.ResourceRequirements `json:"resources,omitempty"`
 
+	// NodeSelector, Tolerations and Affinity choose the nodes the step's
+	// pods run on, as in a pod's spec (GO-144).
+	//
+	// +optional
+	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
+	// +optional
+	// +listType=atomic
+	Tolerations []corev1.Toleration `json:"tolerations,omitempty"`
+	// +optional
+	Affinity *corev1.Affinity `json:"affinity,omitempty"`
+
 	// Replicas is how many copies of the step run. The copies share the
 	// step's input: chunk n of the stream from producer replica p goes to
 	// replica (n + p) mod replicas.

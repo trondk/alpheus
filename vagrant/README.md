@@ -1,7 +1,16 @@
 # Vagrant setup
 
-A single-node Kubernetes cluster on Talos Linux in a local VM, used for
-the end-to-end tests.
+A two-node Kubernetes cluster on Talos Linux in two local VMs, used for
+the end-to-end tests:
+
+| VM | Role | Default size |
+|---|---|---|
+| `alpheus-talos` | control plane, also runs workloads; the test services and Alpheus are pinned here | 4 CPUs, 8 GiB, 40 GB (`ALPHEUS_VM_CPUS`, `_MEMORY`, `_DISK`) |
+| `alpheus-talos-worker` | worker | 2 CPUs, 4 GiB, 20 GB (`ALPHEUS_WORKER_CPUS`, `_MEMORY`, `_DISK`) |
+
+Runs span both nodes, and testcase16 and testcase17 need the worker: one
+runs a flow across the two nodes, the other powers the worker off in the
+middle of a run and on again.
 
 ## Prerequisites
 
@@ -16,19 +25,21 @@ the end-to-end tests.
 ./deploy.sh                 # about 5 minutes the first time
 ./credentials.sh            # credentials and kubectl get nodes
 source ./credentials.sh     # only set KUBECONFIG and TALOSCONFIG in your shell
-./destroy.sh                # remove the VM and _out/
+./destroy.sh                # remove the VMs and _out/
 ```
 
 `deploy.sh` runs `vagrant up` with the libvirt provider. It downloads
-the Talos ISO to `.cache/`, boots it, and runs `talos.sh bootstrap`.
-That generates the Talos config in `_out/`, installs Talos to the VM
-disk, bootstraps Kubernetes and writes the kubeconfig. At the end
+the Talos ISO to `.cache/`, boots both VMs from it, and runs
+`talos.sh bootstrap` once both are up. That generates the Talos config in
+`_out/`, installs Talos to both disks, bootstraps Kubernetes on the control
+plane, joins the worker and writes the kubeconfig. At the end
 `credentials.sh` prints where the kubeconfig and talosconfig are and how
 to use them. Running `deploy.sh` again on a running cluster only checks
 health and refreshes the kubeconfig.
 
-The VM gets its IP by DHCP on the Vagrant management network.
-`./talos.sh ip` prints it.
+The VMs get their IPs by DHCP on the Vagrant management network.
+`./talos.sh ip` prints the control plane's, which the services below are
+reached by, and `./talos.sh ip worker` the worker's.
 
 ## Services
 

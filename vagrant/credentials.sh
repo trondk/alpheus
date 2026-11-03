@@ -30,6 +30,8 @@ export KUBECONFIG="$OUT/kubeconfig" TALOSCONFIG="$OUT/talosconfig"
 
 CP_IP="$("$ROOT/talos.sh" ip 2>/dev/null)"
 CP_IP="${CP_IP:-<VM IP>}"
+WORKER_IP="$("$ROOT/talos.sh" ip worker 2>/dev/null)"
+WORKER_IP="${WORKER_IP:-<not running>}"
 
 show() {  # value
   if [[ -z "$1" ]]; then echo "(not found)"
@@ -77,8 +79,10 @@ CLIENT_CERT="$(kubectl config view --raw -o jsonpath='{.users[0].user.client-cer
 cat <<EOF
 Alpheus test cluster credentials$([[ "$HIDE" == 1 ]] && echo " (hidden)")$([[ "$CLUSTER" == 0 ]] && printf '\n%s' "The cluster is not reachable: is the VM running (vagrant status)?")
 
-VM:             alpheus-talos (libvirt, qemu:///system), IP $CP_IP
-                console: virsh -c qemu:///system console alpheus-talos
+VMs:            alpheus-talos (control plane, runs workloads too), IP $CP_IP
+                alpheus-talos-worker (worker), IP $WORKER_IP
+                (libvirt, qemu:///system)
+                console: virsh -c qemu:///system console alpheus-talos[-worker]
 
 Kubernetes and Talos: kubectl and talosctl (admin, client certificates inside)
   kubeconfig:   $(file_status "$OUT/kubeconfig")
@@ -96,7 +100,7 @@ Kubernetes and Talos: kubectl and talosctl (admin, client certificates inside)
     ln -sf $OUT/talosconfig ~/.talos/config
   When your shell has HTTPS_PROXY set, kubectl must not use it for the VM:
     export NO_PROXY=$CP_IP no_proxy=$CP_IP
-  Check:        kubectl get nodes      talosctl -n $CP_IP version
+  Check:        kubectl get nodes      talosctl -n $CP_IP,$WORKER_IP version
   Dashboard:    talosctl -n $CP_IP dashboard
   After vagrant destroy the files are gone; vagrant up makes new ones in the
   same place.
