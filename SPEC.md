@@ -4,9 +4,10 @@ Status: udkast, 2026-11-02. Trin 1–8 i afsnit 15 er bygget: API-typer og
 CRD, chunks og lager, komponent-SDK'et, agenten, controlleren og
 end-to-end-tests på Kubernetes (Talos på to VM'er) med fan-out, fan-in,
 replikaer, genstart, backpressure og kaos, og fejltests (testcase09 til
-testcase17: lageret går ned, controlleren dør, afviste nøgler, fuld
+testcase18: lageret går ned, controlleren dør, afviste nøgler, fuld
 bucket, for lille scratch-mappe, en komponent med en fejl, set gennem UI'et
-i klyngen, et run på to noder og en node, der forsvinder). Fejlsøgning (GO-138 til GO-143) er bygget: årsagskoder, events,
+i klyngen, et run på to noder, en node, der forsvinder, og et chart, der
+opgraderes midt i et run). Fejlsøgning (GO-138 til GO-143) er bygget: årsagskoder, events,
 gemte logs, genkørsel af et fejlet forsøg, `alpheus ui` på maskinen og i
 klyngen, og metrics. Af trin 9 er CLI, Helm-chart,
 skabeloner til komponenter i Go og Python og en guide til at skrive
@@ -108,7 +109,7 @@ alpheus/
 ├── examples/meter-etl/    flagskibet: ETL af store filer med elmåler-aflæsninger (findes)
 ├── test/
 │   ├── components/        testkomponenter: bench (findes), filter og sum i CSV (findes)
-│   ├── e2e/               testcase01 til testcase17 (findes)
+│   ├── e2e/               testcase01 til testcase18 (findes)
 │   └── internal/table/    CSV og decimaltal for testkomponenterne (findes)
 ├── vagrant/               testklyngen: Talos på to VM'er med Garage og Zot (findes)
 ├── docs/                  dokumentationen, som hjemmesiden henter ved byg (findes)
@@ -629,7 +630,7 @@ sdk.Progress(ctx, "4,2 mio. rækker behandlet")
 | Integration | controller mod API-server | envtest |
 | Integration | agent mod S3 | Garage i en container |
 | Driver | `builtin` | hub og klient i samme proces, og agenter gennem hub'en mod Garage |
-| E2E | testcase01 til testcase17 | Talos på to VM'er (control plane og worker) med Vagrant og libvirt (`vagrant/` i repo'ets rod) med Garage og Zot (12.2) |
+| E2E | testcase01 til testcase18 | Talos på to VM'er (control plane og worker) med Vagrant og libvirt (`vagrant/` i repo'ets rod) med Garage og Zot (12.2) |
 
 | ID | Niveau | Krav |
 |---|---|---|
@@ -925,6 +926,20 @@ sletter podden, der var på den, controlleren starter et nyt forsøg, som
 kører på control plane, og runnet skal lykkes med hver chunk én gang og
 præcise tællere. Bagefter tænder testen workeren igen og venter, til den
 er klar. Testen springes over uden `ALPHEUS_E2E_WORKER_VM`.
+
+**testcase18: chartet opgraderes midt i et run (GO-66).**
+`hack/test-upgrade.sh` (`make test-upgrade`) bygger images fra et ældre
+commit (`UPGRADE_FROM`, som standard det seneste `v*`-tag og `HEAD~1`, så
+længe der ikke er noget) og installerer dets chart med dem. Runnet bruger
+det ældre commits testkomponent, som en brugers komponenter ikke bygges om,
+når Alpheus opgraderes. `pass` med to replikaer er langsom, og når `sink`
+har læst en fjerdedel, opgraderer testen til dette commits chart, CRD,
+controller og agent. Derefter slettes en `pass`-replika og senere det
+tilstandsfulde `sink`, så deres nye forsøg kører den nye agent ved siden af
+den gamle komponent og læser det, den gamle agent committede. Runnet skal
+lykkes med hver chunk én gang og præcise tællere, og status må aldrig gå
+baglæns. Bagefter har klyngen dette commits chart, også hvis testen
+fejler. Testen springes over i `make e2e`.
 
 **Agent-test: hvert commit-punkt (GO-74).** En pod, der slås ihjel,
 rammer ikke et bestemt sted mellem to skrivninger til S3. Derfor kører

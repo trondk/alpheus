@@ -1,4 +1,4 @@
-.PHONY: all generate proto check-generated check-deps test test-crd test-chart test-templates cli test-s3 test-agent-s3 vet images e2e bench bench-etl release verify-release vulndb vuln deploy
+.PHONY: all generate proto check-generated check-deps test test-crd test-chart test-templates cli test-s3 test-agent-s3 vet images e2e test-upgrade bench bench-etl release verify-release vulndb vuln deploy
 
 all: generate vet check-deps test
 
@@ -86,6 +86,12 @@ e2e:
 # test/e2e/e2e_test.go).
 bench:
 	SKIP_IMAGES=1 hack/e2e.sh -run 'TestTestcase0[1-3]$$'
+
+# Installs an older commit's chart and images on the test cluster and runs
+# testcase18, which upgrades to this commit's in the middle of a run
+# (GO-66). UPGRADE_FROM is the commit or tag; see hack/test-upgrade.sh.
+test-upgrade:
+	hack/test-upgrade.sh
 
 # A release of the tagged commit in _out/release/<version>: binaries,
 # images, the chart, SBOMs, SHA256SUMS and signatures (SPEC 14). See

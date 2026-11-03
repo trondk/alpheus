@@ -7,6 +7,8 @@
 # Usage: hack/e2e.sh [go test flags], for example -run TestTestcase01
 #   SKIP_IMAGES=1  use the images in _out/images.env from the last run
 #   DEPLOY_ONLY=1  stop after installing, without the tests (make deploy)
+#   SKIP_DEPLOY=1  run the tests against what is installed
+#                  (hack/test-upgrade.sh)
 #   BENCH_*        the testcases' sizes (see test/e2e/e2e_test.go)
 #   HELM           the helm binary (helm)
 #   CHART          a released chart to install instead of charts/alpheus,
@@ -33,7 +35,9 @@ IP="$("$VAGRANT/talos.sh" ip)"
 
 # The Helm chart with the images pinned by digest, from the test registry.
 REGISTRY_NAME="${CONTROLLER_IMAGE%%/*}"
-if [[ -n ${CHART:-} ]]; then
+if [[ ${SKIP_DEPLOY:-} == 1 ]]; then
+  :
+elif [[ -n ${CHART:-} ]]; then
   "$HELM" upgrade --install alpheus "$CHART" --version "${CHART_VERSION:?CHART_VERSION is required with CHART}" \
     --ca-file "$VAGRANT/_out/ca.crt" \
     --namespace alpheus-system --create-namespace --wait --timeout 180s --hide-notes \
@@ -51,7 +55,7 @@ else
 fi
 kubectl label namespace alpheus-system --overwrite pod-security.kubernetes.io/enforce=restricted >/dev/null
 kubectl -n alpheus-system rollout status deployment/alpheus-controller --timeout=180s
-if [[ -z ${CHART:-} ]]; then
+if [[ -z ${CHART:-} && ${SKIP_DEPLOY:-} != 1 ]]; then
   kubectl -n alpheus-system rollout status deployment/alpheus-ui --timeout=180s
   echo "alpheus ui on http://$IP:30717/"
 fi
