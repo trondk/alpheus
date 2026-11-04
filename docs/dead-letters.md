@@ -13,7 +13,7 @@ same choice at two levels:
 | What is bad | Where it goes | The run |
 |---|---|---|
 | A record in a chunk | The step's error log, or an output of its own, which is a result | Succeeds |
-| A whole chunk the component fails on | Kept with the failed attempt; the replica gives up with `failurePolicy: continue` | `PartiallySucceeded` |
+| A whole chunk the component fails on | The replica gives up with `failurePolicy: continue`, and every chunk it never processed is kept for a replay | `PartiallySucceeded` |
 
 The first is up to the component, and is the one to use when you can.
 The second is for the data you did not foresee.
@@ -107,36 +107,59 @@ that were processed, and `failedChunks` says how many were not.
 ### What is kept
 
 Each failed attempt is kept in the run's bucket, as in
-[When a run fails](/docs/debugging/#replaying-a-failed-attempt):
+[When a run fails](/docs/debugging/#replaying-a-failed-attempt), with
+copies of the chunks it had open, the chunk it failed on first. When the
+run has finished, and nothing more can come to the replica, the controller
+also keeps every chunk the replica never processed, those that came after
+it gave up too, in `skipped/`:
 
 ```
 results/<run>/<uid>/_failures/<step>/<replica>/attempt-<n>/failure.json
                                                            input/<chunks>
+results/<run>/<uid>/_failures/<step>/<replica>/skipped/failure.json
+                                                       input/<chunks>
 results/<run>/<uid>/_logs/<step>/<replica>/attempt-<n>/component.log
 ```
 
-`input/` has copies of the chunks the attempt had open and had not
-finished, the chunk it failed on first: the first `maxOpen` of each input
-stream, at most 16. They are kept for `resultsTTL`, like the results.
+`skipped/failure.json` lists them, each with its edge, number, size and
+SHA-256, along with the image, the settings, and the reason the replica's
+last attempt failed with. They are copies made by the storage itself, so
+the data does not pass through the controller, and they are kept for
+`resultsTTL`, like the results, after the run's own chunks under
+`runs/<uid>/` are deleted. They take as much room as the chunks did.
 
-That is not every chunk the replica did not process. The rest are where
-they were written, under `runs/<uid>/`, until the run's chunks are deleted:
-after `ttlAfterFinished`, or with the `StreamRun`. Alpheus does not list
-which they are. To keep them for longer, don't set `ttlAfterFinished` and
-keep the `StreamRun`.
+At most 10,000 chunks are kept per replica. `notKept` in
+`skipped/failure.json` counts those beyond, and any the storage could not
+copy; the controller tries once, when the run finishes. The event
+`KeepSkipped` says how many it kept, and `alpheus get` shows the command
+that fetches them.
 
 ### Running it again
 
-`alpheus replay` runs the failed attempt again on its own, on the kept
-chunks, at debug level, so you can see why the component fails on them:
+`alpheus replay` runs the failed attempt again on its own, on the chunks
+it had open, at debug level, so you can see why the component fails on
+them:
 
 ```console
 $ alpheus replay meter-etl clean --replica 1
 ```
 
-Once the component is fixed, a new run with the fixed image processes the
-data again, all of it. Alpheus does not run only the chunks that were
-not processed.
+With `--skipped` it runs the component on all the chunks the replica
+never processed instead, in order, in local mode:
+
+```console
+$ alpheus replay meter-etl clean --replica 1 --skipped
+Step clean replica 1, attempt 2: ComponentFailed
+  …
+Skipped: the 30 chunks the replica never processed, after it gave up
+…
+```
+
+That is how to finish the job once the component is fixed: replay the
+skipped chunks with the fixed image (`--image`), and the output is in the
+replay folder's `out/`. `--with none` only fetches the chunks, checked
+against their SHA-256, for a program of your own. A new run with the
+fixed image is the other way, and processes all the data again.
 
 ## Which to use
 

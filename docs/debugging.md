@@ -124,6 +124,9 @@ $ podman run --rm --network=none -v …/alpheus-replay/sales-filter-1-4:/replay:
 
 - `--replica` and `--attempt` choose another failure than the last one of
   the replica that stopped the run.
+- `--skipped` runs every chunk that a replica never processed after it
+  gave up with `failurePolicy: continue`, instead of one attempt's; see
+  [Bad records and bad chunks](/docs/dead-letters/).
 - `--with docker` uses Docker; `--with none` only fetches the inputs and
   prints the command, so you can run the component yourself, for example
   in a debugger.

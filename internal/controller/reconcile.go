@@ -569,6 +569,7 @@ func (rc *Reconciler) finish(ctx context.Context, r *v1alpha1.StreamRun, g *grap
 	})
 	if g != nil {
 		rc.refreshStorage(ctx, r, g)
+		rc.keepSkipped(ctx, r, g)
 	}
 	if err := rc.writeSummary(ctx, r); err != nil {
 		log.FromContext(ctx).Error(err, "summary")

@@ -563,8 +563,15 @@ func TestFailurePolicyContinue(t *testing.T) {
 	// generate committed 4 chunks; replica 0 gets 2 and 4, and committed
 	// chunk 2 before it failed.
 	gen := chunk.NewManifest("sales", uid, "generate-filter", 0, 1)
+	in := chunk.EdgeStream(uid, "generate-filter", 0)
+	addChunk := func(n int64) {
+		body := fmt.Sprintf("rows of chunk %d\n", n)
+		sum := sha256.Sum256([]byte(body))
+		gen.Append(chunk.Chunk{N: n, Ext: "csv", Bytes: int64(len(body)), SHA256: hex.EncodeToString(sum[:])})
+		mem.Put(t.Context(), in.ChunkKey(n, "csv"), strings.NewReader(body), int64(len(body)))
+	}
 	for n := int64(1); n <= 4; n++ {
-		gen.Append(chunk.Chunk{N: n, Ext: "csv", Bytes: 1, SHA256: strings.Repeat("0", 64)})
+		addChunk(n)
 	}
 	put(t, chunk.EdgeStream(uid, "generate-filter", 0).ManifestKey(), gen)
 	out := chunk.NewManifest("sales", uid, "filter-sum", 0, 1)
@@ -590,8 +597,8 @@ func TestFailurePolicyContinue(t *testing.T) {
 	})
 
 	// generate goes on; chunk 6 also goes to the closed replica.
-	gen.Append(chunk.Chunk{N: 5, Ext: "csv", Bytes: 1, SHA256: strings.Repeat("0", 64)})
-	gen.Append(chunk.Chunk{N: 6, Ext: "csv", Bytes: 1, SHA256: strings.Repeat("0", 64)})
+	addChunk(5)
+	addChunk(6)
 	put(t, chunk.EdgeStream(uid, "generate-filter", 0).ManifestKey(), gen)
 
 	for _, name := range []string{"sales-generate-0-1", "sales-filter-1-1", "sales-sum-0-1"} {
@@ -611,6 +618,25 @@ func TestFailurePolicyContinue(t *testing.T) {
 	m, _ := chunk.ParseManifest(data)
 	if !m.EOS || m.Epoch != 2 {
 		t.Errorf("closed manifest: eos %v, epoch %d", m.EOS, m.Epoch)
+	}
+
+	// Every chunk the replica never processed is kept for a replay, also
+	// chunk 6, which generate wrote after the replica gave up.
+	skipped := chunk.SkippedPrefix("sales", uid, "filter", 0)
+	f, _, err := replay.Read(t.Context(), mem, skipped)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var kept []int64
+	for _, in := range f.Inputs {
+		kept = append(kept, in.N)
+	}
+	if !f.Skipped || f.NotKept != 0 || !slices.Equal(kept, []int64{4, 6}) || f.Reason != v1alpha1.ReasonComponentFailed || f.Image != r.Spec.Steps[1].Image {
+		t.Errorf("skipped %+v", f)
+	}
+	copied, err := store.ReadAll(t.Context(), mem, skipped+"input/"+f.Inputs[1].File)
+	if err != nil || string(copied) != "rows of chunk 6\n" {
+		t.Errorf("copied chunk %q (%v)", copied, err)
 	}
 }
 

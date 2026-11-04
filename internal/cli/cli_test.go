@@ -601,6 +601,35 @@ func TestReplayAndKeptLogs(t *testing.T) {
 		t.Errorf("no failure: exit %d, %q", code, h.stderr.String())
 	}
 
+	// The chunks replica 1 never processed after it gave up, all of them.
+	if code := h.run("replay", "rp", "filter", "--replica", "1", "--skipped", "--with", "none"); code != 1 || !strings.Contains(h.stderr.String(), "no skipped chunks kept") {
+		t.Errorf("no skipped chunks: exit %d, %q", code, h.stderr.String())
+	}
+	skipped := chunk.SkippedPrefix("rp", uid, "filter", 1)
+	f.Skipped, f.NotKept, f.Inputs = true, 1, nil
+	for _, n := range []int64{3, 5} {
+		file := fmt.Sprintf("read-filter-0-%06d.csv", n)
+		h.mem.Put(ctx, skipped+"input/"+file, strings.NewReader(body), int64(len(body)))
+		f.Inputs = append(f.Inputs, replay.Input{Port: "default", Edge: "read-filter", N: n, Bytes: int64(len(body)), SHA256: hex.EncodeToString(sum[:]), File: file})
+	}
+	data, _ = json.Marshal(f)
+	h.mem.Put(ctx, skipped+"failure.json", bytes.NewReader(data), int64(len(data)))
+	sdir := filepath.Join(t.TempDir(), "skipped")
+	out = h.mustRun("replay", "rp", "filter", "--replica", "1", "--skipped", "--dir", sdir, "--with", "none")
+	for _, want := range []string{"Skipped: the 2 chunks", "and 1 more that were not kept"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("replay --skipped: no %q in\n%s", want, out)
+		}
+	}
+	for _, n := range []string{"000003", "000005"} {
+		if _, err := os.Stat(filepath.Join(sdir, "in", "default", "read-filter-0-"+n+".csv")); err != nil {
+			t.Errorf("skipped chunk %s: %v", n, err)
+		}
+	}
+	if code := h.run("replay", "rp", "filter", "--skipped", "--attempt", "2"); code != 2 {
+		t.Errorf("--skipped with --attempt: exit %d", code)
+	}
+
 	logPrefix := chunk.LogsPrefix("rp", uid, "filter", 1, 2)
 	h.mem.Put(ctx, logPrefix+"component.log", strings.NewReader("line one\nline two\n"), 18)
 	out = h.mustRun("logs", "rp", "filter", "--kept")

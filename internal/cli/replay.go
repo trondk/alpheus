@@ -35,8 +35,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"alpheus-dev.org/alpheus/api/v1alpha1"
+	"alpheus-dev.org/alpheus/internal/chunk"
 	"alpheus-dev.org/alpheus/internal/controller"
 	"alpheus-dev.org/alpheus/internal/replay"
+	"alpheus-dev.org/alpheus/internal/store"
 )
 
 // replayView is what replay prints with -o.
@@ -59,6 +61,7 @@ func replayCmd(ctx context.Context, e *Env, args []string) error {
 	fs := newFlags(e, "replay", "<run> <step>", &o)
 	replica := fs.Int("replica", -1, "the replica; default: the one that stopped the run, else 0")
 	attempt := fs.Int("attempt", 0, "the failed attempt; default: the last one kept")
+	skipped := fs.Bool("skipped", false, "run every input chunk the replica never processed after it gave up with failurePolicy continue, instead of one attempt's")
 	dir := fs.String("dir", "", "where the inputs go; default: ./alpheus-replay/RUN-STEP-REPLICA-ATTEMPT")
 	with := fs.String("with", "podman", "run the component with podman or docker here, as a pod in the cluster (cluster), or not at all (none: only fetch the inputs)")
 	image := fs.String("image", "", "pull the component from here instead, such as a mirror's address for the same digest")
@@ -100,17 +103,29 @@ func replayCmd(ctx context.Context, e *Env, args []string) error {
 	}
 	reachable := "if " + sr.Spec.Storage.Endpoint + " is only reachable inside the cluster, pass the address you reach it by with --endpoint"
 
+	if *skipped && *attempt != 0 {
+		return usagef("--skipped and --attempt: the skipped chunks are the replica's, not an attempt's")
+	}
 	if *replica < 0 {
 		*replica = 0
 		if r.Status.FailedStep == step && r.Status.FailedReplica != nil {
 			*replica = int(*r.Status.FailedReplica)
 		}
+		if *skipped {
+			*replica = gaveUp(&r, step)
+		}
 	}
-	prefix, err := replay.Find(ctx, st, r.Name, string(r.UID), step, *replica, *attempt)
-	if err != nil {
+	var prefix string
+	if *skipped {
+		prefix = chunk.SkippedPrefix(r.Name, string(r.UID), step, *replica)
+	} else if prefix, err = replay.Find(ctx, st, r.Name, string(r.UID), step, *replica, *attempt); err != nil {
 		return hint(err, reachable)
 	}
 	f, data, err := replay.Read(ctx, st, prefix)
+	if *skipped && errors.Is(err, store.ErrNotFound) {
+		return hint(fmt.Errorf("step %s replica %d of run %s has no skipped chunks kept", step, *replica, r.Name),
+			"they are kept when the run has finished, for a replica that gave up with failurePolicy continue")
+	}
 	if err != nil {
 		return hint(err, reachable)
 	}
@@ -121,6 +136,12 @@ func replayCmd(ctx context.Context, e *Env, args []string) error {
 	if o.output == "" {
 		fmt.Fprintf(e.Stdout, "Step %s replica %d, attempt %d: %s\n", f.Step, f.Replica, f.Attempt, f.Reason)
 		fmt.Fprintf(e.Stdout, "  %s\n", f.Message)
+		if f.Skipped {
+			fmt.Fprintf(e.Stdout, "Skipped: the %d chunks the replica never processed, after it gave up\n", len(f.Inputs))
+			if f.NotKept > 0 {
+				fmt.Fprintf(e.Stdout, "  and %d more that were not kept\n", f.NotKept)
+			}
+		}
 		fmt.Fprintf(e.Stdout, "Image:  %s\n", f.Image)
 		fmt.Fprintf(e.Stdout, "Inputs: %d chunks, checked against their SHA-256\n", len(f.Inputs))
 		fmt.Fprintf(e.Stdout, "Logs of the attempt: %s\n", f.Logs)
@@ -142,6 +163,9 @@ func replayCmd(ctx context.Context, e *Env, args []string) error {
 	} else {
 		if *dir == "" {
 			*dir = filepath.Join("alpheus-replay", fmt.Sprintf("%s-%s-%d-%d", f.Run, f.Step, f.Replica, f.Attempt))
+			if f.Skipped {
+				*dir = filepath.Join("alpheus-replay", fmt.Sprintf("%s-%s-%d-skipped", f.Run, f.Step, f.Replica))
+			}
 		}
 		view.Dir = *dir
 		if err := replay.Fetch(ctx, st, prefix, f, *dir); err != nil {
@@ -328,4 +352,20 @@ func runCommand(ctx context.Context, args []string, stdout, stderr io.Writer) (i
 		return 0, err
 	}
 	return 0, nil
+}
+
+// gaveUp is the first replica of step that gave up with failurePolicy
+// continue and left chunks it never processed, else 0.
+func gaveUp(r *v1alpha1.StreamRun, step string) int {
+	for _, s := range r.Status.Steps {
+		if s.Name != step {
+			continue
+		}
+		for _, rs := range s.Replicas {
+			if rs.FailedChunks > 0 {
+				return int(rs.Index)
+			}
+		}
+	}
+	return 0
 }

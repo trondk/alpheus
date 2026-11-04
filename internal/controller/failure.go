@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"alpheus-dev.org/alpheus/api/v1alpha1"
@@ -103,6 +104,82 @@ func (rc *Reconciler) captureFailure(ctx context.Context, r *v1alpha1.StreamRun,
 	for i := range r.Status.Steps {
 		if r.Status.Steps[i].Name == s.Name {
 			r.Status.Steps[i].Failures = fmt.Sprintf("s3://%s/%s", r.Spec.Storage.Bucket, chunk.FailurePrefix(r.Name, uid, s.Name, -1, 0))
+		}
+	}
+}
+
+// keepSkipped keeps every input chunk that a replica which gave up with
+// failurePolicy continue never processed, when the run has finished and
+// no producer writes more (GO-97): copies in <replica>/skipped/input/,
+// next to its failed attempts, and a failure.json that lists them, with
+// the last attempt's reason, so alpheus replay --skipped runs the
+// component on all of them. The chunks under runs/<uid>/ are deleted
+// after ttlAfterFinished; these are kept for resultsTTL, like the
+// results. Like captureFailure it is best effort: what cannot be copied
+// is counted in notKept.
+func (rc *Reconciler) keepSkipped(ctx context.Context, r *v1alpha1.StreamRun, g *graph) {
+	var st store.Store
+	uid := string(r.UID)
+	for i := range r.Status.Steps {
+		ss := &r.Status.Steps[i]
+		s := g.steps[ss.Name]
+		if s == nil || s.FailurePolicy != v1alpha1.FailureContinue {
+			continue
+		}
+		for j := range ss.Replicas {
+			rs := &ss.Replicas[j]
+			if rs.Phase != v1alpha1.StepFailed || rs.FailedChunks == 0 {
+				continue
+			}
+			if st == nil {
+				var err error
+				if st, err = rc.store(ctx, r); err != nil {
+					log.FromContext(ctx).Error(err, "keep skipped chunks: open storage")
+					return
+				}
+			}
+			replica := int(rs.Index)
+			prefix := chunk.SkippedPrefix(r.Name, uid, s.Name, replica)
+			f := replay.Failure{
+				Version: 1, Run: r.Name, Namespace: r.Namespace, UID: uid, Step: s.Name,
+				Replica: replica, Replicas: replicas(s), Attempt: int(rs.Attempt),
+				Reason: rs.Reason, Message: rs.Message, Time: time.Now().UTC(), Image: s.Image,
+				Skipped: true, Inputs: []replay.Input{},
+				Logs: fmt.Sprintf("s3://%s/%s", r.Spec.Storage.Bucket, chunk.LogsPrefix(r.Name, uid, s.Name, replica, int(rs.Attempt))),
+			}
+			if s.Settings != nil {
+				f.Settings = json.RawMessage(s.Settings.Raw)
+			}
+			var seen int64
+			err := eachSkipped(ctx, st, r, g, s, replica, func(c skippedChunk) bool {
+				seen++
+				if len(f.Inputs) >= replay.MaxSkipped {
+					return true
+				}
+				port := c.edge.Port
+				if port == "" {
+					port = "default"
+				}
+				file := fmt.Sprintf("%s-%d-%06d.%s", edgeName(c.edge), c.producer, c.chunk.N, c.chunk.Ext)
+				if err := store.Copy(ctx, st, c.stream.ChunkKey(c.chunk.N, c.chunk.Ext), prefix+"input/"+file); err != nil {
+					log.FromContext(ctx).Error(err, "keep skipped chunks: copy chunk", "chunk", file)
+					return true
+				}
+				f.Inputs = append(f.Inputs, replay.Input{Port: port, Edge: edgeName(c.edge), ProducerReplica: c.producer,
+					N: c.chunk.N, Bytes: c.chunk.Bytes, SHA256: c.chunk.SHA256, File: file})
+				return true
+			})
+			if err != nil {
+				log.FromContext(ctx).Error(err, "keep skipped chunks: list them", "step", s.Name, "replica", replica)
+			}
+			f.NotKept = seen - int64(len(f.Inputs))
+			if err := putJSON(ctx, st, prefix+"failure.json", f); err != nil {
+				log.FromContext(ctx).Error(err, "keep skipped chunks: write failure.json")
+				continue
+			}
+			ss.Failures = fmt.Sprintf("s3://%s/%s", r.Spec.Storage.Bucket, chunk.FailurePrefix(r.Name, uid, s.Name, -1, 0))
+			emit(ctx, corev1.EventTypeWarning, string(v1alpha1.ReasonFailedReplicas), "KeepSkipped",
+				"step %s replica %d: kept %d chunks it never processed in %s", s.Name, replica, len(f.Inputs), prefix)
 		}
 	}
 }

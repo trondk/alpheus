@@ -64,6 +64,26 @@ func TestParse(t *testing.T) {
 	if _, err := Parse(data); err == nil {
 		t.Errorf("%d inputs: accepted", len(f.Inputs))
 	}
+
+	// The skipped chunks of a replica that gave up may be many more.
+	f.Skipped = true
+	data, _ = json.Marshal(f)
+	if _, err := Parse(data); err != nil {
+		t.Errorf("%d skipped inputs: %v", len(f.Inputs), err)
+	}
+	for len(f.Inputs) <= MaxSkipped {
+		f.Inputs = append(f.Inputs, f.Inputs[0])
+	}
+	data, _ = json.Marshal(f)
+	if _, err := Parse(data); err == nil {
+		t.Errorf("%d skipped inputs: accepted", len(f.Inputs))
+	}
+	f = validFailure()
+	f.NotKept = -1
+	data, _ = json.Marshal(f)
+	if _, err := Parse(data); err == nil {
+		t.Error("negative notKept: accepted")
+	}
 }
 
 // FuzzParse checks that a failure record from the bucket can never make

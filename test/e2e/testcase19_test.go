@@ -17,12 +17,17 @@ limitations under the License.
 package e2e
 
 import (
+	"bytes"
 	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"alpheus-dev.org/alpheus/api/v1alpha1"
 	"alpheus-dev.org/alpheus/internal/chunk"
+	"alpheus-dev.org/alpheus/internal/cli"
 	"alpheus-dev.org/alpheus/internal/replay"
 	"alpheus-dev.org/alpheus/internal/store"
 )
@@ -34,8 +39,8 @@ import (
 // chunks. The run must end PartiallySucceeded with the reason
 // FailedReplicas, and every chunk of source must be in the result once or
 // counted in failedChunks, chunk 5 not in the result. The chunk it failed
-// on is kept first for a replay, and the chunks it did not process are
-// still where source wrote them.
+// on is kept for a replay, and when the run has finished, every chunk the
+// replica did not process is kept too, for alpheus replay --skipped.
 func TestTestcase19(t *testing.T) {
 	b := newBench(t, "testcase19", nil)
 	if b.Chunks < 8 {
@@ -114,18 +119,39 @@ func TestTestcase19(t *testing.T) {
 		t.Fatalf("failure %+v (%v)", f, err)
 	}
 
-	// The chunks replica 1 did not process are still where source wrote
-	// them, since the run has no ttlAfterFinished.
-	in := chunk.EdgeStream(uid, chunk.EdgeName("source", chunk.DefaultOutput, "pass"), 0)
-	m, err := manifestOf(t.Context(), rs, in)
+	// Every chunk replica 1 did not process is kept, and alpheus replay
+	// --skipped fetches them all, checked against their SHA-256.
+	sk, _, err := replay.Read(t.Context(), rs, chunk.SkippedPrefix(r.Name, uid, "pass", 1))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, c := range m.Chunks {
-		if seen[c.N] == 0 {
-			if _, err := store.ReadAll(t.Context(), rs, in.ChunkKey(c.N, c.Ext)); err != nil {
-				t.Errorf("unprocessed chunk %d: %v", c.N, err)
-			}
+	if !sk.Skipped || sk.NotKept != 0 || int64(len(sk.Inputs)) != bad.FailedChunks {
+		t.Fatalf("skipped: %d inputs, %d not kept, want %d", len(sk.Inputs), sk.NotKept, bad.FailedChunks)
+	}
+	for _, in := range sk.Inputs {
+		if seen[in.N] != 0 || chunk.Assign(in.N, in.ProducerReplica, 2) != 1 {
+			t.Errorf("skipped chunk %d was processed, or was not replica 1's", in.N)
 		}
+	}
+	if sk.Inputs[0].N != 5 {
+		t.Errorf("the first skipped chunk is %d, want 5, the one pass failed on", sk.Inputs[0].N)
+	}
+	dir := t.TempDir()
+	args := []string{"replay", r.Name, "pass", "-n", e.ns, "--skipped", "--with", "none", "--dir", dir}
+	if v := os.Getenv("ALPHEUS_E2E_S3_ENDPOINT"); v != "" {
+		args = append(args, "--endpoint", v)
+	}
+	if v := os.Getenv("ALPHEUS_E2E_S3_CA_FILE"); v != "" {
+		args = append(args, "--ca-file", v)
+	}
+	var out bytes.Buffer
+	env := cli.DefaultEnv()
+	env.Stdout, env.Stderr = &out, &out
+	if code := cli.Main(t.Context(), args, env); code != 0 {
+		t.Fatalf("alpheus %s: exit %d\n%s", strings.Join(args, " "), code, out.String())
+	}
+	files, err := os.ReadDir(filepath.Join(dir, "in", "default"))
+	if err != nil || len(files) != len(sk.Inputs) {
+		t.Errorf("fetched %d skipped chunks (%v), want %d\n%s", len(files), err, len(sk.Inputs), out.String())
 	}
 }

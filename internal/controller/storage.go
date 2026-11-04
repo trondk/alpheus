@@ -424,30 +424,57 @@ func (rc *Reconciler) closeStreams(ctx context.Context, r *v1alpha1.StreamRun, g
 // it never committed (GO-97). Producers go on after the replica is closed,
 // so the count grows until they have ended.
 func failedChunks(ctx context.Context, st store.Store, r *v1alpha1.StreamRun, g *graph, s *v1alpha1.Step, replica int) (int64, error) {
-	uid := string(r.UID)
 	var failed int64
+	err := eachSkipped(ctx, st, r, g, s, replica, func(skippedChunk) bool {
+		failed++
+		return true
+	})
+	return failed, err
+}
+
+// skippedChunk is an input chunk a closed replica never committed.
+type skippedChunk struct {
+	edge     v1alpha1.Edge
+	producer int
+	stream   chunk.Stream
+	chunk    chunk.Chunk
+}
+
+// eachSkipped calls yield for each input chunk assigned to a closed
+// replica that it never committed, in the order of the step's inputs, of
+// their producer replicas, and of the chunks, until yield returns false.
+func eachSkipped(ctx context.Context, st store.Store, r *v1alpha1.StreamRun, g *graph, s *v1alpha1.Step, replica int, yield func(skippedChunk) bool) error {
+	uid := string(r.UID)
 	for _, e := range g.in[s.Name] {
 		for p := range replicas(g.steps[e.From]) {
 			in := chunk.EdgeStream(uid, edgeName(e), p)
 			m, err := readManifest(ctx, st, in)
 			if err != nil {
-				return 0, err
+				return err
 			}
 			acks, err := readAcks(ctx, st, in.AckKey(s.Name, replica))
 			if err != nil {
-				return 0, err
+				return err
 			}
 			if m == nil || acks == nil || !acks.Closed {
 				continue
 			}
-			for n := int64(1); n <= m.Count(); n++ {
-				if chunk.Assign(n, p, replicas(s)) == replica && !acks.Has(n) {
-					failed++
+			chunks := m.Chunks
+			if len(m.Segments) > 0 {
+				if chunks, err = allChunks(ctx, st, in, m); err != nil {
+					return err
+				}
+			}
+			for _, c := range chunks {
+				if chunk.Assign(c.N, p, replicas(s)) == replica && !acks.Has(c.N) {
+					if !yield(skippedChunk{edge: e, producer: p, stream: in, chunk: c}) {
+						return nil
+					}
 				}
 			}
 		}
 	}
-	return failed, nil
+	return nil
 }
 
 func readAcks(ctx context.Context, st store.Store, key string) (*chunk.Acks, error) {
@@ -523,4 +550,22 @@ func putJSON(ctx context.Context, st store.Store, key string, v any) error {
 		return err
 	}
 	return st.Put(ctx, key, bytes.NewReader(data), int64(len(data)))
+}
+
+// allChunks is every chunk of a stream: those in its sealed segments,
+// then those in the manifest (GO-32).
+func allChunks(ctx context.Context, st store.Store, s chunk.Stream, m *chunk.Manifest) ([]chunk.Chunk, error) {
+	var out []chunk.Chunk
+	for i := range m.Segments {
+		data, err := store.ReadAll(ctx, st, s.SegmentKey(i))
+		if err != nil {
+			return nil, err
+		}
+		seg, err := chunk.ParseSegment(data, i)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", s.SegmentKey(i), err)
+		}
+		out = append(out, seg.Chunks...)
+	}
+	return append(out, m.Chunks...), nil
 }

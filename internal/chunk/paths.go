@@ -144,6 +144,13 @@ func FailurePrefix(run, uid, step string, replica, attempt int) string {
 	return path.Join("results", run, uid, "_failures", step, strconv.Itoa(replica), "attempt-"+strconv.Itoa(attempt)) + "/"
 }
 
+// SkippedPrefix is where the input chunks a replica never processed are
+// kept, after it gave up with failurePolicy continue (GO-97):
+// results/<run>/<uid>/_failures/<step>/<replica>/skipped/.
+func SkippedPrefix(run, uid, step string, replica int) string {
+	return path.Join("results", run, uid, "_failures", step, strconv.Itoa(replica), "skipped") + "/"
+}
+
 // Assign returns the consumer replica that gets chunk n of the stream from
 // producer replica p, when the consuming step has the given number of
 // replicas: (n + p) mod replicas (GO-76).

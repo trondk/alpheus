@@ -46,6 +46,10 @@ import (
 // MaxInputs caps how many input chunks a failure keeps.
 const MaxInputs = 16
 
+// MaxSkipped caps how many input chunks are kept of a replica that gave up
+// with failurePolicy continue (GO-97).
+const MaxSkipped = 10000
+
 // Failure is what a failed attempt leaves so it can be replayed on its own
 // (GO-141): results/<run>/<uid>/_failures/<step>/<replica>/attempt-<n>/
 // failure.json, with copies of the input chunks the attempt was given but
@@ -68,8 +72,15 @@ type Failure struct {
 	Settings  json.RawMessage `json:"settings,omitempty"`
 	// Source is true for a step without inputs: a replay runs it with
 	// none.
-	Source bool    `json:"source,omitempty"`
-	Inputs []Input `json:"inputs"`
+	Source bool `json:"source,omitempty"`
+	// Skipped is true for the record of every input chunk a replica never
+	// processed after it gave up with failurePolicy continue, kept in
+	// <replica>/skipped/ when the run finished, instead of one attempt's.
+	// NotKept counts those that could not be kept, such as those beyond
+	// MaxSkipped.
+	Skipped bool    `json:"skipped,omitempty"`
+	NotKept int64   `json:"notKept,omitempty"`
+	Inputs  []Input `json:"inputs"`
 	// Logs is where the attempt's logs are kept (GO-140).
 	Logs string `json:"logs"`
 }
@@ -228,8 +239,15 @@ func Parse(data []byte) (*Failure, error) {
 	if err := json.Unmarshal(data, &f); err != nil {
 		return nil, err
 	}
-	if len(f.Inputs) > MaxInputs {
-		return nil, fmt.Errorf("%d inputs, at most %d", len(f.Inputs), MaxInputs)
+	limit := MaxInputs
+	if f.Skipped {
+		limit = MaxSkipped
+	}
+	if len(f.Inputs) > limit {
+		return nil, fmt.Errorf("%d inputs, at most %d", len(f.Inputs), limit)
+	}
+	if f.NotKept < 0 {
+		return nil, fmt.Errorf("notKept %d", f.NotKept)
 	}
 	for i, in := range f.Inputs {
 		switch {

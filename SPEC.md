@@ -207,7 +207,7 @@ skriver sin egen strøm af chunks på en kant (7.3), så der stadig kun er
 | GO-75 | SKAL | `spec.steps[].replicas` (standard 1, højst 64) angiver antallet af replikaer. Replikaerne nummereres 0 til `replicas`-1, og agenten får sit nummer som miljøvariabel. |
 | GO-76 | SKAL | Chunk nummer n i strømmen fra producent-replika p går til forbruger-replika (n + p) mod `replicas` hos hvert forbrugende trin. Leddet p spreder arbejdet, når mange producent-replikaer hver laver få chunks; uden det ville alle strømme starte på samme forbruger-replika. Fordelingen er deterministisk, så en genstartet replika får præcis de samme chunks igen. |
 | GO-77 | SKAL | `maxRestarts` og forsøgsnummeret (GO-67) gælder pr. replika. Et trin er afsluttet, når alle dets replikaer er afsluttet, og fejlet, når én replika har brugt alle sine genstarter. Fejler et forsøg med årsagen `StorageFull`, genstartes det ikke, og runnet stoppes straks, også med `failurePolicy: continue` (GO-97): et nyt forsøg og de andre replikaer skriver til den samme fulde bucket. |
-| GO-97 | SKAL | Har en replika brugt alle sine genstarter, og er `failurePolicy` `continue`, lukker controlleren replikaens udgående strømme. Først når pod'en er bekræftet væk (GO-67), skriver controlleren hvert udgående manifest med `eos: true`, uændrede chunks og et `epoch` én højere end replikaens sidste forsøg, så en agent, der mod forventning stadig kører, stoppes af fencing (GO-68). Controlleren lukker også replikaens ack-filer: de lister de chunks, replikaen committede, har `closed: true` og samme højere `epoch`. En producent venter ikke på en lukket forbruger-replika (GO-35), så runnet går ikke i stå, og en agent, der stadig kører, stoppes ved sin næste skrivning af ack-filen. Input-chunks, der var tildelt replikaen, men ikke står i dens lukkede ack-fil, tælles i `status.steps[].replicas[].failedChunks`, også dem, producenten laver, efter at replikaen er lukket. Forbrugerne når EOS, og runnet slutter som `PartiallySucceeded`. Med `failurePolicy: stop` stoppes hele runnet i stedet. |
+| GO-97 | SKAL | Har en replika brugt alle sine genstarter, og er `failurePolicy` `continue`, lukker controlleren replikaens udgående strømme. Først når pod'en er bekræftet væk (GO-67), skriver controlleren hvert udgående manifest med `eos: true`, uændrede chunks og et `epoch` én højere end replikaens sidste forsøg, så en agent, der mod forventning stadig kører, stoppes af fencing (GO-68). Controlleren lukker også replikaens ack-filer: de lister de chunks, replikaen committede, har `closed: true` og samme højere `epoch`. En producent venter ikke på en lukket forbruger-replika (GO-35), så runnet går ikke i stå, og en agent, der stadig kører, stoppes ved sin næste skrivning af ack-filen. Input-chunks, der var tildelt replikaen, men ikke står i dens lukkede ack-fil, tælles i `status.steps[].replicas[].failedChunks`, også dem, producenten laver, efter at replikaen er lukket. Forbrugerne når EOS, og runnet slutter som `PartiallySucceeded`. Når runnet er slut, kopierer controlleren hver af de chunks, replikaen ikke behandlede, til `results/<run>/<uid>/_failures/<step>/<replika>/skipped/input/` med en `failure.json` (`skipped: true`), der lister dem, højst 10.000 pr. replika, og tæller resten i `notKept`; de har `resultsTTL` som resultaterne, og `alpheus replay --skipped` kører komponenten på dem alle. Med `failurePolicy: stop` stoppes hele runnet i stedet. |
 
 ### 5.2 Resultater
 
@@ -957,8 +957,10 @@ fortsætter med sine chunks. Runnet skal være `PartiallySucceeded` med
 årsagen `FailedReplicas`, og hver af `source`s chunks skal være i
 resultatet én gang eller tælles i den opgivne replikas `failedChunks`,
 chunk 5 ikke i resultatet. Det sidste forsøg er gemt med chunk 5 som
-første input, og de chunks, replikaen ikke nåede, ligger stadig, hvor
-`source` skrev dem. Det er mønstret i `docs/dead-letters.md`.
+første input. Når runnet er slut, er hver chunk, replikaen ikke
+behandlede, gemt i `skipped/`, lige så mange som `failedChunks`, chunk 5
+først, og `alpheus replay --skipped --with none` henter dem alle, tjekket
+mod deres SHA-256. Det er mønstret i `docs/dead-letters.md`.
 
 **Agent-test: hvert commit-punkt (GO-74).** En pod, der slås ihjel,
 rammer ikke et bestemt sted mellem to skrivninger til S3. Derfor kører

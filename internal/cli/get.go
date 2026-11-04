@@ -154,6 +154,15 @@ func describe(w io.Writer, r *v1alpha1.StreamRun, now time.Time) {
 			fmt.Fprintf(w, "  %s.%s\t%s/%s/%s\tregion %s\tsecret %s\n", res.Step, res.Output, res.Endpoint, res.Bucket, res.Prefix, dash(res.Region), res.SecretRef)
 		}
 	}
+	if st.FinishedAt != nil {
+		for _, s := range st.Steps {
+			for _, rep := range s.Replicas {
+				if rep.FailedChunks > 0 {
+					fmt.Fprintf(w, "\nSkipped chunks of %s replica %d: alpheus replay %s %s --replica %d --skipped\n", s.Name, rep.Index, r.Name, s.Name, rep.Index)
+				}
+			}
+		}
+	}
 	for _, s := range st.Steps {
 		if s.Errors+s.Warnings+s.ErrorsDropped > 0 {
 			fmt.Fprintf(w, "\nError log of %s: %s (%d errors, %d warnings, %d dropped)\n", s.Name, s.ErrorLog, s.Errors, s.Warnings, s.ErrorsDropped)
