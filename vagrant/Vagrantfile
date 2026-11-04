@@ -6,7 +6,9 @@
 #
 #   ./deploy.sh    boot the VMs, install Talos, bootstrap Kubernetes and print
 #                  the credentials (credentials.sh)
-#   ./destroy.sh   remove the VMs and the generated cluster config
+#   ./destroy.sh   remove the VMs and the generated cluster config;
+#                  --clean also removes earlier test runs' reports, benchmarks
+#                  and logs from the repository's _out/
 #
 # Talos has no SSH, so the VMs are boxless and boot the Talos ISO. They get
 # their IPs by DHCP on the Vagrant management network; a private_network with

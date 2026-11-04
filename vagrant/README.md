@@ -26,6 +26,7 @@ middle of a run and on again.
 ./credentials.sh            # credentials and kubectl get nodes
 source ./credentials.sh     # only set KUBECONFIG and TALOSCONFIG in your shell
 ./destroy.sh                # remove the VMs and _out/
+./destroy.sh --clean        # also the test reports, benchmarks and logs
 ```
 
 `deploy.sh` runs `vagrant up` with the libvirt provider. It downloads
@@ -36,6 +37,13 @@ plane, joins the worker and writes the kubeconfig. At the end
 `credentials.sh` prints where the kubeconfig and talosconfig are and how
 to use them. Running `deploy.sh` again on a running cluster only checks
 health and refreshes the kubeconfig.
+
+`destroy.sh` removes the VMs and this folder's `_out/`, with every key
+and certificate. What the tests left in the repository's `_out/` stays:
+the reports, the benchmarks and the logs, so the next `make e2e` serves
+the earlier reports again on the new cluster. `destroy.sh --clean` removes
+those too, so the next deploy starts with no history. It keeps
+`_out/release/`, `_out/vulndb/` and the ISO in `.cache/`.
 
 The VMs get their IPs by DHCP on the Vagrant management network.
 `./talos.sh ip` prints the control plane's, which the services below are
