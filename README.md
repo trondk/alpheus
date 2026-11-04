@@ -286,9 +286,9 @@ welcome as issues on Forgejo. How to build and test is on
 
 ## Security
 
-Please do not report security issues in public issues. A private way to
-report them will be described in `SECURITY.md` and on
-alpheus-dev.org/security before the first release.
+Please do not report security issues in public issues. E-mail
+security@alpheus-dev.org instead. [`SECURITY.md`](SECURITY.md) says what to
+include, how soon you get an answer, and which versions get fixes.
 
 
 ## License
