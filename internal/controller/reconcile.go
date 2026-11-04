@@ -554,7 +554,7 @@ func (rc *Reconciler) finish(ctx context.Context, r *v1alpha1.StreamRun, g *grap
 	if r.Status.Phase == v1alpha1.RunPartiallySucceeded {
 		setCondition(r, v1alpha1.ConditionDegraded, metav1.ConditionTrue, string(v1alpha1.ReasonFailedReplicas), r.Status.Message)
 	}
-	typ, note := corev1.EventTypeNormal, "the run "+strings.ToLower(string(r.Status.Phase))
+	typ, note := corev1.EventTypeNormal, "the run "+phaseWords(r.Status.Phase)
 	if r.Status.Phase != v1alpha1.RunSucceeded {
 		typ = corev1.EventTypeWarning
 	}
@@ -812,4 +812,13 @@ func failedStepsMessage(failed int) string {
 		return "1 step had failed replicas"
 	}
 	return fmt.Sprintf("%d steps had failed replicas", failed)
+}
+
+// phaseWords is a run's phase as words for an event: "partially
+// succeeded" rather than "partiallysucceeded".
+func phaseWords(p v1alpha1.RunPhase) string {
+	if p == v1alpha1.RunPartiallySucceeded {
+		return "partially succeeded"
+	}
+	return strings.ToLower(string(p))
 }

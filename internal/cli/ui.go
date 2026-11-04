@@ -411,6 +411,9 @@ func (u *ui) attempts(w http.ResponseWriter, r *http.Request) {
 		Attempt int  `json:"attempt"`
 		Logs    bool `json:"logs"`
 		Failure bool `json:"failure"`
+		// Skipped is the entry for the chunks the replica never processed
+		// after it gave up with failurePolicy continue (GO-97), last.
+		Skipped bool `json:"skipped,omitempty"`
 	}
 	found := map[int]*attemptView{}
 	for _, kind := range []struct {
@@ -446,6 +449,12 @@ func (u *ui) attempts(w http.ResponseWriter, r *http.Request) {
 		out = append(out, *a)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Attempt > out[j].Attempt })
+	key := chunk.SkippedPrefix(run.Name, string(run.UID), step, replica) + "failure.json"
+	for k, err := range st.List(r.Context(), key) {
+		if err == nil && k == key {
+			out = append(out, attemptView{Failure: true, Skipped: true})
+		}
+	}
 	writeJSON(w, out)
 }
 
@@ -534,11 +543,16 @@ func (u *ui) failure(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	attempt, _ := strconv.Atoi(r.URL.Query().Get("attempt"))
-	prefix, err := replay.Find(r.Context(), st, run.Name, string(run.UID), step, replica, attempt)
-	if err != nil {
-		httpError(w, err)
-		return
+	var prefix string
+	if a := r.URL.Query().Get("attempt"); a == "skipped" {
+		prefix = chunk.SkippedPrefix(run.Name, string(run.UID), step, replica)
+	} else {
+		attempt, _ := strconv.Atoi(a)
+		var err error
+		if prefix, err = replay.Find(r.Context(), st, run.Name, string(run.UID), step, replica, attempt); err != nil {
+			httpError(w, err)
+			return
+		}
 	}
 	data, err := store.ReadAll(r.Context(), st, prefix+"failure.json")
 	if err != nil {
@@ -566,8 +580,14 @@ func (u *ui) replay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	args := []string{"replay", r.PathValue("name"), step, "--replica", replica, "-n", r.PathValue("ns")}
-	if attempt != "" {
+	switch _, err := strconv.Atoi(attempt); {
+	case attempt == "skipped":
+		args = append(args, "--skipped")
+	case err == nil:
 		args = append(args, "--attempt", attempt)
+	case attempt != "":
+		http.Error(w, "attempt is a number or skipped", http.StatusBadRequest)
+		return
 	}
 	args = append(args, "--with", u.replayMode)
 	if u.agentImage != "" {

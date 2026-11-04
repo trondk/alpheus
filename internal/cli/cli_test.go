@@ -696,6 +696,16 @@ func TestUI(t *testing.T) {
 	if code, body := get("/api/runs/"+h.ns+"/u/failure"+q, ""); code != 200 || !strings.Contains(body, "ComponentFailed") {
 		t.Errorf("failure: %d %q", code, body)
 	}
+	// The chunks the replica never processed, after it gave up (GO-97).
+	sf := replay.Failure{Version: 1, Run: "u", Step: "filter", Attempt: 1, Reason: v1alpha1.ReasonComponentFailed, Image: "x" + pin, Skipped: true, NotKept: 3, Inputs: []replay.Input{}}
+	data, _ = json.Marshal(sf)
+	h.mem.Put(ctx, chunk.SkippedPrefix("u", uid, "filter", 0)+"failure.json", bytes.NewReader(data), int64(len(data)))
+	if code, body := get("/api/runs/"+h.ns+"/u/attempts"+q, ""); code != 200 || !strings.Contains(body, `{"attempt":0,"logs":false,"failure":true,"skipped":true}`) {
+		t.Errorf("attempts with skipped chunks: %d %q", code, body)
+	}
+	if code, body := get("/api/runs/"+h.ns+"/u/failure"+q+"&attempt=skipped", ""); code != 200 || !strings.Contains(body, `"notKept":3`) {
+		t.Errorf("skipped: %d %q", code, body)
+	}
 	if code, _ := get("/api/runs/"+h.ns+"/nope", ""); code != 404 {
 		t.Errorf("missing run: %d", code)
 	}
@@ -718,6 +728,22 @@ func TestUI(t *testing.T) {
 	}
 	if code, body := post("secret"); code != 200 || len(h.commands) != 1 || !strings.Contains(body, "component output") {
 		t.Errorf("replay: %d %q, commands %v", code, body, h.commands)
+	}
+	req, _ := http.NewRequest("POST", srv.URL+"/api/runs/"+h.ns+"/u/replay"+q+"&attempt=skipped", nil)
+	req.Header.Set("X-Alpheus-Token", "secret")
+	if resp, err := http.DefaultClient.Do(req); err != nil {
+		t.Fatal(err)
+	} else {
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if !strings.Contains(string(b), "--skipped") || !strings.Contains(string(b), "Skipped: the 0 chunks") {
+			t.Errorf("replay of the skipped chunks: %q", b)
+		}
+	}
+	req, _ = http.NewRequest("POST", srv.URL+"/api/runs/"+h.ns+"/u/replay"+q+"&attempt=--with=docker", nil)
+	req.Header.Set("X-Alpheus-Token", "secret")
+	if resp, err := http.DefaultClient.Do(req); err != nil || resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("an attempt that is a flag: %v %v", resp.StatusCode, err)
 	}
 	os.RemoveAll("alpheus-replay") // replay's default folder, in the test's working directory
 }
@@ -843,5 +869,34 @@ func TestUIHelpIsTheGuide(t *testing.T) {
 	}
 	if !bytes.Equal(guide, help) {
 		t.Error("internal/cli/ui/help.md differs from docs/ui.md: run make generate")
+	}
+}
+
+// replay takes the replica that stopped the run, else one that gave up or
+// failed, so the command alpheus get shows works without --replica.
+func TestFailedReplica(t *testing.T) {
+	one := int32(1)
+	run := func(failedStep string, reps ...v1alpha1.ReplicaStatus) *v1alpha1.StreamRun {
+		r := &v1alpha1.StreamRun{}
+		r.Status.Steps = []v1alpha1.StepStatus{{Name: "pass", Replicas: reps}}
+		if failedStep != "" {
+			r.Status.FailedStep, r.Status.FailedReplica = failedStep, &one
+		}
+		return r
+	}
+	for _, c := range []struct {
+		name string
+		r    *v1alpha1.StreamRun
+		want int
+	}{
+		{"stopped the run", run("pass", v1alpha1.ReplicaStatus{Index: 0}, v1alpha1.ReplicaStatus{Index: 1}), 1},
+		{"gave up", run("", v1alpha1.ReplicaStatus{Index: 0}, v1alpha1.ReplicaStatus{Index: 1, Phase: v1alpha1.StepFailed, FailedChunks: 3}), 1},
+		{"restarted", run("", v1alpha1.ReplicaStatus{Index: 0}, v1alpha1.ReplicaStatus{Index: 1, Reason: v1alpha1.ReasonComponentFailed}), 1},
+		{"nothing failed", run("", v1alpha1.ReplicaStatus{Index: 0}, v1alpha1.ReplicaStatus{Index: 1}), 0},
+		{"another step stopped it", run("sink", v1alpha1.ReplicaStatus{Index: 0}), 0},
+	} {
+		if got := failedReplica(c.r, "pass"); got != c.want {
+			t.Errorf("%s: replica %d, want %d", c.name, got, c.want)
+		}
 	}
 }

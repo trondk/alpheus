@@ -59,7 +59,7 @@ func (l *stringList) Set(v string) error { *l = append(*l, v); return nil }
 func replayCmd(ctx context.Context, e *Env, args []string) error {
 	var o opts
 	fs := newFlags(e, "replay", "<run> <step>", &o)
-	replica := fs.Int("replica", -1, "the replica; default: the one that stopped the run, else 0")
+	replica := fs.Int("replica", -1, "the replica; default: the one that stopped the run, else one that gave up or failed, else 0")
 	attempt := fs.Int("attempt", 0, "the failed attempt; default: the last one kept")
 	skipped := fs.Bool("skipped", false, "run every input chunk the replica never processed after it gave up with failurePolicy continue, instead of one attempt's")
 	dir := fs.String("dir", "", "where the inputs go; default: ./alpheus-replay/RUN-STEP-REPLICA-ATTEMPT")
@@ -107,13 +107,7 @@ func replayCmd(ctx context.Context, e *Env, args []string) error {
 		return usagef("--skipped and --attempt: the skipped chunks are the replica's, not an attempt's")
 	}
 	if *replica < 0 {
-		*replica = 0
-		if r.Status.FailedStep == step && r.Status.FailedReplica != nil {
-			*replica = int(*r.Status.FailedReplica)
-		}
-		if *skipped {
-			*replica = gaveUp(&r, step)
-		}
+		*replica = failedReplica(&r, step)
 	}
 	var prefix string
 	if *skipped {
@@ -354,15 +348,24 @@ func runCommand(ctx context.Context, args []string, stdout, stderr io.Writer) (i
 	return 0, nil
 }
 
-// gaveUp is the first replica of step that gave up with failurePolicy
-// continue and left chunks it never processed, else 0.
-func gaveUp(r *v1alpha1.StreamRun, step string) int {
+// failedReplica is the replica of step that replay takes by default: the
+// one that stopped the run, else the first that gave up with failurePolicy
+// continue, else the first with a failed attempt, else 0.
+func failedReplica(r *v1alpha1.StreamRun, step string) int {
+	if r.Status.FailedStep == step && r.Status.FailedReplica != nil {
+		return int(*r.Status.FailedReplica)
+	}
 	for _, s := range r.Status.Steps {
 		if s.Name != step {
 			continue
 		}
 		for _, rs := range s.Replicas {
-			if rs.FailedChunks > 0 {
+			if rs.FailedChunks > 0 || rs.Phase == v1alpha1.StepFailed {
+				return int(rs.Index)
+			}
+		}
+		for _, rs := range s.Replicas {
+			if rs.Reason != "" {
 				return int(rs.Index)
 			}
 		}

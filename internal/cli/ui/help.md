@@ -144,6 +144,10 @@ show the rest:
   the cluster it runs as a pod next to the run, and it can be turned off;
   then the page shows the `alpheus replay` command to run yourself. See
   [Replaying a failed attempt](/docs/debugging/#replaying-a-failed-attempt).
+  A replica that gave up with `failurePolicy: continue` also has
+  **skipped chunks** in the list, once the run has finished: every chunk
+  it never processed, kept in the bucket, and its button replays them all.
+  See [Bad records and bad chunks](/docs/dead-letters/).
 
 ## Words
 

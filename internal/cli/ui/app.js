@@ -229,15 +229,22 @@ async function replicaView(ns, name, step, replica, fresh) {
       if (!kept.length) {
         body = `<p class="muted">No failed attempt is kept for this replica.</p>`;
       } else {
-        const a = state.failure || kept[0].attempt;
+        // An entry is an attempt's number, or "skipped": every chunk the
+        // replica never processed after it gave up (failurePolicy continue).
+        const key = k => k.skipped ? "skipped" : String(k.attempt);
+        const a = state.failure && kept.some(k => key(k) === state.failure) ? state.failure : key(kept[0]);
         const f = await getJSON(`/api/runs/${enc(ns)}/${enc(name)}/failure?${q}&attempt=${a}`);
-        body = `<div class="tabs"><select id="failure" aria-label="Attempt">${kept.map(k => `<option value="${k.attempt}"${k.attempt === a ? " selected" : ""}>attempt ${k.attempt}</option>`).join("")}</select></div>
+        const skipped = a === "skipped";
+        const flag = skipped ? "--skipped" : `--attempt ${a}`;
+        const shownInputs = f.inputs.slice(0, 20).map(i => `<code>${esc(i.file)}</code>`).join(" ") + (f.inputs.length > 20 ? " …" : "");
+        body = `<div class="tabs"><select id="failure" aria-label="Attempt">${kept.map(k => `<option value="${key(k)}"${key(k) === a ? " selected" : ""}>${k.skipped ? "skipped chunks" : "attempt " + k.attempt}</option>`).join("")}</select></div>
           <div class="card"><div class="status">${esc(f.reason)}</div><p class="message">${esc(f.message)}</p>
           <p class="muted">Image <code>${esc(f.image)}</code></p>
-          <p>${f.inputs.length} input chunks kept: ${f.inputs.map(i => `<code>${esc(i.file)}</code>`).join(" ") || "none (a source)"}</p>
-          ${replayMode === "off" ? `<p class="muted">Replay is off here. Run <code>alpheus replay ${esc(name)} ${esc(step)} --replica ${replica} --attempt ${a}</code> yourself.</p>` :
-          `<p><button type="button" class="primary" id="replay" data-attempt="${a}">Replay attempt ${a} ▸</button>
-          <span class="muted">Runs <code>alpheus replay ${esc(name)} ${esc(step)} --replica ${replica} --attempt ${a} --with ${esc(replayMode)}</code>: the same image on these chunks, at debug level, ${replayMode === "cluster" ? "as a pod in the run's namespace" : "with " + esc(replayMode) + " on the machine that runs alpheus ui"}.</span></p>`}</div>
+          ${skipped ? `<p>The replica gave up after attempt ${esc(f.attempt)}. ${f.inputs.length} chunks it never processed are kept${f.notKept ? `, and ${esc(f.notKept)} more were not` : ""}: ${shownInputs}</p>` :
+          `<p>${f.inputs.length} input chunks kept: ${shownInputs || "none (a source)"}</p>`}
+          ${replayMode === "off" ? `<p class="muted">Replay is off here. Run <code>alpheus replay ${esc(name)} ${esc(step)} --replica ${replica} ${flag}</code> yourself.</p>` :
+          `<p><button type="button" class="primary" id="replay" data-attempt="${a}">${skipped ? "Replay the skipped chunks" : "Replay attempt " + a} ▸</button>
+          <span class="muted">Runs <code>alpheus replay ${esc(name)} ${esc(step)} --replica ${replica} ${flag} --with ${esc(replayMode)}</code>: the same image on these chunks, at debug level, ${replayMode === "cluster" ? "as a pod in the run's namespace" : "with " + esc(replayMode) + " on the machine that runs alpheus ui"}.</span></p>`}</div>
           <pre id="replay-out" hidden></pre>`;
       }
     }
@@ -259,7 +266,7 @@ async function replicaView(ns, name, step, replica, fresh) {
   const ct = document.getElementById("container");
   if (ct) ct.onchange = () => { state.container = ct.value; render(false); };
   const fs = document.getElementById("failure");
-  if (fs) fs.onchange = () => { state.failure = Number(fs.value); render(false); };
+  if (fs) fs.onchange = () => { state.failure = fs.value; render(false); };
   const rp = document.getElementById("replay");
   if (rp) rp.onclick = () => replay(ns, name, step, replica, rp.dataset.attempt);
 }
