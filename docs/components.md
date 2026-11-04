@@ -232,6 +232,11 @@ component must write the same output for the same input. The old attempt
 is shut out: its certificate no longer works at the hub, and its writes
 to the manifests are refused.
 
+A full bucket is the exception: when the storage says the bucket's quota is
+reached, the run fails at once, without restarts and also with
+`failurePolicy: continue`, since every attempt would write to the same
+full bucket.
+
 When an attempt fails, the controller keeps its logs and the input
 chunks it had open in the bucket, says why in `status.steps[].replicas[].reason`,
 and records an event. `alpheus replay` runs that attempt again on its own,

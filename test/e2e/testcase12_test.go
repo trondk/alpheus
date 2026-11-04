@@ -33,7 +33,8 @@ import (
 // middle of the stream. The run must fail, saying so, and not wait for
 // storage that is up: a full bucket is not an outage (GO-136). What was
 // committed must still hold: every chunk the manifest lists exists and is
-// unchanged, and source's counters match the manifest (GO-115).
+// unchanged, and source's counters match the manifest (GO-115). No step
+// restarts, since a restart would find the bucket just as full (GO-77).
 //
 // Garage refuses the first write over the quota, so source fails in the
 // middle of its stream. MinIO counts a bucket's usage now and then, so it
@@ -71,6 +72,15 @@ func TestTestcase12(t *testing.T) {
 	}
 	if !st.LateQuota && r.Status.FailedStep != "source" {
 		t.Errorf("failed in step %q, want source, whose writes go over the quota", r.Status.FailedStep)
+	}
+
+	// No restarts: a new attempt would find the bucket just as full (GO-77).
+	for _, ss := range r.Status.Steps {
+		for _, rs := range ss.Replicas {
+			if rs.Restarts != 0 {
+				t.Errorf("%s replica %d restarted %d times on a full bucket", ss.Name, rs.Index, rs.Restarts)
+			}
+		}
 	}
 
 	stream := chunk.EdgeStream(string(r.UID), chunk.EdgeName("source", chunk.DefaultOutput, "sink"), 0)

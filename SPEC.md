@@ -205,7 +205,7 @@ skriver sin egen strøm af chunks på en kant (7.3), så der stadig kun er
 |---|---|---|
 | GO-75 | SKAL | `spec.steps[].replicas` (standard 1, højst 64) angiver antallet af replikaer. Replikaerne nummereres 0 til `replicas`-1, og agenten får sit nummer som miljøvariabel. |
 | GO-76 | SKAL | Chunk nummer n i strømmen fra producent-replika p går til forbruger-replika (n + p) mod `replicas` hos hvert forbrugende trin. Leddet p spreder arbejdet, når mange producent-replikaer hver laver få chunks; uden det ville alle strømme starte på samme forbruger-replika. Fordelingen er deterministisk, så en genstartet replika får præcis de samme chunks igen. |
-| GO-77 | SKAL | `maxRestarts` og forsøgsnummeret (GO-67) gælder pr. replika. Et trin er afsluttet, når alle dets replikaer er afsluttet, og fejlet, når én replika har brugt alle sine genstarter. |
+| GO-77 | SKAL | `maxRestarts` og forsøgsnummeret (GO-67) gælder pr. replika. Et trin er afsluttet, når alle dets replikaer er afsluttet, og fejlet, når én replika har brugt alle sine genstarter. Fejler et forsøg med årsagen `StorageFull`, genstartes det ikke, og runnet stoppes straks, også med `failurePolicy: continue` (GO-97): et nyt forsøg og de andre replikaer skriver til den samme fulde bucket. |
 | GO-97 | SKAL | Har en replika brugt alle sine genstarter, og er `failurePolicy` `continue`, lukker controlleren replikaens udgående strømme. Først når pod'en er bekræftet væk (GO-67), skriver controlleren hvert udgående manifest med `eos: true`, uændrede chunks og et `epoch` én højere end replikaens sidste forsøg, så en agent, der mod forventning stadig kører, stoppes af fencing (GO-68). Controlleren lukker også replikaens ack-filer: de lister de chunks, replikaen committede, har `closed: true` og samme højere `epoch`. En producent venter ikke på en lukket forbruger-replika (GO-35), så runnet går ikke i stå, og en agent, der stadig kører, stoppes ved sin næste skrivning af ack-filen. Input-chunks, der var tildelt replikaen, men ikke står i dens lukkede ack-fil, tælles i `status.steps[].replicas[].failedChunks`, også dem, producenten laver, efter at replikaen er lukket. Forbrugerne når EOS, og runnet slutter som `PartiallySucceeded`. Med `failurePolicy: stop` stoppes hele runnet i stedet. |
 
 ### 5.2 Resultater
@@ -885,7 +885,8 @@ mindre end runnet skal bruge, og et langsomt `sink`, så chunks hober sig
 op. Runnet skal være `Failed` med en årsag, der nævner kvoten, og ikke
 "storage unreachable": en fuld bucket er ikke et udfald (GO-136). Det
 committede skal holde: hver chunk i manifestet findes og har sin checksum,
-og `source`s tællere svarer til manifestet (GO-115). Testen tømmer
+og `source`s tællere svarer til manifestet (GO-115). Runnet stopper
+ved første forsøg, der rammer kvoten, uden genstarter (GO-77). Testen tømmer
 bucketen før og efter. Garage afviser den første skrivning over kvoten, så
 `source` fejler midt i sin strøm. MinIO tæller en buckets forbrug med
 mellemrum og lader skrivninger over kvoten gå igennem, til det har talt

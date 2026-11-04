@@ -24,7 +24,7 @@ message.
 | `AgentFailed` | The agent failed for another reason, or restarted too often | The agent's kept log |
 | `StorageRefused` | The storage refused the keys in the run's Secret | Fix the Secret; no restart helps, so the run fails at once |
 | `StorageUnreachable` | The storage did not answer for `spec.storage.timeout` | Check the storage; shorter outages are waited out |
-| `StorageFull` | The bucket's quota is reached | More quota, or smaller results |
+| `StorageFull` | The bucket's quota is reached | More quota, or smaller results; no restart helps, so the run fails at once |
 | `StorageError` | The storage answered with another error | The message has the storage's answer |
 | `ScratchFull` | A chunk did not fit in the step's scratch folder | Raise `scratch` for the step, or make chunks smaller |
 | `PodDeleted` | The pod disappeared: evicted, a lost node, or deleted | Kubernetes' events for the pod |

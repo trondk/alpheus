@@ -614,6 +614,46 @@ func TestFailurePolicyContinue(t *testing.T) {
 	}
 }
 
+// A full bucket stops the run at the first failed attempt, without the
+// restarts it has left and also with failurePolicy continue: a new attempt
+// would only find the bucket full again.
+func TestStorageFullStops(t *testing.T) {
+	ns := namespace(t)
+	r := testcase03(ns, 1)
+	r.Spec.Steps[1].MaxRestarts = ptr.To[int32](3)
+	r.Spec.Steps[1].FailurePolicy = v1alpha1.FailureContinue
+	create(t, r)
+
+	p := waitPod(t, ns, "sales-filter-0-1")
+	p.Status.Phase = corev1.PodFailed
+	p.Status.InitContainerStatuses = []corev1.ContainerStatus{{Name: AgentContainer, State: corev1.ContainerState{
+		Terminated: &corev1.ContainerStateTerminated{ExitCode: 1, Message: "StorageFull: put x: QuotaExceeded: the bucket's quota is reached"},
+	}}}
+	p.Status.ContainerStatuses = []corev1.ContainerStatus{{Name: ComponentContainer, State: corev1.ContainerState{
+		Terminated: &corev1.ContainerStateTerminated{ExitCode: 143},
+	}}}
+	if err := k8s.Status().Update(t.Context(), p); err != nil {
+		t.Fatal(err)
+	}
+
+	got := waitPhase(t, r, v1alpha1.RunFailed)
+	st := got.Status
+	if st.Reason != v1alpha1.ReasonStorageFull || st.FailedStep != "filter" || !strings.Contains(st.Message, "QuotaExceeded") {
+		t.Errorf("reason %q, failed step %q, message %q", st.Reason, st.FailedStep, st.Message)
+	}
+	if rs := st.Steps[1].Replicas[0]; rs.Restarts != 0 || rs.Attempt != 1 || rs.Phase != v1alpha1.StepFailed {
+		t.Errorf("replica %+v, want failed in its first attempt", rs)
+	}
+	if _, ok := pods(t, ns)["sales-filter-0-2"]; ok {
+		t.Error("a second attempt was started")
+	}
+	for _, e := range rec.of(ns, "sales") {
+		if e.action == "Restart" {
+			t.Errorf("event %s/%s", e.action, e.reason)
+		}
+	}
+}
+
 func put(t *testing.T, key string, v interface{ Marshal() ([]byte, error) }) {
 	t.Helper()
 	data, _ := v.Marshal()

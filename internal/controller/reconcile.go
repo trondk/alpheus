@@ -379,9 +379,20 @@ type stopped struct {
 // failedAttempt starts the next attempt, or fails the replica when it has
 // used all of its restarts. With failurePolicy continue the replica's
 // streams are closed instead of stopping the run (GO-97).
+//
+// A full bucket stops the run at once, whatever the restarts and the
+// failure policy: a new attempt would write to the same full bucket, and
+// so would every other replica, also the one closing the streams.
 func (rc *Reconciler) failedAttempt(ctx context.Context, r *v1alpha1.StreamRun, g *graph, s *v1alpha1.Step, rs *v1alpha1.ReplicaStatus, reason v1alpha1.Reason, msg string) (*stopped, error) {
 	rs.Reason = reason
 	rc.captureFailure(ctx, r, g, s, rs, reason, msg)
+	if reason == v1alpha1.ReasonStorageFull {
+		emit(ctx, corev1.EventTypeWarning, string(reason), "GiveUp", "step %s replica %d attempt %d failed, and a full bucket does not get emptier by a restart: %s",
+			s.Name, rs.Index, rs.Attempt, msg)
+		rs.Phase, rs.Message = v1alpha1.StepFailed, msg
+		return &stopped{reason: reason, step: s.Name, replica: rs.Index,
+			msg: fmt.Sprintf("step %s replica %d failed: the bucket is full: %s", s.Name, rs.Index, msg)}, nil
+	}
 	if rs.Restarts < maxRestarts(s) {
 		emit(ctx, corev1.EventTypeWarning, string(reason), "Restart", "step %s replica %d attempt %d failed, restarting (%d of %d): %s",
 			s.Name, rs.Index, rs.Attempt, rs.Restarts+1, maxRestarts(s), msg)
