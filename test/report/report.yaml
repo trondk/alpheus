@@ -1,0 +1,70 @@
+# The end-to-end tests' reports (hack/report.sh), served on port 30718 of
+# the control plane. The image holds every report made on this machine;
+# hack/report.sh puts a new one here after each run.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: reports
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: reports
+  namespace: reports
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: reports
+  template:
+    metadata:
+      labels:
+        app: reports
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: alpheus-talos
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: reports
+          image: ${REPORT_IMAGE}
+          args: ["serve", "-dir", "/reports", "-listen", ":8080"]
+          ports:
+            - name: http
+              containerPort: 8080
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 64Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: reports
+  namespace: reports
+spec:
+  type: NodePort
+  selector:
+    app: reports
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      nodePort: 30718

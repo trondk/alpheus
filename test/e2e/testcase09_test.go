@@ -31,14 +31,9 @@ import (
 	"alpheus-dev.org/alpheus/sdk"
 )
 
-// Garage in the Vagrant test cluster (vagrant/).
-const (
-	garageNamespace = "storage"
-	garageName      = "garage"
-)
-
 // TestTestcase09 runs source -> pass -> sink and takes the storage away in
-// the middle of the stream, by scaling Garage to 0, once for 20 seconds and
+// the middle of the stream, by scaling the storage (Garage, or MinIO with
+// ALPHEUS_E2E_STORAGE=minio) to 0, once for 20 seconds and
 // once for 3 minutes. The agents must wait for it with backoff instead of
 // failing (GO-136): the run must succeed with every chunk once and
 // unchanged, exact counters and no restarts at all.
@@ -53,8 +48,8 @@ func TestTestcase09(t *testing.T) {
 				return b.acked("pass", "sink") >= b.Chunks/4
 			})
 
-			t.Cleanup(func() { e.scaleGarage(context.Background(), 1) })
-			e.scaleGarage(t.Context(), 0)
+			t.Cleanup(func() { e.scaleStorage(context.Background(), 1) })
+			e.scaleStorage(t.Context(), 0)
 			if r := e.get(r); r.Status.FinishedAt != nil {
 				t.Fatalf("the run finished as %s before the storage was down; sink must be slower", r.Status.Phase)
 			}
@@ -65,7 +60,7 @@ func TestTestcase09(t *testing.T) {
 			if now := e.get(r); now.Status.FinishedAt != nil {
 				t.Fatalf("the run finished as %s while the storage was down: %s", now.Status.Phase, now.Status.Message)
 			}
-			e.scaleGarage(t.Context(), 1)
+			e.scaleStorage(t.Context(), 1)
 			t.Log("storage back")
 
 			b.finish(e, r, b.Chunks, sdk.DefaultPort)
@@ -94,11 +89,13 @@ func (e *env) get(r *v1alpha1.StreamRun) *v1alpha1.StreamRun {
 	return &now
 }
 
-// scaleGarage scales Garage to replicas and waits until it has that many
-// ready pods and no others, so 0 means the storage is really gone.
-func (e *env) scaleGarage(ctx context.Context, replicas int32) {
+// scaleStorage scales the storage's Deployment to replicas and waits until
+// it has that many ready pods and no others, so 0 means the storage is
+// really gone.
+func (e *env) scaleStorage(ctx context.Context, replicas int32) {
 	e.t.Helper()
-	key := client.ObjectKey{Namespace: garageNamespace, Name: garageName}
+	st := storage(e.t)
+	key := client.ObjectKey{Namespace: st.Namespace, Name: st.Deployment}
 	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		var d appsv1.Deployment
 		if err := e.c.Get(ctx, key, &d); err != nil {
@@ -107,28 +104,28 @@ func (e *env) scaleGarage(ctx context.Context, replicas int32) {
 		d.Spec.Replicas = &replicas
 		return e.c.Update(ctx, &d)
 	}); err != nil {
-		e.t.Fatalf("scaling Garage to %d: %v", replicas, err)
+		e.t.Fatalf("scaling %s to %d: %v", st.Name, replicas, err)
 	}
 	deadline := time.Now().Add(3 * time.Minute)
 	for {
-		state, done := e.garageState(ctx, replicas)
+		state, done := e.storageState(ctx, key, replicas)
 		if done {
 			return
 		}
 		if time.Now().After(deadline) {
-			e.t.Fatalf("Garage did not reach %d replicas within 3 minutes: %s", replicas, state)
+			e.t.Fatalf("%s did not reach %d replicas within 3 minutes: %s", st.Name, replicas, state)
 		}
 		time.Sleep(time.Second)
 	}
 }
 
-func (e *env) garageState(ctx context.Context, replicas int32) (string, bool) {
+func (e *env) storageState(ctx context.Context, key client.ObjectKey, replicas int32) (string, bool) {
 	var d appsv1.Deployment
-	if err := e.c.Get(ctx, client.ObjectKey{Namespace: garageNamespace, Name: garageName}, &d); err != nil {
+	if err := e.c.Get(ctx, key, &d); err != nil {
 		return err.Error(), false
 	}
 	var pods corev1.PodList
-	if err := e.c.List(ctx, &pods, client.InNamespace(garageNamespace), client.MatchingLabels(d.Spec.Selector.MatchLabels)); err != nil {
+	if err := e.c.List(ctx, &pods, client.InNamespace(key.Namespace), client.MatchingLabels(d.Spec.Selector.MatchLabels)); err != nil {
 		return err.Error(), false
 	}
 	state := fmt.Sprintf("%d pods, %d ready", len(pods.Items), d.Status.ReadyReplicas)

@@ -76,6 +76,41 @@ import (
 	"alpheus-dev.org/alpheus/internal/store"
 )
 
+// storageTarget is an S3 store the testcases can run against.
+type storageTarget struct {
+	Name     string
+	Endpoint string // as the cluster reaches it
+	Region   string
+	// The Deployment testcase09 scales to 0 to take the storage away.
+	Namespace, Deployment string
+	// LateQuota is true for a store that checks a bucket's quota against a
+	// usage it counts now and then, so writes over the quota go through
+	// until it has counted them (testcase12). MinIO does.
+	LateQuota bool
+}
+
+// Garage is always in the test cluster (vagrant/services); MinIO only
+// while hack/e2e-minio.sh runs.
+var (
+	garageTarget = storageTarget{Name: "Garage", Endpoint: "http://garage.storage.svc.cluster.local:3900", Region: "garage", Namespace: "storage", Deployment: "garage"}
+	minioTarget  = storageTarget{Name: "MinIO", Endpoint: "http://minio.minio.svc.cluster.local:9000", Region: "us-east-1", Namespace: "minio", Deployment: "minio", LateQuota: true}
+)
+
+// storage is the store the testcases run against: Garage, or MinIO with
+// ALPHEUS_E2E_STORAGE=minio. The flows in testdata name Garage; create
+// points them at this one. Both have the same buckets.
+func storage(t *testing.T) storageTarget {
+	switch v := os.Getenv("ALPHEUS_E2E_STORAGE"); v {
+	case "", "garage":
+		return garageTarget
+	case "minio":
+		return minioTarget
+	default:
+		t.Fatalf("ALPHEUS_E2E_STORAGE=%q: want garage or minio", v)
+		return storageTarget{}
+	}
+}
+
 // env is a test's cluster, namespace and storage.
 type env struct {
 	t     *testing.T
@@ -184,6 +219,9 @@ func (e *env) create(name string) *v1alpha1.StreamRun {
 		e.t.Fatal(err)
 	}
 	r.Namespace = e.ns
+	if st := storage(e.t); r.Spec.Storage.Endpoint == garageTarget.Endpoint {
+		r.Spec.Storage.Endpoint, r.Spec.Storage.Region = st.Endpoint, st.Region
+	}
 	if err := e.c.Create(e.t.Context(), &r); err != nil {
 		e.t.Fatal(err)
 	}

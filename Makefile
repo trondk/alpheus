@@ -1,4 +1,4 @@
-.PHONY: all generate proto check-generated check-deps test test-crd test-chart test-templates cli test-s3 test-agent-s3 vet images e2e test-upgrade fuzz bench bench-etl release verify-release vulndb vuln deploy
+.PHONY: all generate proto check-generated check-deps test test-crd test-chart test-templates cli test-s3 test-agent-s3 vet images e2e e2e-minio test-upgrade fuzz bench bench-etl release verify-release vulndb vuln deploy
 
 all: generate vet check-deps test
 
@@ -79,9 +79,16 @@ images:
 	hack/images.sh
 
 # Installs the controller in the Vagrant test cluster with the Helm chart and
-# those images, and runs the testcases in test/e2e against it.
+# those images, and runs the testcases in test/e2e against it. Afterwards
+# a report of the run is served on port 30718 of the control plane
+# (hack/report.sh); REPORT=0 skips it.
 e2e:
 	hack/e2e.sh
+
+# The same testcases against MinIO instead of Garage: installs a MinIO for
+# the run and removes it afterwards (hack/e2e-minio.sh).
+e2e-minio:
+	hack/e2e-minio.sh
 
 # Runs testcase01, testcase02 and testcase03, with the images from the last make e2e,
 # to see how the system performs. BENCH_* change their sizes (see

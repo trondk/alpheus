@@ -630,7 +630,7 @@ sdk.Progress(ctx, "4,2 mio. rækker behandlet")
 | Integration | controller mod API-server | envtest |
 | Integration | agent mod S3 | Garage i en container |
 | Driver | `builtin` | hub og klient i samme proces, og agenter gennem hub'en mod Garage |
-| E2E | testcase01 til testcase18 | Talos på to VM'er (control plane og worker) med Vagrant og libvirt (`vagrant/` i repo'ets rod) med Garage og Zot (12.2) |
+| E2E | testcase01 til testcase18 | Talos på to VM'er (control plane og worker) med Vagrant og libvirt (`vagrant/` i repo'ets rod) med Garage og Zot, og med MinIO i stedet for Garage (12.2) |
 
 | ID | Niveau | Krav |
 |---|---|---|
@@ -886,7 +886,13 @@ op. Runnet skal være `Failed` med en årsag, der nævner kvoten, og ikke
 "storage unreachable": en fuld bucket er ikke et udfald (GO-136). Det
 committede skal holde: hver chunk i manifestet findes og har sin checksum,
 og `source`s tællere svarer til manifestet (GO-115). Testen tømmer
-bucketen før og efter.
+bucketen før og efter. Garage afviser den første skrivning over kvoten, så
+`source` fejler midt i sin strøm. MinIO tæller en buckets forbrug med
+mellemrum og lader skrivninger over kvoten gå igennem, til det har talt
+dem (i et run med MinIO gik 256 MiB ind i bucketen på 20 MiB), og afviser
+så en skrivning i det trin, der skriver næste gang. Mod MinIO kræver testen
+derfor kun årsagen `StorageFull` og det committede, ikke hvilket trin der
+fejler.
 
 **testcase13: scratch-mappen er for lille (GO-106).** `sink` har
 `scratch: 1Mi` og får chunks på 4 MiB. Agenten skal afvise den første
@@ -988,6 +994,26 @@ På værten skal navnet stå i `/etc/hosts` for at skubbe images;
 Zot har ingen login. Det er kun i orden, fordi VM'en ligger på libvirts
 host-only/NAT-netværk og ikke kan nås udefra. Det står i
 `vagrant/README.md`, så ingen eksponerer den ved et uheld.
+
+**MinIO.** `make e2e-minio` (`hack/e2e-minio.sh`) kører de samme
+testcases mod MinIO i stedet for Garage. Scriptet installerer MinIO i
+namespacet `minio` (`test/e2e/minio`) med de samme buckets som Garage,
+`alpheus-quota` med en kvote på 20 MiB, og nøgler, der kun findes til det
+run: agenternes, der kan læse og skrive de tre buckets, og en, der kun kan
+læse `alpheus-results`. Testene når MinIO på control planes port 30903 over
+HTTP. Med `ALPHEUS_E2E_STORAGE=minio` peger testene hvert flows lager på
+MinIO, og testcase09 skalerer MinIO ned i stedet for Garage. Bagefter
+sletter scriptet namespacet med MinIO, data og nøgler, også hvis testene
+fejler (`KEEP_MINIO=1` lader det stå). MinIO udgiver ikke længere sine egne
+images, så det er Chainguards build af MinIOs kildekode, låst med digest.
+
+**Testrapport.** Når testene er færdige, laver `hack/report.sh` en rapport
+af runnet (`REPORT=0` springer den over): `go tool test2json` læser go
+tests output, og `hack/testreport` gør det til en side med resultatet,
+lageret, commit'et, images og noderne øverst og hver test med sit eget
+output, de fejlede foldet ud. Rapporterne gemmes i `_out/reports/`, og et
+image med dem alle kører i namespacet `reports` på control planes port
+30718, så den seneste og de tidligere kan læses i browseren.
 
 
 ## 13. Kodestil og CI

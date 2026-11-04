@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Runs the end-to-end tests (SPEC 12.1) on the Vagrant test cluster: builds
 # and pushes the images, installs the CRD, the controller and the UI with
-# the Helm chart and those images, and runs test/e2e against Garage. The
+# the Helm chart and those images, and runs test/e2e against Garage, or
+# MinIO through hack/e2e-minio.sh. The
 # UI stays running on port 30717 of the VM (GO-143).
 #
 # Usage: hack/e2e.sh [go test flags], for example -run TestTestcase01
@@ -9,6 +10,8 @@
 #   DEPLOY_ONLY=1  stop after installing, without the tests (make deploy)
 #   SKIP_DEPLOY=1  run the tests against what is installed
 #                  (hack/test-upgrade.sh)
+#   REPORT=0       no report afterwards; by default hack/report.sh makes
+#                  one and serves it on port 30718 of the control plane
 #   BENCH_*        the testcases' sizes (see test/e2e/e2e_test.go)
 #   HELM           the helm binary (helm)
 #   CHART          a released chart to install instead of charts/alpheus,
@@ -61,21 +64,40 @@ if [[ -z ${CHART:-} && ${SKIP_DEPLOY:-} != 1 ]]; then
 fi
 [[ ${DEPLOY_ONLY:-} == 1 ]] && exit 0
 
-# The key that can only read the results bucket, made by
-# vagrant/services.sh in Garage (GO-129).
-info=$(kubectl -n storage exec deploy/garage -c garage -- /garage key info --show-secret results-reader 2>/dev/null)
-RESULTS_ACCESS_KEY=$(sed -n -E 's/^Key ID:[[:space:]]+//p' <<<"$info")
-RESULTS_SECRET_KEY=$(sed -n -E 's/^Secret key:[[:space:]]+//p' <<<"$info")
-[[ -n $RESULTS_ACCESS_KEY && -n $RESULTS_SECRET_KEY ]] || { echo "no key results-reader in Garage: run vagrant/services.sh" >&2; exit 1; }
+# The storage the testcases use. Garage is always there, and its keys come
+# from vagrant/_out/secrets.env and Garage; for MinIO, hack/e2e-minio.sh
+# sets the keys, the endpoint and ALPHEUS_E2E_STORAGE=minio.
+export ALPHEUS_E2E_STORAGE="${ALPHEUS_E2E_STORAGE:-garage}"
+if [[ $ALPHEUS_E2E_STORAGE == garage ]]; then
+  # The key that can only read the results bucket, made by
+  # vagrant/services.sh in Garage (GO-129).
+  info=$(kubectl -n storage exec deploy/garage -c garage -- /garage key info --show-secret results-reader 2>/dev/null)
+  ALPHEUS_E2E_S3_RESULTS_ACCESS_KEY=$(sed -n -E 's/^Key ID:[[:space:]]+//p' <<<"$info")
+  ALPHEUS_E2E_S3_RESULTS_SECRET_KEY=$(sed -n -E 's/^Secret key:[[:space:]]+//p' <<<"$info")
+  [[ -n $ALPHEUS_E2E_S3_RESULTS_ACCESS_KEY && -n $ALPHEUS_E2E_S3_RESULTS_SECRET_KEY ]] || { echo "no key results-reader in Garage: run vagrant/services.sh" >&2; exit 1; }
+  ALPHEUS_E2E_S3_ACCESS_KEY="$GARAGE_DEFAULT_ACCESS_KEY"
+  ALPHEUS_E2E_S3_SECRET_KEY="$GARAGE_DEFAULT_SECRET_KEY"
+  ALPHEUS_E2E_S3_ENDPOINT="https://$IP:30900"
+  ALPHEUS_E2E_S3_CA_FILE="$VAGRANT/_out/ca.crt"
+fi
+export ALPHEUS_E2E_S3_RESULTS_ACCESS_KEY ALPHEUS_E2E_S3_RESULTS_SECRET_KEY \
+  ALPHEUS_E2E_S3_ACCESS_KEY ALPHEUS_E2E_S3_SECRET_KEY ALPHEUS_E2E_S3_ENDPOINT ALPHEUS_E2E_S3_CA_FILE
 
+# The output is kept for the report (hack/report.sh), which is built and
+# served in the cluster when the tests are done, unless REPORT=0.
+mkdir -p "$OUT/e2e"
+LOG="$OUT/e2e/go-test.log"
+STARTED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 cd "$ROOT"
+set +e
 ALPHEUS_E2E=1 \
-ALPHEUS_E2E_S3_RESULTS_ACCESS_KEY="$RESULTS_ACCESS_KEY" \
-ALPHEUS_E2E_S3_RESULTS_SECRET_KEY="$RESULTS_SECRET_KEY" \
-ALPHEUS_E2E_S3_ACCESS_KEY="$GARAGE_DEFAULT_ACCESS_KEY" \
-ALPHEUS_E2E_S3_SECRET_KEY="$GARAGE_DEFAULT_SECRET_KEY" \
-ALPHEUS_E2E_S3_ENDPOINT="https://$IP:30900" \
 ALPHEUS_E2E_WORKER_VM=alpheus-talos-worker \
-ALPHEUS_E2E_S3_CA_FILE="$VAGRANT/_out/ca.crt" \
 ALPHEUS_E2E_OUT="$OUT/bench" \
-  go test -count=1 -v -timeout 45m ./test/e2e "$@"
+  go test -count=1 -v -timeout 45m ./test/e2e "$@" 2>&1 | tee "$LOG"
+rc=${PIPESTATUS[0]}
+set -e
+if [[ ${REPORT:-1} == 1 ]]; then
+  STARTED="$STARTED" STORAGE="$ALPHEUS_E2E_STORAGE" ARGS="$*" "$ROOT/hack/report.sh" "$LOG" ||
+    echo "the report could not be made; the tests' own result stands" >&2
+fi
+exit "$rc"

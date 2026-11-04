@@ -71,6 +71,12 @@ if [[ "$CLUSTER" == 1 ]]; then
   fi
 fi
 
+# The end-to-end tests' reports, which make e2e serves when it is done.
+REPORTS_STATUS="none yet: make e2e"
+if [[ "$CLUSTER" == 1 ]] && kubectl -n reports get deployment reports >/dev/null 2>&1; then
+  REPORTS_STATUS="running"
+fi
+
 # The cluster admin's bearer token is not stored; the kubeconfig uses a client
 # certificate. Show a fingerprint of it so two kubeconfigs can be compared.
 CLIENT_CERT="$(kubectl config view --raw -o jsonpath='{.users[0].user.client-certificate-data}' 2>/dev/null \
@@ -134,6 +140,8 @@ Alpheus                                        make deploy installs it
   ui:           http://$CP_IP:30717/   ($UI_STATUS)
                 the runs of every namespace, their logs, failures and
                 replay; no login (the VM's network only)
+  test reports: http://$CP_IP:30718/   ($REPORTS_STATUS)
+                every make e2e and make e2e-minio run, newest first
   controller:   kubectl -n alpheus-system get deploy,pods
 
 Zot (registry)                                 Garage key from the cluster

@@ -34,11 +34,17 @@ import (
 // storage that is up: a full bucket is not an outage (GO-136). What was
 // committed must still hold: every chunk the manifest lists exists and is
 // unchanged, and source's counters match the manifest (GO-115).
+//
+// Garage refuses the first write over the quota, so source fails in the
+// middle of its stream. MinIO counts a bucket's usage now and then, so it
+// lets writes over the quota through until it has counted them, and then
+// refuses one, in whichever step writes next; the rest holds the same.
 func TestTestcase12(t *testing.T) {
 	b := newBench(t, "testcase12", nil)
 	e := setup(t)
+	st := storage(t)
 	quota := e.storeFor(v1alpha1.ResultStatus{
-		Endpoint: "http://garage.storage.svc.cluster.local:3900", Bucket: "alpheus-quota", Region: "garage", SecretRef: "alpheus-s3",
+		Endpoint: st.Endpoint, Bucket: "alpheus-quota", Region: st.Region, SecretRef: "alpheus-s3",
 	})
 	// The bucket is this test's alone; it starts and ends empty.
 	empty := func(ctx context.Context) {
@@ -60,8 +66,11 @@ func TestTestcase12(t *testing.T) {
 	if !strings.Contains(strings.ToLower(r.Status.Message), "quota") {
 		t.Errorf("the reason does not say the bucket is full: %s", r.Status.Message)
 	}
-	if r.Status.Reason != v1alpha1.ReasonStorageFull || r.Status.FailedStep != "source" {
-		t.Errorf("reason %q in step %q, want %s in source (GO-138)", r.Status.Reason, r.Status.FailedStep, v1alpha1.ReasonStorageFull)
+	if r.Status.Reason != v1alpha1.ReasonStorageFull {
+		t.Errorf("reason %q, want %s (GO-138)", r.Status.Reason, v1alpha1.ReasonStorageFull)
+	}
+	if !st.LateQuota && r.Status.FailedStep != "source" {
+		t.Errorf("failed in step %q, want source, whose writes go over the quota", r.Status.FailedStep)
 	}
 
 	stream := chunk.EdgeStream(string(r.UID), chunk.EdgeName("source", chunk.DefaultOutput, "sink"), 0)
@@ -69,9 +78,10 @@ func TestTestcase12(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n := m.Count(); n == 0 || n >= int64(b.Chunks) {
+	if n := m.Count(); n == 0 || n > int64(b.Chunks) || !st.LateQuota && n == int64(b.Chunks) {
 		t.Fatalf("the manifest has %d of %d chunks; the quota should stop it in between", n, b.Chunks)
 	}
+	t.Logf("%s committed %d of %d chunks before the quota stopped the run", st.Name, m.Count(), b.Chunks)
 	for _, c := range m.Chunks {
 		body, err := quota.Get(t.Context(), stream.ChunkKey(c.N, c.Ext))
 		if err != nil {

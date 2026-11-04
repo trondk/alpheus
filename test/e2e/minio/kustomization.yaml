@@ -1,0 +1,12 @@
+# A MinIO for one run of the testcases against it (hack/e2e-minio.sh,
+# make e2e-minio). It lives only in the namespace minio, which the script
+# deletes afterwards with everything in it. The root key is made by the
+# script for each run and kept nowhere else.
+#
+# MinIO no longer publishes its own images, so this is Chainguard's build
+# of MinIO's source, pinned by digest.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - minio.yaml
