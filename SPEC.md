@@ -4,10 +4,11 @@ Status: udkast, 2026-11-02. Trin 1–8 i afsnit 15 er bygget: API-typer og
 CRD, chunks og lager, komponent-SDK'et, agenten, controlleren og
 end-to-end-tests på Kubernetes (Talos på to VM'er) med fan-out, fan-in,
 replikaer, genstart, backpressure og kaos, og fejltests (testcase09 til
-testcase18: lageret går ned, controlleren dør, afviste nøgler, fuld
+testcase19: lageret går ned, controlleren dør, afviste nøgler, fuld
 bucket, for lille scratch-mappe, en komponent med en fejl, set gennem UI'et
-i klyngen, et run på to noder, en node, der forsvinder, og et chart, der
-opgraderes midt i et run). Fejlsøgning (GO-138 til GO-143) er bygget: årsagskoder, events,
+i klyngen, et run på to noder, en node, der forsvinder, et chart, der
+opgraderes midt i et run, og en dårlig chunk, der lægges til side med
+`failurePolicy: continue`). Fejlsøgning (GO-138 til GO-143) er bygget: årsagskoder, events,
 gemte logs, genkørsel af et fejlet forsøg, `alpheus ui` på maskinen og i
 klyngen, og metrics. Af trin 9 er CLI, Helm-chart,
 skabeloner til komponenter i Go og Python og en guide til at skrive
@@ -109,7 +110,7 @@ alpheus/
 ├── examples/meter-etl/    flagskibet: ETL af store filer med elmåler-aflæsninger (findes)
 ├── test/
 │   ├── components/        testkomponenter: bench (findes), filter og sum i CSV (findes)
-│   ├── e2e/               testcase01 til testcase18 (findes)
+│   ├── e2e/               testcase01 til testcase19 (findes)
 │   └── internal/table/    CSV og decimaltal for testkomponenterne (findes)
 ├── vagrant/               testklyngen: Talos på to VM'er med Garage og Zot (findes)
 ├── docs/                  dokumentationen, som hjemmesiden henter ved byg (findes)
@@ -630,7 +631,7 @@ sdk.Progress(ctx, "4,2 mio. rækker behandlet")
 | Integration | controller mod API-server | envtest |
 | Integration | agent mod S3 | Garage i en container |
 | Driver | `builtin` | hub og klient i samme proces, og agenter gennem hub'en mod Garage |
-| E2E | testcase01 til testcase18 | Talos på to VM'er (control plane og worker) med Vagrant og libvirt (`vagrant/` i repo'ets rod) med Garage og Zot, og med MinIO i stedet for Garage (12.2) |
+| E2E | testcase01 til testcase19 | Talos på to VM'er (control plane og worker) med Vagrant og libvirt (`vagrant/` i repo'ets rod) med Garage og Zot, og med MinIO i stedet for Garage (12.2) |
 
 | ID | Niveau | Krav |
 |---|---|---|
@@ -947,6 +948,17 @@ den gamle komponent og læser det, den gamle agent committede. Runnet skal
 lykkes med hver chunk én gang og præcise tællere, og status må aldrig gå
 baglæns. Bagefter har klyngen dette commits chart, også hvis testen
 fejler. Testen springes over i `make e2e`.
+
+**testcase19: en dårlig chunk lægges til side (GO-97).** testcase14's
+komponent med en fejl i to replikaer med `failurePolicy: continue` og én
+genstart, og uden `sink`: `pass`' output er resultatet. Replikaen, der får
+chunk 5, fejler på den i begge forsøg og giver op, og den anden replika
+fortsætter med sine chunks. Runnet skal være `PartiallySucceeded` med
+årsagen `FailedReplicas`, og hver af `source`s chunks skal være i
+resultatet én gang eller tælles i den opgivne replikas `failedChunks`,
+chunk 5 ikke i resultatet. Det sidste forsøg er gemt med chunk 5 som
+første input, og de chunks, replikaen ikke nåede, ligger stadig, hvor
+`source` skrev dem. Det er mønstret i `docs/dead-letters.md`.
 
 **Agent-test: hvert commit-punkt (GO-74).** En pod, der slås ihjel,
 rammer ikke et bestemt sted mellem to skrivninger til S3. Derfor kører

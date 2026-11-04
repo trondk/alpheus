@@ -237,6 +237,10 @@ reached, the run fails at once, without restarts and also with
 `failurePolicy: continue`, since every attempt would write to the same
 full bucket.
 
+A replica that has used its restarts fails the run, or with
+`failurePolicy: continue` gives up while the rest of the run goes on; see
+[Bad records and bad chunks](/docs/dead-letters/).
+
 When an attempt fails, the controller keeps its logs and the input
 chunks it had open in the bucket, says why in `status.steps[].replicas[].reason`,
 and records an event. `alpheus replay` runs that attempt again on its own,
@@ -476,7 +480,8 @@ func handle(ctx context.Context, in sdk.Input, out sdk.Output) error {
   read a small lookup table to the end first and then stream a large input.
 - **Several outputs.** `out.Create(ctx, "rejected", "csv")` writes to a
   named output. An edge from it names the output: `{from: grep, output:
-  rejected, to: audit}`.
+  rejected, to: audit}`. Without an edge it is a result; see
+  [Bad records and bad chunks](/docs/dead-letters/).
 - **Replicas.** `in.Replica()` and `in.Replicas()` say which replica this
   is. You seldom need them: the agent already gives each replica its own
   chunks.

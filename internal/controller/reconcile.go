@@ -266,7 +266,7 @@ func (rc *Reconciler) reconcile(ctx context.Context, r *v1alpha1.StreamRun) (ctr
 	case finished == len(st.Steps):
 		st.Phase, st.Message, st.Reason = v1alpha1.RunSucceeded, "", ""
 		if failed > 0 {
-			st.Phase, st.Message, st.Reason = v1alpha1.RunPartiallySucceeded, fmt.Sprintf("%d steps had failed replicas", failed), v1alpha1.ReasonFailedReplicas
+			st.Phase, st.Message, st.Reason = v1alpha1.RunPartiallySucceeded, failedStepsMessage(failed), v1alpha1.ReasonFailedReplicas
 		}
 		rc.finish(ctx, r, g)
 		return ctrl.Result{}, nil
@@ -803,4 +803,12 @@ func setCondition(r *v1alpha1.StreamRun, typ string, status metav1.ConditionStat
 func ptrNow() *metav1.Time {
 	t := metav1.Now()
 	return &t
+}
+
+// failedStepsMessage is a PartiallySucceeded run's message.
+func failedStepsMessage(failed int) string {
+	if failed == 1 {
+		return "1 step had failed replicas"
+	}
+	return fmt.Sprintf("%d steps had failed replicas", failed)
 }

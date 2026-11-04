@@ -1,0 +1,33 @@
+# testcase19 (SPEC 12.1, GO-97): a bad chunk set aside. testcase14's
+# component with a bug, in two replicas with failurePolicy continue: pass
+# fails on the chunk whose header has number 5, on every attempt, so the
+# replica that gets it gives up after one restart, and the other replica
+# goes on. pass's output is the result. The run must end
+# PartiallySucceeded, with every chunk either in the result or counted in
+# failedChunks, and the chunk it failed on kept for a replay.
+# hack/e2e.sh sets the image, pinned by digest, the test sets the sizes,
+# and the test creates the Secret alpheus-s3 in its namespace.
+apiVersion: alpheus-dev.org/v1alpha1
+kind: StreamRun
+metadata:
+  name: testcase19
+spec:
+  steps:
+    - name: source
+      image: ${BENCH_IMAGE}
+      settings: {role: source, chunks: ${BENCH_CHUNKS}, size: ${BENCH_SIZE}, seed: 19}
+    - name: pass
+      image: ${BENCH_IMAGE}
+      replicas: 2
+      maxRestarts: 1
+      maxOpen: 2
+      failurePolicy: continue
+      settings: {role: pass, fail: 5}
+  edges:
+    - {from: source, to: pass}
+  chunks: {maxBytes: 1Gi, maxUnacked: ${BENCH_MAX_UNACKED}}
+  storage:
+    endpoint: http://garage.storage.svc.cluster.local:3900
+    bucket: alpheus-data
+    region: garage
+    secretRef: alpheus-s3

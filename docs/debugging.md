@@ -31,7 +31,7 @@ message.
 | `PodFailed` | The pod failed without a container saying why | Kubernetes' events for the pod |
 | `InvalidSpec` | The graph is invalid, or an image is not pinned | The message names the problem |
 | `Cancelled` | `spec.cancel` was set | |
-| `FailedReplicas` | The run finished, but replicas with `failurePolicy: continue` gave up | `failedChunks` of each replica says how much was not processed |
+| `FailedReplicas` | The run finished, but replicas with `failurePolicy: continue` gave up | `failedChunks` of each replica says how much was not processed; see [Bad records and bad chunks](/docs/dead-letters/) |
 
 Where to find it:
 
