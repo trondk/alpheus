@@ -150,6 +150,10 @@ func TestParseManifestRejects(t *testing.T) {
 	if _, err := ParseManifest([]byte(valid)); err != nil {
 		t.Fatalf("valid manifest: %v", err)
 	}
+	withObserved := strings.Replace(valid, `"last":null`, `"last":null,"observed":{"seq":3,"counts":{"rows":7},"errors":99999,"warnings":1,"errorsDropped":5,"segments":2}`, 1)
+	if _, err := ParseManifest([]byte(withObserved)); err != nil {
+		t.Fatalf("valid manifest with observed totals: %v", err)
+	}
 	for name, tc := range map[string]struct {
 		data string
 		want error
@@ -167,41 +171,19 @@ func TestParseManifestRejects(t *testing.T) {
 			`"chunks":[{"n":1,"ext":"tar.gz","bytes":1,"sha256":"`+sum0+`"}]`, 1), ErrInvalid},
 		"bad counter unit": {strings.Replace(valid, `"chunks":[]`,
 			`"chunks":[{"n":1,"ext":"csv","bytes":1,"sha256":"`+sum0+`","counts":{"Rows":1}}]`, 1), ErrInvalid},
-		"old schema field":   {strings.Replace(valid, `"segments"`, `"schema":"","segments"`, 1), ErrInvalid},
-		"wrong segment name": {strings.Replace(valid, `"segments":[]`, `"segments":["manifest-0001.json"]`, 1), ErrInvalid},
+		"old schema field":                         {strings.Replace(valid, `"segments"`, `"schema":"","segments"`, 1), ErrInvalid},
+		"wrong segment name":                       {strings.Replace(valid, `"segments":[]`, `"segments":["manifest-0001.json"]`, 1), ErrInvalid},
+		"observed: more log segments than entries": {strings.Replace(valid, `"last":null`, `"last":null,"observed":{"seq":1,"counts":{},"errors":1,"warnings":0,"errorsDropped":0,"segments":2000000000}`, 1), ErrInvalid},
+		"observed: too many log entries":           {strings.Replace(valid, `"last":null`, `"last":null,"observed":{"seq":1,"counts":{},"errors":100000,"warnings":1,"errorsDropped":0,"segments":1}`, 1), ErrInvalid},
+		"observed: negative errors":                {strings.Replace(valid, `"last":null`, `"last":null,"observed":{"seq":1,"counts":{},"errors":-1,"warnings":0,"errorsDropped":0,"segments":0}`, 1), ErrInvalid},
+		"observed: negative seq":                   {strings.Replace(valid, `"last":null`, `"last":null,"observed":{"seq":-1,"counts":{},"errors":0,"warnings":0,"errorsDropped":0,"segments":0}`, 1), ErrInvalid},
+		"observed: bad counter unit":               {strings.Replace(valid, `"last":null`, `"last":null,"observed":{"seq":1,"counts":{"Rows":1},"errors":0,"warnings":0,"errorsDropped":0,"segments":0}`, 1), ErrInvalid},
+		"observed: negative counter":               {strings.Replace(valid, `"last":null`, `"last":null,"observed":{"seq":1,"counts":{"rows":-1},"errors":0,"warnings":0,"errorsDropped":0,"segments":0}`, 1), ErrInvalid},
 	} {
 		if _, err := ParseManifest([]byte(tc.data)); !errors.Is(err, tc.want) {
 			t.Errorf("%s: %v, want %v", name, err, tc.want)
 		}
 	}
-}
-
-// GO-58: parsing never panics, and whatever parses survives a round trip.
-func FuzzParseManifest(f *testing.F) {
-	m := NewManifest("r", "uid", "a-b", 0, 1)
-	if _, err := m.Append(chunkN(1)); err != nil {
-		f.Fatal(err)
-	}
-	m.End()
-	data, err := m.Marshal()
-	if err != nil {
-		f.Fatal(err)
-	}
-	f.Add(data)
-	f.Add([]byte(`{}`))
-	f.Fuzz(func(t *testing.T, data []byte) {
-		m, err := ParseManifest(data)
-		if err != nil {
-			return
-		}
-		again, err := m.Marshal()
-		if err != nil {
-			t.Fatalf("parsed manifest does not marshal: %v", err)
-		}
-		if _, err := ParseManifest(again); err != nil {
-			t.Fatalf("marshalled manifest does not parse: %v", err)
-		}
-	})
 }
 
 func mustMarshal(t *testing.T, m *Manifest) []byte {

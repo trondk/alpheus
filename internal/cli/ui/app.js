@@ -89,7 +89,7 @@ async function runsView() {
     (filter === "failed" && (r.phase === "Failed" || r.phase === "PartiallySucceeded")));
   const chip = f => `<button type="button" data-filter="${f}" aria-pressed="${filter === f}">${f}</button>`;
   const all = namespace === "*";
-  main.innerHTML = `<h1>Runs in ${all ? "every namespace" : esc(namespace)}</h1>
+  main.innerHTML = `<h1>Runs in ${all ? "every namespace" : esc(namespace)} ${helpLink("the-runs")}</h1>
     <div class="chips" role="group" aria-label="Filter">${chip("all")}${chip("running")}${chip("failed")}</div>
     ${shown.length === 0 ? `<p class="muted">No runs${filter === "all" ? "" : " here with this filter"}.</p>` : `
     <table><thead><tr>${all ? "<th>Namespace</th>" : ""}<th>Run</th><th>Phase</th><th>Steps</th><th>Started</th><th>Duration</th><th>Reason</th></tr></thead><tbody>
@@ -139,8 +139,8 @@ function flow(run) {
     const es = edgeStatus[edgeName(e)];
     if (es) {
       const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
-      svg += `<text class="small" x="${mx}" y="${my - 8}" text-anchor="middle">${es.chunks} chunks</text>
-              <text class="small" x="${mx}" y="${my + 16}" text-anchor="middle">lag ${es.chunks - (es.acked || 0)}${es.eos ? " · done" : ""}</text>`;
+      svg += `<text class="small" x="${mx}" y="${my - 8}" text-anchor="middle">${es.chunks} chunks<title>Chunks ${esc(e.from)} has committed on this edge</title></text>
+              <text class="small" x="${mx}" y="${my + 16}" text-anchor="middle">lag ${es.chunks - (es.acked || 0)}${es.eos ? " · done" : ""}<title>Chunks ${esc(e.to)} has not finished yet: committed minus acked${es.eos ? ". Done: " + esc(e.from) + " has committed its last chunk here" : ""}</title></text>`;
     }
   });
   steps.forEach(s => {
@@ -169,9 +169,9 @@ async function runView(ns, name) {
       ${st.message ? `<p class="message">${esc(st.message)}</p>` : ""}
       <p class="muted">Steps finished ${esc(st.stepsFinished || "–")} · started ${ago(st.startedAt)} · ${duration(st.startedAt, st.finishedAt)}</p>
     </div>
-    <h2>Flow</h2>
+    <h2>Flow ${helpLink("the-flow")}</h2>
     <div class="card">${flow(run)}</div>
-    <h2>Replicas</h2>
+    <h2>Replicas ${helpLink("a-run")}</h2>
     <table><thead><tr><th>Step</th><th>Replica</th><th>Phase</th><th>Attempt</th><th>Reason</th><th>Message</th></tr></thead><tbody>
     ${rows.map(r => `<tr class="click" data-href="#/runs/${enc(ns)}/${enc(name)}/${enc(r.step)}/${r.index}">
       <td><a href="#/runs/${enc(ns)}/${enc(name)}/${enc(r.step)}/${r.index}">${esc(r.step)}</a></td><td>${r.index}</td>
@@ -245,7 +245,7 @@ async function replicaView(ns, name, step, replica, fresh) {
     body = `<p class="Warning">${esc(err.message)}</p>`;
   }
   main.innerHTML = `<p><a href="#/runs/${enc(ns)}/${enc(name)}">← Run ${esc(name)}</a></p>
-    <h1>${esc(step)}, replica ${esc(replica)}</h1>
+    <h1>${esc(step)}, replica ${esc(replica)} ${helpLink("a-replica")}</h1>
     <div class="card"><div class="status">${phase(shown(rs.phase, run))}${rs.reason ? ": " + esc(rs.reason) : ""}</div>
       ${rs.message ? `<p class="message">${esc(rs.message)}</p>` : ""}
       <p class="muted">Attempt ${rs.attempt || 1} · ${rs.restarts || 0} restarts${live ? " · pod " + esc(rs.pod) : ""}</p></div>
@@ -289,13 +289,94 @@ async function replay(ns, name, step, replica, attempt) {
   }
 }
 
+// --- Help ----------------------------------------------------------------------
+
+// helpLink is a ? that opens the guide at a section.
+const helpLink = id => `<a class="help" href="#/help/${id}" title="What this shows" aria-label="Help: what this shows">?</a>`;
+
+let helpText = null;
+
+// helpView shows the guide, help.md, which is docs/ui.md (make generate),
+// at a section.
+async function helpView(section) {
+  if (helpText === null) helpText = await getText("/static/help.md");
+  main.innerHTML = `<p><a href="#/">← Runs</a></p><article class="help-page">${markdown(helpText)}</article>`;
+  const el = section && document.getElementById(section);
+  if (el) el.scrollIntoView();
+  else scrollTo(0, 0);
+}
+
+// slug is the id Hugo gives a heading, so links work on the site and here.
+const slug = t => t.toLowerCase().replace(/[^a-z0-9 -]/g, "").trim().replace(/ +/g, "-");
+
+// inline renders the guide's inline Markdown: code, links, bold, italics.
+// Links within the guide stay here; links to the site's other pages open
+// there.
+function inline(text) {
+  const codes = [];
+  let h = esc(text).replace(/`([^`]+)`/g, (_, c) => `\u0000${codes.push(c) - 1}\u0000`);
+  h = h.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_, label, url) => {
+    if (url.startsWith("#")) return `<a href="#/help/${url.slice(1)}">${label}</a>`;
+    const site = url.startsWith("/") ? "https://alpheus-dev.org" + url : url;
+    return `<a href="${site}" target="_blank" rel="noopener">${label}</a>`;
+  });
+  h = h.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>").replace(/\*([^*\s][^*]*)\*/g, "<em>$1</em>");
+  return h.replace(/\u0000(\d+)\u0000/g, (_, i) => `<code>${codes[i]}</code>`);
+}
+
+// markdown renders the subset of Markdown the guide is written in: front
+// matter with its title, ## headings, paragraphs, lists and tables.
+function markdown(md) {
+  let lines = md.replace(/\r/g, "").split("\n");
+  let out = "";
+  if (lines[0] === "---") {
+    const end = lines.indexOf("---", 1);
+    const title = lines.slice(1, end).find(l => l.startsWith("title:"));
+    if (title) out += `<h1>${esc(title.slice(6).trim())}</h1>`;
+    lines = lines.slice(end + 1);
+  }
+  for (let i = 0; i < lines.length;) {
+    const l = lines[i];
+    if (!l.trim()) { i++; continue; }
+    const head = l.match(/^(#{2,3}) (.*)/);
+    if (head) {
+      const tag = head[1].length === 2 ? "h2" : "h3";
+      out += `<${tag} id="${slug(head[2])}">${inline(head[2])}</${tag}>`;
+      i++;
+    } else if (l.startsWith("|")) {
+      const rows = [];
+      while (i < lines.length && lines[i].startsWith("|")) rows.push(lines[i++]);
+      const cells = r => r.replace(/^\|/, "").replace(/\|$/, "").split("|").map(c => c.trim());
+      out += `<table><thead><tr>${cells(rows[0]).map(c => `<th>${inline(c)}</th>`).join("")}</tr></thead><tbody>
+        ${rows.slice(2).map(r => `<tr>${cells(r).map(c => `<td>${inline(c)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+    } else if (l.startsWith("- ")) {
+      const items = [];
+      while (i < lines.length && (lines[i].startsWith("- ") || lines[i].startsWith("  "))) {
+        if (lines[i].startsWith("- ")) items.push(lines[i].slice(2));
+        else items[items.length - 1] += " " + lines[i].trim();
+        i++;
+      }
+      out += `<ul>${items.map(t => `<li>${inline(t)}</li>`).join("")}</ul>`;
+    } else {
+      const para = [];
+      while (i < lines.length && lines[i].trim() && !/^(#{2,3} |\||- )/.test(lines[i])) para.push(lines[i++]);
+      out += `<p>${inline(para.join(" "))}</p>`;
+    }
+  }
+  return out;
+}
+
 // --- Routing -------------------------------------------------------------------
 
 async function render(fresh) {
   if (state.replaying) return;
   const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean).map(decodeURIComponent);
+  // The guide does not change with the runs; a live update leaves it, and
+  // where it is scrolled to, alone.
+  if (parts[0] === "help" && !fresh) return;
   try {
-    if (parts[0] === "runs" && parts.length === 5) await replicaView(parts[1], parts[2], parts[3], parts[4], fresh);
+    if (parts[0] === "help") await helpView(parts[1]);
+    else if (parts[0] === "runs" && parts.length === 5) await replicaView(parts[1], parts[2], parts[3], parts[4], fresh);
     else if (parts[0] === "runs" && parts.length === 3) await runView(parts[1], parts[2]);
     else await runsView();
   } catch (err) {

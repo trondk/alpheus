@@ -1,11 +1,12 @@
-.PHONY: all generate proto check-generated check-deps test test-crd test-chart test-templates cli test-s3 test-agent-s3 vet images e2e test-upgrade bench bench-etl release verify-release vulndb vuln deploy
+.PHONY: all generate proto check-generated check-deps test test-crd test-chart test-templates cli test-s3 test-agent-s3 vet images e2e test-upgrade fuzz bench bench-etl release verify-release vulndb vuln deploy
 
 all: generate vet check-deps test
 
 # Deepcopy functions and the CRD from the kubebuilder markers in api/, and
 # the controller's RBAC role from those in internal/controller. The Helm
 # chart gets a copy of both, the Python template one of the component
-# contract, and the website the CLI reference (WWW-4).
+# contract, the website the CLI reference (WWW-4), and alpheus ui its help
+# page, which is docs/ui.md.
 generate:
 	go tool controller-gen object:headerFile=hack/boilerplate.go.txt paths=./api/...
 	go tool controller-gen crd paths=./api/... output:crd:artifacts:config=config/crd/bases
@@ -14,6 +15,7 @@ generate:
 	cp config/rbac/role.yaml charts/alpheus/files/role.yaml
 	cp proto/component.proto templates/component-python/alpheus/component.proto
 	go run ./hack/clireference > docs/cli.md
+	cp docs/ui.md internal/cli/ui/help.md
 	$(MAKE) proto
 
 # Go code for proto/ in internal/pb, with buf and the generators in go.mod.
@@ -22,7 +24,7 @@ proto:
 
 # Fails when generated code is not up to date (GO-63).
 check-generated: generate
-	git diff --exit-code -- api config internal/pb charts/alpheus/files templates/component-python/alpheus/component.proto docs/cli.md
+	git diff --exit-code -- api config internal/pb charts/alpheus/files templates/component-python/alpheus/component.proto docs/cli.md internal/cli/ui/help.md
 
 vet:
 	go vet ./...
@@ -86,6 +88,18 @@ e2e:
 # test/e2e/e2e_test.go).
 bench:
 	SKIP_IMAGES=1 hack/e2e.sh -run 'TestTestcase0[1-3]$$'
+
+# Runs each fuzz test for FUZZTIME: the parsers of what the agent, the
+# controller and alpheus replay read from storage (GO-58). A failing input
+# is saved under the package's testdata/fuzz/ and then runs in make test.
+FUZZTIME ?= 1m
+FUZZ = ./internal/chunk:FuzzParseManifest ./internal/chunk:FuzzParseSegment \
+	./internal/chunk:FuzzParseAcks ./internal/replay:FuzzParse
+fuzz:
+	@set -e; for t in $(FUZZ); do \
+	  echo "fuzz $${t#*:} for $(FUZZTIME)"; \
+	  go test $${t%%:*} -run '^$$' -fuzz "^$${t#*:}$$" -fuzztime $(FUZZTIME) | tail -1; \
+	done
 
 # Installs an older commit's chart and images on the test cluster and runs
 # testcase18, which upgrades to this commit's in the middle of a run

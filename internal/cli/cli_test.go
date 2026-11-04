@@ -704,7 +704,7 @@ func TestReplayInCluster(t *testing.T) {
 	prefix := chunk.FailurePrefix("rc", string(r.UID), "filter", 0, 1)
 	f := replay.Failure{Version: 1, Run: "rc", Step: "filter", Attempt: 1, Reason: v1alpha1.ReasonComponentFailed,
 		Image: "registry.example/filter" + pin, Settings: json.RawMessage(`{"match":"x"}`),
-		Inputs: []replay.Input{{Port: "default", File: "read-filter-0-000001.csv"}}}
+		Inputs: []replay.Input{{Port: "default", N: 1, SHA256: strings.Repeat("0", 64), File: "read-filter-0-000001.csv"}}}
 	data, _ := json.Marshal(f)
 	h.mem.Put(ctx, prefix+"failure.json", bytes.NewReader(data), int64(len(data)))
 
@@ -798,5 +798,21 @@ func TestUIInCluster(t *testing.T) {
 	}
 	if code, body := do("POST", "/api/runs/"+h.ns+"/a/replay?step=filter&replica=0", "alpheus.example"); code != http.StatusForbidden || !strings.Contains(body, "off") {
 		t.Errorf("replay when off: %d %q", code, body)
+	}
+}
+
+// The page's help is docs/ui.md, the guide on the website, copied by make
+// generate; the page renders it at #/help.
+func TestUIHelpIsTheGuide(t *testing.T) {
+	guide, err := os.ReadFile("../../docs/ui.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	help, err := uiFiles.ReadFile("ui/help.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(guide, help) {
+		t.Error("internal/cli/ui/help.md differs from docs/ui.md: run make generate")
 	}
 }

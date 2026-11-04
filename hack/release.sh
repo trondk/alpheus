@@ -213,7 +213,7 @@ tar --sort=name --mtime="@$SOURCE_DATE_EPOCH" --owner=0 --group=0 --numeric-owne
 # helm push takes the manifest's creation time from the file's mtime.
 touch -d "@$SOURCE_DATE_EPOCH" "$chart"
 pushed="$(TZ=UTC "$HELM" push "$chart" "oci://$PUSH_REGISTRY/alpheus-dev/charts" "${HELM_TLS[@]}" 2>&1)"
-chart_digest="$(grep -o 'sha256:[0-9a-f]*' <<<"$pushed" | head -1)" || die "helm push: $pushed"
+chart_digest="$(grep -m1 -o 'sha256:[0-9a-f]*' <<<"$pushed")" || die "helm push: $pushed"
 echo "oci://$REGISTRY/alpheus-dev/charts/alpheus@$chart_digest" >>"$OUT/images.txt"
 sign "$PUSH_REGISTRY/alpheus-dev/charts/alpheus@$chart_digest"
 echo "  oci://$REGISTRY/alpheus-dev/charts/alpheus:${VERSION#v}"

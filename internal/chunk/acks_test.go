@@ -59,6 +59,8 @@ func TestParseAcksRejects(t *testing.T) {
 		`{"version":1,"acked":[3,2]}`,
 		`{"version":1,"acked":[0]}`,
 		`{"version":1,"acked":[1,1]}`,
+		`{"version":1,"acked":[],"observed":{"seq":1,"counts":{},"errors":0,"warnings":0,"errorsDropped":0,"segments":2000000000}}`,
+		`{"version":1,"acked":[],"observed":{"seq":1,"counts":{},"errors":-1,"warnings":0,"errorsDropped":0,"segments":0}}`,
 	} {
 		if _, err := ParseAcks([]byte(data)); err == nil {
 			t.Errorf("ParseAcks(%s) accepted", data)

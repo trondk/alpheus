@@ -2,7 +2,7 @@
 title: When a run fails
 description: Why a run or a step failed, as codes a program can rely on and in words; the events, kept logs and error log; replaying a failed attempt on its own; alpheus ui; and the metrics.
 weight: 6
-lastmod: 2026-11-02
+lastmod: 2026-11-04
 ---
 
 When something goes wrong, Alpheus tries to answer three questions without
@@ -168,7 +168,10 @@ one, and the browser remembers it. It
 shows the runs, one run with its flow, replicas, results and events, and
 one replica with its counts, error log, logs (live, or kept from a failed
 attempt) and failures, with a button that runs `alpheus replay`. It updates
-as the status changes. [The UI](/ui/) has a sketch of it.
+as the status changes. [The UI](/ui/) has a sketch of it, and
+[Reading alpheus ui](/docs/ui/) says what each part shows, such as the
+chunks and lag on the flow's arrows; the page has the same guide under
+**help**.
 
 - It is read-only, apart from replay, and uses your kubeconfig, so it sees
   what you may see. Nothing is installed in the cluster.

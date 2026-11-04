@@ -16,6 +16,12 @@ limitations under the License.
 
 package chunk
 
+import "fmt"
+
+// MaxLogEntries is how many errors and warnings a replica's error log keeps;
+// later entries are counted as dropped (GO-120).
+const MaxLogEntries = 100000
+
 // Observed is a replica's committed counters and error log totals,
 // cumulative over the run (GO-115, GO-118). It is written in the same write
 // as consumed, in every outgoing manifest the commit changes, and in the
@@ -42,4 +48,29 @@ func Newest(all ...*Observed) *Observed {
 		}
 	}
 	return best
+}
+
+// Validate checks totals read from storage before the agent continues from
+// them: nothing negative, counters as in a chunk, at most MaxLogEntries
+// entries, and at most one segment per entry, since a segment is written
+// only with entries in it (GO-118).
+func (o *Observed) Validate() error {
+	if o.Seq < 0 || o.Errors < 0 || o.Warnings < 0 || o.ErrorsDropped < 0 || o.Segments < 0 {
+		return fmt.Errorf("%w: observed has a negative total", ErrInvalid)
+	}
+	if o.Errors > MaxLogEntries || o.Warnings > MaxLogEntries-o.Errors {
+		return fmt.Errorf("%w: observed has %d errors and %d warnings, at most %d", ErrInvalid, o.Errors, o.Warnings, MaxLogEntries)
+	}
+	if int64(o.Segments) > o.Errors+o.Warnings {
+		return fmt.Errorf("%w: observed has %d log segments for %d entries", ErrInvalid, o.Segments, o.Errors+o.Warnings)
+	}
+	if len(o.Counts) > MaxUnits {
+		return fmt.Errorf("%w: observed has %d counter units", ErrInvalid, len(o.Counts))
+	}
+	for unit, n := range o.Counts {
+		if !ValidUnit(unit) || n < 0 {
+			return fmt.Errorf("%w: observed counter %q = %d", ErrInvalid, unit, n)
+		}
+	}
+	return nil
 }

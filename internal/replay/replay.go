@@ -31,6 +31,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -204,9 +205,41 @@ func Read(ctx context.Context, st store.Store, prefix string) (*Failure, []byte,
 	if err != nil {
 		return nil, nil, err
 	}
-	var f Failure
-	if err := json.Unmarshal(data, &f); err != nil {
+	f, err := Parse(data)
+	if err != nil {
 		return nil, nil, fmt.Errorf("%sfailure.json: %w", prefix, err)
 	}
-	return &f, data, nil
+	return f, data, nil
+}
+
+var (
+	portPattern = regexp.MustCompile(`^[a-z]([a-z0-9-]*[a-z0-9])?$`)
+	// filePattern is how the controller names an input copy:
+	// <edge>-<producer replica>-<n>.<ext>.
+	filePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*-[0-9]+-[0-9]{6,}\.[a-z0-9]{1,16}$`)
+	hexPattern  = regexp.MustCompile(`^[0-9a-f]{64}$`)
+)
+
+// Parse decodes a failure record and checks its inputs. The record comes
+// from the bucket and its ports and file names become paths on the
+// machine that replays it, so each must be one plain name, never a path.
+func Parse(data []byte) (*Failure, error) {
+	var f Failure
+	if err := json.Unmarshal(data, &f); err != nil {
+		return nil, err
+	}
+	if len(f.Inputs) > MaxInputs {
+		return nil, fmt.Errorf("%d inputs, at most %d", len(f.Inputs), MaxInputs)
+	}
+	for i, in := range f.Inputs {
+		switch {
+		case len(in.Port) > 20 || !portPattern.MatchString(in.Port):
+			return nil, fmt.Errorf("input %d: port %q is not a port name", i, in.Port)
+		case len(in.File) > 255 || !filePattern.MatchString(in.File):
+			return nil, fmt.Errorf("input %d: %q is not an input file name", i, in.File)
+		case in.N < 1 || in.Bytes < 0 || !hexPattern.MatchString(in.SHA256):
+			return nil, fmt.Errorf("input %d: chunk %d with %d bytes and SHA-256 %q", i, in.N, in.Bytes, in.SHA256)
+		}
+	}
+	return &f, nil
 }

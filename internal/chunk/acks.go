@@ -107,6 +107,11 @@ func ParseAcks(data []byte) (*Acks, error) {
 			return nil, fmt.Errorf("parse acks: %w: %d at position %d", ErrInvalid, n, i)
 		}
 	}
+	if a.Observed != nil {
+		if err := a.Observed.Validate(); err != nil {
+			return nil, fmt.Errorf("parse acks: %w", err)
+		}
+	}
 	return &a, nil
 }
 

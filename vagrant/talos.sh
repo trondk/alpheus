@@ -52,9 +52,13 @@ fetch_iso() {
 
 # A VM's only NIC is on the Vagrant management network, which hands out
 # addresses by DHCP.
+# virsh's whole answer is read before awk picks the first address: awk
+# stopping early in a pipe would kill virsh with SIGPIPE, which pipefail
+# turns into exit code 141. No lease yet prints nothing.
 vm_ip() {  # [vm]
-  virsh -c "$LIBVIRT_URI" domifaddr "${1:-$VM_NAME}" --source lease 2>/dev/null \
-    | awk '$3 == "ipv4" { sub(/\/.*/, "", $4); print $4; exit }'
+  local leases
+  leases=$(virsh -c "$LIBVIRT_URI" domifaddr "${1:-$VM_NAME}" --source lease 2>/dev/null) || return 0
+  awk '$3 == "ipv4" { sub(/\/.*/, "", $4); print $4; exit }' <<<"$leases"
 }
 
 has_ip() { [[ -n $(vm_ip "$1") ]]; }

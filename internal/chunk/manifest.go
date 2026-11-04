@@ -229,6 +229,9 @@ func (m *Manifest) Validate() error {
 	if m.Last != nil && *m.Last != m.Count() {
 		return fmt.Errorf("%w: last %d, %d chunks", ErrInvalid, *m.Last, m.Count())
 	}
+	if m.Observed != nil {
+		return m.Observed.Validate()
+	}
 	return nil
 }
 

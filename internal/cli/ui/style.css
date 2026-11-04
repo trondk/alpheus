@@ -57,6 +57,14 @@ pre { background: var(--code); border: 1px solid var(--line); border-radius: 4px
 .counts { display: grid; grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr)); gap: .6rem; }
 .counts div { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: .6rem; }
 .counts b { display: block; font-size: 1.3rem; }
+.help { display: inline-block; width: 1.3rem; height: 1.3rem; line-height: 1.25rem; text-align: center; border: 1px solid var(--line); border-radius: 50%; font-size: .8rem; font-weight: 600; text-decoration: none; vertical-align: middle; margin-left: .3rem; }
+.help:hover { border-color: var(--accent); }
+.help-link { text-decoration: none; }
+.help-page { max-width: 46rem; }
+.help-page h2 { margin-top: 2rem; scroll-margin-top: 1rem; }
+.help-page li { margin: .3rem 0; }
+.help-page table { margin: .6rem 0 1rem; }
+.help-page code { background: var(--code); padding: 0 .25rem; border-radius: 3px; font-size: .9em; }
 .events td:first-child { white-space: nowrap; color: var(--muted); }
 .Warning { color: var(--fail); }
 code { font: 13px ui-monospace, monospace; background: var(--code); padding: 0 .25rem; border-radius: 3px; }

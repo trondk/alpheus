@@ -638,7 +638,7 @@ sdk.Progress(ctx, "4,2 mio. rækker behandlet")
 | GO-55 | SKAL | Hver testcase kontrollerer sit resultat mod noget, der er beregnet uden Alpheus: kildens egne data eller en kendt værdi. |
 | GO-56 | SKAL | En kaos-test slår tilfældige trin-pods ihjel under et run og kontrollerer, at resultatet stadig er korrekt (GO-55). |
 | GO-57 | SKAL | `go test -race` kører på alle pakker. |
-| GO-58 | BØR | Fuzz-tests for manifest-parsing i agenten. |
+| GO-58 | BØR | Fuzz-tests for alt, der læses fra lageret: manifester, segmenter, ack-filer og fejlposter til replay (`make fuzz`, `FUZZTIME`, som standard 1m pr. test). Hvad en parser godtager, skal kunne skrives og læses igen til de samme bytes, og agenten skal kunne fortsætte fra det. `observed` i et manifest eller en ack-fil har intet negativt, højst `MaxLogEntries` poster og højst ét log-segment pr. post, og en fejlposts porte og filnavne er hver ét navn uden sti, før `alpheus replay` laver stier af dem. |
 | GO-74 | SKAL | Genstartstests slår agenten ihjel mellem hvert trin i commit-rækkefølgen (7.3 og 7.4) og kontrollerer, at output hverken mangler eller er dubleret. |
 | GO-100 | SKAL | En genstartstest slår det tilstandsfulde `sink`-trin ihjel, efter at det har acket halvdelen af sine input-chunks, men før EOS. Resultatet skal stadig have hver chunk præcis én gang og uændret, og tællerne skal være præcise. Testen beviser GO-95. |
 

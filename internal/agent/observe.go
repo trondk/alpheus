@@ -35,7 +35,7 @@ import (
 // Limits of the error log (GO-120).
 const (
 	maxLogEntryBytes = 4096
-	maxLogEntries    = 100000
+	maxLogEntries    = chunk.MaxLogEntries
 )
 
 // ObservationsVersion is the format version of the error log's manifest.
