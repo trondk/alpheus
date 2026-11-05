@@ -1225,7 +1225,10 @@ CRD'en har derfor kun værdien `builtin`.
 
 - Hvor kører Forgejo, runnerne og Zot på `registry.alpheus-dev.org`, og
   hvem driver dem? Se også hjemmesidens `SPEC.md` afsnit 11.
-- Hvor længe får en version sikkerhedsopdateringer (GO-134)?
+
+Afgjort 2026-11-04: før 1.0 får kun den seneste minor-version (`vX.Y`)
+sikkerhedsrettelser, som patch-udgivelser, og sårbarheder rapporteres til
+`security@alpheus-dev.org` (GO-134, GO-145, `SECURITY.md`).
 
 Afgjort 2026-11-01: udgivelser kun på egen infrastruktur i EU (14): Zot
 på `registry.alpheus-dev.org`, cosign med projektets egen nøgle og
