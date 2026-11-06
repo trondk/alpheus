@@ -1,6 +1,6 @@
 # Alpheus — implementeringsspecifikation (Go)
 
-Status: udkast, 2026-11-05. Trin 1–8 i afsnit 15 er bygget: API-typer og
+Status: udkast, 2026-11-06. Trin 1–8 i afsnit 15 er bygget: API-typer og
 CRD, chunks og lager, komponent-SDK'et, agenten, controlleren og
 end-to-end-tests på Kubernetes (Talos på to VM'er) med fan-out, fan-in,
 replikaer, genstart, backpressure og kaos, og fejltests (testcase09 til
@@ -102,7 +102,7 @@ alpheus/
 │   └── version/
 ├── sdk/                   offentligt komponent-SDK, lokal mode og agent-mode (findes)
 ├── proto/                 component.proto og signal.proto (findes)
-├── config/                genererede CRD-, RBAC- og webhook-manifester (CRD og RBAC findes)
+├── config/                genererede CRD- og RBAC-manifester
 │   ├── crd/bases/         StreamRun-CRD'en (findes)
 │   └── samples/           eksempler, bl.a. testcase03 (findes)
 ├── hack/                  boilerplate, test-crd.sh, test-chart.sh, images.sh, e2e.sh, release.sh, verify-release.sh og clireference (findes)
@@ -228,10 +228,10 @@ en strøm med manifest, ligesom en kant, men under
 | GO-99 | BØR | `alpheus results gc` finder resultater, hvis TTL er udløbet, regnet fra `finishedAt` i `run.json`, og sletter dem efter bekræftelse (eller med `--yes`). Resultater, hvis StreamRun-objektet ikke længere findes, vises, men slettes kun med `--orphans`, da resultater er beregnet til at overleve objektet (GO-78). Resultater med `resultsTTL` 0 og uden `run.json` slettes aldrig. Med `--dry-run` vises kun, hvad der ville blive slettet. |
 | GO-79 | SKAL | `status.results` har én post pr. resultat med S3-endpoint, bucket, region, prefix, navnet på Secret'en med nøglerne til at læse det og antal chunks, bytes og komponentens committede tællere (10.1). Det er det, der skal til for at hente resultatet, og `alpheus get` viser det. |
 
-Secret'en i `status.results` er den samme som agenternes, med adgang til
-hele bucketen. Det strider mod princippet om, at agentens nøgle kun
-giver adgang til runnets eget prefix. I testmiljøet er det acceptabelt;
-en særskilt læsenøgle kun til `results/` er et åbent spørgsmål (16).
+Uden `resultsBucket` er Secret'en i `status.results` den samme som
+agenternes, med adgang til hele bucketen. En læser, der kun skal kunne
+læse resultaterne, får det med `resultsBucket` og `resultsSecretRef`
+(GO-129).
 
 
 ## 6. Controller (`internal/controller`)
@@ -257,7 +257,7 @@ idempotent: samme input giver samme ønskede tilstand.
 | GO-20 | SKAL | En finalizer (`alpheus-dev.org/cleanup`) sikrer, at runnets S3-prefix slettes, før objektet forsvinder. Oprydningen kræver nøglerne, og når et namespace slettes, slettes Secret'en med dem samtidig. Derfor sætter controlleren også en finalizer pr. run (`alpheus-dev.org/storage-<uid>`) på storage-Secret'en og fjerner den først, når prefixet er slettet; runs, der deler Secret'en, holder den hver især. Findes Secret'en ikke, fx fordi den aldrig fandtes, logger controlleren, at data bliver liggende, og fjerner runnets finalizer, så objektet ikke hænger. |
 | GO-21 | SKAL | Controlleren bruger leader election, så to replicas kan køre samtidig. |
 | GO-22 | SKAL | Statusopdateringer bruger `Patch` med optimistisk låsning og rate-begrænses (højst én pr. sekund pr. run). |
-| GO-23 | BØR | En validating webhook afviser ugyldige grafer, før objektet gemmes. Uden webhook sker samme validering i reconcile-løkken. |
+| GO-23 | BØR | API-serveren afviser ugyldige grafer, før objektet gemmes, uden en webhook: CRD'en afviser trin og kanter, der står to gange (`listType=map`), kanter til trin, der ikke findes, og et trin, der læser sit eget output (CEL), og chartet installerer en ValidatingAdmissionPolicy, der afviser images uden digest, medmindre `controller.allowTags` er sat. Kredsløb kan CEL ikke finde; dem afviser controlleren med `InvalidSpec` og `alpheus validate` på forhånd. Controlleren tjekker stadig det hele selv, også uden chartet. |
 
 ### 6.2 Pod-spec pr. trin
 
@@ -1122,8 +1122,9 @@ for EU. GitHub er kun et spejl af kildekoden, der læses fra (hjemmesidens
    testcase03's form, genstart af `filter` og af det tilstandsfulde
    `sum`, kilde-genstart (GO-92), fencing (GO-68) og backpressure
    (GO-35). Fejllog og tællere skrives under `_errors/<trin>/<replika>/`
-   efter de udgående manifester, så de aldrig står to gange, men kan
-   mangle efter et nedbrud lige derimellem (se GO-115 i 16). mTLS til
+   efter de udgående manifester; at de kunne mangle efter et nedbrud
+   lige derimellem, blev løst i trin 8, hvor de committes i samme
+   skrivning som `consumed` (GO-115). mTLS til
    hub'en (GO-41) kom med controlleren i trin 5.
 5. Controlleren med envtest. *Færdig*: `internal/controller` og
    `cmd/alpheus-controller`. Tests mod en rigtig API-server (`make test`
@@ -1134,9 +1135,12 @@ for EU. GitHub er kun et spejl af kildekoden, der læses fra (hjemmesidens
    NetworkPolicy pr. run (6.1 trin 2) kom senere, testet med envtest og
    testcase20. CEL-reglerne for
    `resultsTTL` og `ttlAfterFinished` sammenligner nu som varigheder,
-   fordi Go-klienten skriver `168h` tilbage som `168h0m0s`. Ikke med
-   endnu: webhook (GO-23), og at hub'en afviser ældre forsøg (GO-41), da
-   certifikaterne er pr. run og ikke pr. forsøg.
+   fordi Go-klienten skriver `168h` tilbage som `168h0m0s`. Der blev
+   ingen webhook (GO-23): CEL-regler i CRD'en og en
+   ValidatingAdmissionPolicy i chartet afviser en ugyldig graf, før den
+   gemmes, og kun kredsløb opdages først af controlleren. At hub'en
+   afviser ældre forsøg (GO-41) kom i trin 8, da certifikaterne blev pr.
+   forsøg.
 6. E2E på Talos i Vagrant-VM'en med testcase01. *Færdig*: `make e2e`
    (`hack/e2e.sh`) bygger agent, controller og testkomponenterne som
    statiske binærer i images på `scratch` (uid 65532, reproducerbare

@@ -25,7 +25,7 @@ shows.
 | `controller.image.pullPolicy` | `IfNotPresent` | |
 | `controller.replicas` | `1` | More than one gives a standby; only the leader reconciles and runs the hub. |
 | `controller.resources` | 100m CPU, 128Mi requested; 512Mi limit | |
-| `controller.allowTags` | `false` | Allows component images without a digest, and the agent's image by tag. For development only. |
+| `controller.allowTags` | `false` | Allows component images without a digest, and the agent's image by tag. For development only. Without it, the chart installs the ValidatingAdmissionPolicy `alpheus-image-digest`, so the API server rejects a run whose image has no digest. |
 | `controller.nodeSelector`, `tolerations`, `affinity` | empty | Where the controller runs |
 | `agent.image.repository` | `alpheus-dev/agent` | The agent's repository in the registry |
 | `agent.image.tag` | the chart's appVersion | Only with `controller.allowTags` |

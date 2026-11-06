@@ -41,6 +41,8 @@ create() { expect "$1" "$2" create --dry-run=server; }
 create ok "sample is valid" < "$SAMPLE"
 create "every edge must go from and to an existing step" "edge to unknown step" \
   < <(sample 's/{from: filter, to: sum}/{from: filter, to: nope}/')
+create "a step cannot read its own output" "edge from a step to itself" \
+  < <(sample 's/{from: filter, to: sum}/{from: sum, to: sum}/')
 create "Duplicate value" "duplicate step name" \
   < <(sample 's/- name: sum/- name: read/')
 create "Duplicate value" "duplicate edge" \

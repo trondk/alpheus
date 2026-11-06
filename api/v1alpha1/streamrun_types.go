@@ -73,8 +73,8 @@ type StreamRunSpec struct {
 	Steps []Step `json:"steps"`
 
 	// Edges connect the output of one step to the input of another. The
-	// graph must not have cycles; that is checked by the controller (and the
-	// webhook, when it is installed), not by the schema.
+	// graph must not have cycles; that is checked by the controller and by
+	// alpheus validate, since a CEL rule cannot follow a path (GO-23).
 	//
 	// +optional
 	// +listType=map
@@ -305,6 +305,8 @@ const (
 // Edge connects an output of one step to the input of another. A step's
 // output can have several edges (fan-out), and a step can have several
 // incoming edges (fan-in).
+//
+// +kubebuilder:validation:XValidation:rule="self.from != self.to",message="a step cannot read its own output"
 type Edge struct {
 	// From is the name of the producing step.
 	//

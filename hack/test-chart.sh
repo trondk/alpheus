@@ -40,6 +40,8 @@ check "CRD kept on uninstall" "helm.sh/resource-policy: keep" "$out"
 check "ClusterRole" "kind: ClusterRole" "$out"
 check "binding to the release's namespace" "namespace: flows" "$out"
 reject "no tags allowed" "-allow-tags" "$out"
+check "image digest policy" "kind: ValidatingAdmissionPolicy" "$out"
+check "image digest policy bound" "policyName: alpheus-image-digest" "$out"
 
 out=$(render "${PINNED[@]}" --set registry=registry.example:5000/)
 check "registry value for the controller" "image: registry.example:5000/alpheus-dev/controller@$D2" "$out"
@@ -53,6 +55,7 @@ out=$(render --set controller.allowTags=true --set agent.image.tag=dev)
 check "tags when allowed" "-agent-image=registry.alpheus-dev.org/alpheus-dev/agent:dev" "$out"
 check "controller tag from appVersion" "image: registry.alpheus-dev.org/alpheus-dev/controller:v0.1.0" "$out"
 check "allow-tags flag" "-allow-tags" "$out"
+reject "no image digest policy when tags are allowed" "alpheus-image-digest" "$out"
 
 out=$(render "${PINNED[@]}")
 check "controller metrics Service" "name: alpheus-controller-metrics" "$out"

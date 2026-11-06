@@ -1,0 +1,37 @@
+{{- /*
+The API server rejects a run whose images are not pinned by digest
+(GO-23, GO-24), as the controller does after the run is stored. It cannot be
+a rule in the CRD, since controller.allowTags decides it per installation.
+Only on CREATE: the spec cannot change afterwards, and a run made while tags
+were allowed can still be cancelled and deleted.
+*/ -}}
+{{- if not .Values.controller.allowTags }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: alpheus-image-digest
+  labels:
+    {{- include "alpheus.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [alpheus-dev.org]
+        apiVersions: ["*"]
+        operations: [CREATE]
+        resources: [streamruns]
+  validations:
+    - expression: "object.spec.steps.all(s, s.image.contains('@sha256:'))"
+      messageExpression: "'image ' + object.spec.steps.filter(s, !s.image.contains('@sha256:'))[0].image + ' of step ' + object.spec.steps.filter(s, !s.image.contains('@sha256:'))[0].name + ' is not pinned by digest (@sha256:...)'"
+      reason: Invalid
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: alpheus-image-digest
+  labels:
+    {{- include "alpheus.labels" . | nindent 4 }}
+spec:
+  policyName: alpheus-image-digest
+  validationActions: [Deny]
+{{- end }}

@@ -71,9 +71,11 @@ server's CA (`--cacert`), or through `kubectl proxy`. A `201` means the
 run exists; the controller starts it within a second.
 
 The spec cannot change after the run is created, except `spec.cancel`. A
-run's name is at most 40 characters and must be new in its namespace; an
-invalid graph or an image without a digest makes the run fail at once
-with the reason `InvalidSpec`, which `alpheus validate` checks
+run's name is at most 40 characters and must be new in its namespace. The
+API server rejects an invalid graph and an image without a digest with a
+`422` and a message that names the problem, so nothing is stored. A cycle
+in the edges is the exception: the run is stored and fails at once with
+the reason `InvalidSpec`. `alpheus validate` checks all of it
 beforehand.
 
 ## Follow it

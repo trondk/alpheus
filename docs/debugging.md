@@ -2,7 +2,7 @@
 title: When a run fails
 description: Why a run or a step failed, as codes a program can rely on and in words; the events, kept logs and error log; replaying a failed attempt on its own; alpheus ui; and the metrics.
 weight: 6
-lastmod: 2026-11-04
+lastmod: 2026-11-06
 ---
 
 When something goes wrong, Alpheus tries to answer three questions without
@@ -29,7 +29,7 @@ message.
 | `ScratchFull` | A chunk did not fit in the step's scratch folder | Raise `scratch` for the step, or make chunks smaller |
 | `PodDeleted` | The pod disappeared: evicted, a lost node, or deleted | Kubernetes' events for the pod |
 | `PodFailed` | The pod failed without a container saying why | Kubernetes' events for the pod |
-| `InvalidSpec` | The graph is invalid, or an image is not pinned | The message names the problem |
+| `InvalidSpec` | The edges form a cycle, or an image is not pinned and the controller was installed without the chart | The message names the problem. Other mistakes in the graph, and an unpinned image with the chart, are rejected by `kubectl create` |
 | `Cancelled` | `spec.cancel` was set | |
 | `FailedReplicas` | The run finished, but replicas with `failurePolicy: continue` gave up | `failedChunks` of each replica says how much was not processed; see [Bad records and bad chunks](/docs/dead-letters/) |
 

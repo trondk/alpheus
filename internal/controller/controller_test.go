@@ -701,6 +701,17 @@ func TestInvalidRuns(t *testing.T) {
 		t.Errorf("message %q", got.Status.Message)
 	}
 
+	// The API server rejects a step that reads its own output (GO-23);
+	// a cycle through more steps only the controller finds.
+	self := testcase03(ns, 1)
+	self.Name = "self"
+	self.Spec.Edges = append(self.Spec.Edges, v1alpha1.Edge{From: "sum", To: "sum"})
+	if err := k8s.Create(t.Context(), self); err == nil || !strings.Contains(err.Error(), "cannot read its own output") {
+		t.Errorf("edge to itself: %v", err)
+	}
+
+	// Without the chart's ValidatingAdmissionPolicy, the controller still
+	// fails a run whose image has no digest.
 	tag := testcase03(ns, 1)
 	tag.Name = "tag"
 	tag.Spec.Steps[0].Image = "registry.alpheus.test:30500/generate:latest"
