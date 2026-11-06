@@ -33,7 +33,7 @@ import (
 
 // inStream is one incoming stream: the chunks producer replica p writes on
 // an incoming edge. This replica reads only the chunks assigned to it
-// (GO-76).
+// (GO-76), or all of them from a side input (GO-167).
 type inStream struct {
 	in     InputEdge
 	p      int
@@ -74,7 +74,7 @@ func newInStream(cfg Config, in InputEdge, p int) *inStream {
 		p:      p,
 		stream: stream,
 		ackKey: stream.AckKey(cfg.Step, replica),
-		assign: func(n int64) bool { return chunk.Assign(n, p, replicas) == replica },
+		assign: func(n int64) bool { return in.Side || chunk.Assign(n, p, replicas) == replica },
 		wake:   make(chan struct{}, 1),
 		segIdx: -1,
 	}

@@ -193,6 +193,34 @@ spec:
 ` + extra
 }
 
+// run can give a step another image and log level, and the run another
+// name, without editing the flow file (GO-161, GO-166).
+func TestRunOverrides(t *testing.T) {
+	h := newHarness(t)
+	f := h.file("flow.yaml", flow("sales", ""))
+	h.mustRun("run", "-f", f, "--name", "sales-2", "--image", "filter=registry.example/filter:v2"+pin, "--log-level", "filter=debug")
+	r := h.get("sales-2")
+	if s := r.Spec.Steps[1]; s.Image != "registry.example/filter:v2"+pin || s.LogLevel != "debug" {
+		t.Errorf("filter: image %s, log level %q", s.Image, s.LogLevel)
+	}
+	if s := r.Spec.Steps[0]; s.LogLevel != "" || s.Image != "registry.example/read"+pin {
+		t.Errorf("read changed: %+v", s)
+	}
+	for _, c := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"--image", "nope=x"}, `no step "nope"; its steps are read, filter, sum`},
+		{[]string{"--log-level", "filter"}, "want <step>=<value>"},
+		{[]string{"--log-level", "filter=loud"}, `log level "loud": want debug, info, warn or error`},
+	} {
+		h.stderr.Reset()
+		if code := h.run(append([]string{"run", "-f", f, "--name", "sales-3"}, c.args...)...); code != 2 || !strings.Contains(h.stderr.String(), c.want) {
+			t.Errorf("%v: exit %d, %q", c.args, code, h.stderr.String())
+		}
+	}
+}
+
 func TestRunGetCancel(t *testing.T) {
 	h := newHarness(t)
 	f := h.file("flow.yaml", flow("sales", ""))

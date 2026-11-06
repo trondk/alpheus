@@ -152,6 +152,15 @@ type Step struct {
 	// +kubebuilder:validation:Schemaless
 	Settings *runtime.RawExtension `json:"settings,omitempty"`
 
+	// LogLevel is the component's log level: debug, info, warn or error.
+	// It is passed as ALPHEUS_LOG_LEVEL, which the SDKs read; not set
+	// leaves it to the component, info in the SDKs. Set debug to see more
+	// of what one step does, without a new image (GO-166).
+	//
+	// +optional
+	// +kubebuilder:validation:Enum=debug;info;warn;error
+	LogLevel string `json:"logLevel,omitempty"`
+
 	// EnvFrom lists Secrets and ConfigMaps the component gets as
 	// environment variables. The component gets no other credentials.
 	//
@@ -339,6 +348,15 @@ type Edge struct {
 	// +kubebuilder:validation:MaxLength=20
 	// +kubebuilder:validation:Pattern=`^[a-z]([a-z0-9-]*[a-z0-9])?$`
 	Port string `json:"port,omitempty"`
+
+	// Side makes the edge a side input: lookup data the consumer reads
+	// whole before the rest, such as the customers in a join. Every
+	// replica of the consumer gets all of its chunks, and a new attempt
+	// gets them all again; it does not hold back its producer, so keep it
+	// small (GO-167).
+	//
+	// +optional
+	Side bool `json:"side,omitempty"`
 }
 
 // ChunkPolicy sets chunk size and backpressure. A chunk is a file the

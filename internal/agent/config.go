@@ -79,6 +79,9 @@ type InputEdge struct {
 	From     string `json:"from"`
 	Replicas int    `json:"replicas"`
 	Port     string `json:"port"`
+	// Side is a side input: every chunk, to every replica, again in each
+	// attempt (GO-167).
+	Side bool `json:"side,omitempty"`
 }
 
 // OutputEdge is an outgoing edge from one of the step's outputs to a step
@@ -88,6 +91,9 @@ type OutputEdge struct {
 	Output   string `json:"output"`
 	To       string `json:"to"`
 	Replicas int    `json:"replicas"`
+	// Side is a side input of the consumer, which does not hold back this
+	// producer (GO-167).
+	Side bool `json:"side,omitempty"`
 }
 
 // Input orders (GO-112).

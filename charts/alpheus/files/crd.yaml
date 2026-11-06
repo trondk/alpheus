@@ -128,6 +128,14 @@ spec:
                       minLength: 1
                       pattern: ^[a-z]([a-z0-9-]*[a-z0-9])?$
                       type: string
+                    side:
+                      description: |-
+                        Side makes the edge a side input: lookup data the consumer reads
+                        whole before the rest, such as the customers in a join. Every
+                        replica of the consumer gets all of its chunks, and a new attempt
+                        gets them all again; it does not hold back its producer, so keep it
+                        small (GO-167).
+                      type: boolean
                     to:
                       description: To is the name of the consuming step.
                       maxLength: 20
@@ -1172,6 +1180,18 @@ spec:
                       enum:
                       - arrival
                       - deterministic
+                      type: string
+                    logLevel:
+                      description: |-
+                        LogLevel is the component's log level: debug, info, warn or error.
+                        It is passed as ALPHEUS_LOG_LEVEL, which the SDKs read; not set
+                        leaves it to the component, info in the SDKs. Set debug to see more
+                        of what one step does, without a new image (GO-166).
+                      enum:
+                      - debug
+                      - info
+                      - warn
+                      - error
                       type: string
                     maxOpen:
                       default: 8

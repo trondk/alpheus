@@ -1,0 +1,40 @@
+# testcase21 (SPEC 12.1): the debug example, examples/debug-session. A web
+# shop's orders, filtered in three replicas, joined in merge with the
+# customers as a side input (GO-167), and sorted. Version 1 of merge panics
+# on the customers without a region, in every attempt; the test then runs
+# the flow again with version 2, which writes None for them and warns.
+# hack/e2e.sh sets the images, pinned by digest, and the test creates the
+# Secret alpheus-s3 in its namespace.
+apiVersion: alpheus-dev.org/v1alpha1
+kind: StreamRun
+metadata:
+  name: testcase21
+spec:
+  steps:
+    - name: orders
+      image: ${SHOP_ORDERS_IMAGE}
+      settings: {files: 20, rows: 200000, customers: 50000, cancelledPerMille: 50, seed: 21}
+    - name: customers
+      image: ${SHOP_CUSTOMERS_IMAGE}
+      settings: {customers: 50000, blankFrom: 46001, blank: 20, seed: 21}
+    - name: filter
+      image: ${SHOP_FILTER_IMAGE}
+      replicas: 3
+    - name: merge
+      image: ${SHOP_MERGE_IMAGE}
+      maxRestarts: 2
+    - name: sort
+      image: ${SHOP_SORT_IMAGE}
+      settings: {bytes: 33554432}
+  edges:
+    - {from: orders, to: filter}
+    - {from: filter, to: merge, port: orders}
+    - {from: customers, to: merge, port: customers, side: true}
+    - {from: merge, to: sort}
+  chunks: {maxUnacked: 4}
+  resultsTTL: 1h
+  storage:
+    endpoint: http://garage.storage.svc.cluster.local:3900
+    bucket: alpheus-data
+    region: garage
+    secretRef: alpheus-s3

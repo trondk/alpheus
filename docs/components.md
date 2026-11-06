@@ -480,6 +480,16 @@ func handle(ctx context.Context, in sdk.Input, out sdk.Output) error {
 - **Several inputs.** An edge can end in a named input, a *port*.
   `in.Port("lookup").Chunks(ctx)` reads one port only, so a component can
   read a small lookup table to the end first and then stream a large input.
+- **Lookup data: side inputs.** Mark the edge that brings lookup data
+  `side: true`, as in a join:
+  `{from: customers, to: merge, port: customers, side: true}`. Every
+  replica of `merge` then gets all of the customers, not its share, and a
+  new attempt after a failure gets them all again. Without `side`, an
+  attempt after a restart starts with the lookup chunks already done and
+  so without them, and each replica has only part of them. A side input
+  chunk can have no output of its own, and it does not hold its producer
+  back, so keep it small. The
+  [debug example](/docs/debug-example/) is a join with one.
 - **Several outputs.** `out.Create(ctx, "rejected", "csv")` writes to a
   named output. An edge from it names the output: `{from: grep, output:
   rejected, to: audit}`. Without an edge it is a result; see

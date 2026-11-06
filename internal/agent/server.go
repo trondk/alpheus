@@ -148,6 +148,12 @@ func (s *server) Create(ctx context.Context, req *componentpb.CreateRequest) (*c
 	case req.Input != 0 && a.inputs[req.Input] == nil:
 		a.mu.Unlock()
 		return nil, usage("input chunk %d is not open", req.Input)
+	case req.Input != 0 && a.inputs[req.Input].s.in.Side:
+		// Every attempt reads a side input again, so output of its own
+		// would be written twice (GO-167).
+		in := a.inputs[req.Input].s.in
+		a.mu.Unlock()
+		return nil, usage("input chunk %d is from the side input on port %s, which can have no output; read it to the end first, and write output for the other inputs", req.Input, in.Port)
 	case req.Input == 0 && !a.source() && !a.allDrained():
 		a.mu.Unlock()
 		return nil, usage("output must belong to an input chunk until all input is read")

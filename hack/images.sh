@@ -32,6 +32,12 @@ IMAGES=(
   "split alpheus-test/meter-split METER_SPLIT_IMAGE"
   "clean alpheus-test/meter-clean METER_CLEAN_IMAGE"
   "aggregate alpheus-test/meter-aggregate METER_AGGREGATE_IMAGE"
+  "orders alpheus-test/shop-orders SHOP_ORDERS_IMAGE"
+  "customers alpheus-test/shop-customers SHOP_CUSTOMERS_IMAGE"
+  "filter alpheus-test/shop-filter SHOP_FILTER_IMAGE"
+  "merge alpheus-test/shop-merge SHOP_MERGE_IMAGE"
+  "merge-v2 alpheus-test/shop-merge-v2 SHOP_MERGE_V2_IMAGE"
+  "sort alpheus-test/shop-sort SHOP_SORT_IMAGE"
 )
 
 mkdir -p "$OUT/bin" "$OUT/certs"
@@ -40,7 +46,9 @@ cd "$ROOT"
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o "$OUT/bin/" \
   ./cmd/alpheus-agent ./cmd/alpheus-controller ./cmd/alpheus \
   ./test/components/bench ./templates/component-go \
-  ./examples/meter-etl/export ./examples/meter-etl/split ./examples/meter-etl/clean ./examples/meter-etl/aggregate
+  ./examples/meter-etl/export ./examples/meter-etl/split ./examples/meter-etl/clean ./examples/meter-etl/aggregate \
+  ./examples/debug-session/orders ./examples/debug-session/customers ./examples/debug-session/filter \
+  ./examples/debug-session/merge ./examples/debug-session/merge-v2 ./examples/debug-session/sort
 
 : > "$OUT/images.env.tmp"
 for entry in "${IMAGES[@]}"; do

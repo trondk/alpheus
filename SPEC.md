@@ -4,12 +4,13 @@ Status: udkast, 2026-11-06. Trin 1–8 i afsnit 15 er bygget: API-typer og
 CRD, chunks og lager, komponent-SDK'et, agenten, controlleren og
 end-to-end-tests på Kubernetes (Talos på to VM'er) med fan-out, fan-in,
 replikaer, genstart, backpressure og kaos, og fejltests (testcase09 til
-testcase20: lageret går ned, controlleren dør, afviste nøgler, fuld
+testcase21: lageret går ned, controlleren dør, afviste nøgler, fuld
 bucket, for lille scratch-mappe, en komponent med en fejl, set gennem UI'et
 i klyngen, et run på to noder, en node, der forsvinder, et chart, der
 opgraderes midt i et run, en dårlig chunk, der lægges til side med
-`failurePolicy: continue`, og et run, der kun kan nå lageret og
-signal-hub'en). Hvert run har sin egen ServiceAccount og NetworkPolicy
+`failurePolicy: continue`, et run, der kun kan nå lageret og
+signal-hub'en, og en join, der fejler og rettes, med side input og
+replay). Hvert run har sin egen ServiceAccount og NetworkPolicy
 (6.1 trin 2). Fejlsøgning (GO-138 til GO-143) er bygget: årsagskoder, events,
 gemte logs, genkørsel af et fejlet forsøg, `alpheus ui` på maskinen og i
 klyngen, og metrics. Af trin 9 er CLI, Helm-chart,
@@ -111,9 +112,10 @@ alpheus/
 ├── examples/log-report/   eksemplet fra komponent-guiden, i Go og Python (findes)
 ├── examples/meter-etl/    flagskibet: ETL af store filer med elmåler-aflæsninger (findes)
 ├── examples/api-client/   et program, der starter et run, venter og henter resultatet gennem Kubernetes-API'et og S3 alene (`docs/api.md`, findes)
+├── examples/debug-session/ en join, der fejler med vilje, og dens rettelse: debug-eksemplet (`docs/debug-example.md`, testcase21, findes)
 ├── test/
 │   ├── components/        testkomponenter: bench (findes), filter og sum i CSV (findes)
-│   ├── e2e/               testcase01 til testcase20 (findes)
+│   ├── e2e/               testcase01 til testcase21 (findes)
 │   └── internal/table/    CSV og decimaltal for testkomponenterne (findes)
 ├── vagrant/               testklyngen: Talos på to VM'er med Garage og Zot (findes)
 ├── docs/                  dokumentationen, som hjemmesiden henter ved byg (findes)
@@ -178,6 +180,8 @@ Felter i CRD'en fra kravene GO-78 til GO-124:
 | `spec.steps[].prefetch` (standard 2) | GO-111 |
 | `spec.steps[].inputOrder` (`arrival` eller `deterministic`) | GO-112 |
 | `spec.edges[].port` (standard `default`) | GO-108 |
+| `spec.edges[].side` (side input) | GO-167 |
+| `spec.steps[].logLevel` (`debug`, `info`, `warn`, `error`) | GO-166 |
 | `status.steps[].replicas[].failedChunks` | GO-97 |
 | `status.steps[].counts`, `errors`, `warnings`, `errorsDropped`, `errorLog` | GO-115, GO-119, GO-120 |
 | `spec.chunks.maxRows` fjernes | GO-86 |
@@ -209,6 +213,7 @@ skriver sin egen strøm af chunks på en kant (7.3), så der stadig kun er
 |---|---|---|
 | GO-75 | SKAL | `spec.steps[].replicas` (standard 1, højst 64) angiver antallet af replikaer. Replikaerne nummereres 0 til `replicas`-1, og agenten får sit nummer som miljøvariabel. |
 | GO-76 | SKAL | Chunk nummer n i strømmen fra producent-replika p går til forbruger-replika (n + p) mod `replicas` hos hvert forbrugende trin. Leddet p spreder arbejdet, når mange producent-replikaer hver laver få chunks; uden det ville alle strømme starte på samme forbruger-replika. Fordelingen er deterministisk, så en genstartet replika får præcis de samme chunks igen. |
+| GO-167 | SKAL | En kant kan være en *side input* (`edges[].side: true`): opslagsdata, som komponenten læser helt, før den behandler resten, fx kunderne i en join. En side input fordeles ikke efter GO-76: hver replika af det forbrugende trin får alle dens chunks. Den regnes først for behandlet, når replikaen er færdig: `consumed` for side input-strømme committes først sammen med `eos: true` i de udgående manifester (som GO-95), så et nyt forsøg får alle side input-chunks igen og kan bygge opslagsdataene op på ny, mens hovedinput fortsætter fra første ubehandlede chunk (GO-37). En side input holder ikke producenten tilbage (GO-35 gælder ikke), da den er lille og læses helt; dokumentationen siger, at den skal være lille. Et fejlet forsøgs `failure.json` (GO-141) og de overspringede chunks (GO-97) har alle side input-chunks med (`side: true`), så en replay har opslagsdataene. I `status.edges` er `acked` for en side input det antal, alle forbrugende replikaer har læst. Uden `side` på en kant, der leverer opslagsdata, får et nyt forsøg dem ikke igen, og med replikaer får hver replika kun en del; komponent-guiden viser en join med `side: true`. |
 | GO-77 | SKAL | `maxRestarts` og forsøgsnummeret (GO-67) gælder pr. replika. Et trin er afsluttet, når alle dets replikaer er afsluttet, og fejlet, når én replika har brugt alle sine genstarter. Fejler et forsøg med årsagen `StorageFull`, genstartes det ikke, og runnet stoppes straks, også med `failurePolicy: continue` (GO-97): et nyt forsøg og de andre replikaer skriver til den samme fulde bucket. |
 | GO-97 | SKAL | Har en replika brugt alle sine genstarter, og er `failurePolicy` `continue`, lukker controlleren replikaens udgående strømme. Først når pod'en er bekræftet væk (GO-67), skriver controlleren hvert udgående manifest med `eos: true`, uændrede chunks og et `epoch` én højere end replikaens sidste forsøg, så en agent, der mod forventning stadig kører, stoppes af fencing (GO-68). Controlleren lukker også replikaens ack-filer: de lister de chunks, replikaen committede, har `closed: true` og samme højere `epoch`. En producent venter ikke på en lukket forbruger-replika (GO-35), så runnet går ikke i stå, og en agent, der stadig kører, stoppes ved sin næste skrivning af ack-filen. Input-chunks, der var tildelt replikaen, men ikke står i dens lukkede ack-fil, tælles i `status.steps[].replicas[].failedChunks`, også dem, producenten laver, efter at replikaen er lukket. Forbrugerne når EOS, og runnet slutter som `PartiallySucceeded`. Når runnet er slut, kopierer controlleren hver af de chunks, replikaen ikke behandlede, til `results/<run>/<uid>/_failures/<step>/<replika>/skipped/input/` med en `failure.json` (`skipped: true`), der lister dem, højst 10.000 pr. replika, og tæller resten i `notKept`; de har `resultsTTL` som resultaterne, og `alpheus replay --skipped` kører komponenten på dem alle. Med `failurePolicy: stop` stoppes hele runnet i stedet. |
 
@@ -448,6 +453,7 @@ Manifestformat (version 1):
 | GO-137 | SKAL | Afviser lageret runnets nøgler eller bucket (en ukendt nøgle, en forkert hemmelighed, ingen adgang eller ingen bucket), sætter controlleren runnet til `Failed` med det samme med årsagen "the storage refused the keys in Secret <navn>", uden at bruge genstarter, og sletter pod'erne. Det samme gælder oprydningen (GO-20): kan nøglerne ikke slette runnets data, logger controlleren, at data bliver liggende, og fjerner sine finalizers, så runnet og dets namespace kan slettes. |
 | GO-138 | SKAL | Et run, der ikke lykkes, har en årsag som en kode, der er en del af API'et, i `status.reason` og i `Ready`-betingelsens reason, ud over beskeden i ord: `InvalidSpec`, `Cancelled`, `ComponentFailed`, `AgentFailed`, `StorageRefused`, `StorageUnreachable`, `StorageFull`, `StorageError`, `ScratchFull`, `PodDeleted`, `PodFailed` og `FailedReplicas`. Hver replika har årsagen til sit sidste fejlede forsøg i `status.steps[].replicas[].reason`, og `status.failedStep` og `failedReplica` er den replika, hvis fejl stoppede runnet. Agenten sætter sin årsag foran sin termination message; er agenten fejlet, er dens årsag replikaens, da komponenten så kun fik SIGTERM. |
 | GO-139 | SKAL | En komponent, der fejler, siger hvorfor med egne ord: SDK'et i Go og Python-modulet skriver fejlen til `/dev/termination-log`, og komponent-containeren har `terminationMessagePolicy: FallbackToLogsOnError`, så slutningen af loggen bruges, når intet er skrevet. Controlleren skriver Kubernetes-events (events.k8s.io) på runnet, når det starter, ved hvert fejlet forsøg og genstart, når en replika giver op, og når runnet slutter, med årsagerne fra GO-138. Events og metrics skrives først, når statussen er skrevet, så et gentaget pas ikke tæller to gange. |
+| GO-166 | SKAL | `spec.steps[].logLevel` (`debug`, `info`, `warn` eller `error`) giver komponenten `ALPHEUS_LOG_LEVEL`, som SDK'et i Go og Python-modulet bruger til deres logger. Uden feltet vælger komponenten selv, `info` i SDK'erne. Så kan man se mere af, hvad ét trin gør, uden et nyt image; `alpheus run --log-level <trin>=debug` sætter det uden at redigere flow-filen, og `alpheus replay` bruger altid `debug`. Skabelonerne logger deres settings og hver chunk på `debug`. En panic i en Go-komponent fanges af SDK'et og bliver en fejl med exit-kode 1 og stedet i komponentens kode, med hele stakken i loggen, så den ikke forveksles med exit-kode 2 (forkerte settings). |
 | GO-140 | SKAL | Før controlleren erstatter eller sletter et fejlet forsøgs pod, gemmer den slutningen af hver containers log, højst 4 MiB, under `results/<run>/<uid>/_logs/<trin>/<replika>/attempt-<n>/` (`component.log`, `agent.log` og `agent-previous.log`, når agenten genstartede på stedet), med samme TTL som resultater. `status.steps[].logs` siger hvor, og `alpheus logs --kept` viser dem. Det er best effort og stopper aldrig runnet. |
 | GO-141 | SKAL | Et fejlet forsøg gemmes, så det kan køres igen for sig selv: `results/<run>/<uid>/_failures/<trin>/<replika>/attempt-<n>/failure.json` med årsag, besked, image (låst med digest), settings og input-chunks, og kopier af de input-chunks, forsøget havde fået og ikke var færdigt med, under `input/`: de første `maxOpen` i hver strøm, højst 16. Lageret kopierer dem selv (server-side copy). Fejl i lageret gemmer intet. `alpheus replay` henter dem, kontrollerer hver mod sin SHA-256 og kører samme image på dem i local mode med podman eller docker, som replika 0 af 1, uden netværk og med `ALPHEUS_LOG_LEVEL=debug`; `--with none` henter kun. SDK'erne sætter log-niveauet fra `ALPHEUS_LOG_LEVEL`, og Go-SDK'et tager flere porte i `ALPHEUS_LOCAL_INPUTS`. |
 | GO-142 | SKAL | `alpheus ui` serverer en side på brugerens maskine (standard `127.0.0.1:7171`) med brugerens kubeconfig, uden noget installeret i klyngen: runs, ét run med flow, replikaer, resultater og events, og én replika med tællere, fejllog, logs (live eller gemte) og fejlede forsøg med en knap, der kører `alpheus replay`. Den opdateres live med server-sent events. Den er skrivebeskyttet, bortset fra replay, svarer kun på forespørgsler til localhost (mod DNS rebinding), og replay kræver et token, som kun siden har. Siden er indlejret i CLI'en, i Go og ren HTML, CSS og JavaScript uden afhængigheder. |
@@ -775,7 +781,7 @@ henviser til, og `alpheus check` tjekker den (GO-158).
 | Integration | controller mod API-server | envtest |
 | Integration | agent mod S3 | Garage i en container |
 | Driver | `builtin` | hub og klient i samme proces, og agenter gennem hub'en mod Garage |
-| E2E | testcase01 til testcase20 | Talos på to VM'er (control plane og worker) med Vagrant og libvirt (`vagrant/` i repo'ets rod) med Garage og Zot, og med MinIO i stedet for Garage (12.2) |
+| E2E | testcase01 til testcase21 | Talos på to VM'er (control plane og worker) med Vagrant og libvirt (`vagrant/` i repo'ets rod) med Garage og Zot, og med MinIO i stedet for Garage (12.2) |
 
 | ID | Niveau | Krav |
 |---|---|---|
@@ -1119,6 +1125,22 @@ to andre: policies lægges sammen, og blokeringerne i første run skyldtes
 policy'en. Testen kræver et netværk, der håndhæver NetworkPolicies;
 `hack/e2e.sh` springer den over på en klynge med flannel.
 
+**testcase21: en fejl, der findes og rettes (GO-141, GO-161, GO-166,
+GO-167).** Debug-eksemplet (`examples/debug-session`,
+`docs/debug-example.md`): ordrer for 20 dage, filtreret i tre replikaer,
+flettet i `merge` med kunderne som side input og sorteret, ca. 150 MiB.
+Version 1 af `merge` går i panik på de kunder, der ingen region har. Den
+skal fejle i alle tre forsøg med samme panic og stedet i koden, og uden
+fejl i fejlloggen, så hvert nyt forsøg beviseligt fik kunderne igen; uden
+side input ville forsøg 2 starte uden dem og afvise alle ordrer.
+`failure.json` for forsøg 3 skal have hele side inputtet. Derefter køres
+flowet igen med version 2 og `logLevel: debug`: alle ordrer, `filter` lod
+passere, skal være flettet og sorteret, og hver kunde uden region skal
+give en advarsel. Fundet med eksemplet: uden side input fik et nyt forsøg
+af en join ingen opslagsdata og endte `Succeeded` med de fleste ordrer
+afvist (GO-167), en panic gav exit-kode 2 som forkerte settings (GO-166),
+og output fra en replay med podman kunne hverken læses eller slettes.
+
 **Agent-test: hvert commit-punkt (GO-74).** En pod, der slås ihjel,
 rammer ikke et bestemt sted mellem to skrivninger til S3. Derfor kører
 `TestCrashAtEveryWrite` to pipelines i hukommelsen: testcase03's form
@@ -1380,6 +1402,14 @@ for EU. GitHub er kun et spejl af kildekoden, der læses fra (hjemmesidens
    anden nøgle og en ændret fil blev afvist, og testcase01 til 03 bestod
    med det udgivne chart og dets images (`CHART` i `hack/e2e.sh`). Tilbage
    er projektets nøgle, Forgejo, runnerne og registryet.
+   Debug-eksemplet (testcase21) førte til side inputs (GO-167),
+   `logLevel` pr. trin og panic som exit-kode 1 (GO-166), og en del af
+   GO-161: `alpheus run --image`, `--log-level` og `--name`, og en replay
+   med `--image`, der siger, at det er en anden version end den, der
+   fejlede, og hvordan flowet køres med den. `--settings`, `--compare` og
+   `replay.json` mangler. En replay med podman kører nu som brugeren
+   (`--userns=keep-id`), og SDK'ets lokale mode skriver output, andre kan
+   læse.
 
 En STOMP-driver til en ekstern broker (fx Artemis) var planlagt som
 trin 9 med GO-39 og GO-42, men er taget ud af planen: signaler gør

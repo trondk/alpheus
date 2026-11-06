@@ -279,6 +279,7 @@ func (a *Agent) recover(ctx context.Context) error {
 			edge:     out.Edge,
 			to:       out.To,
 			replicas: out.Replicas,
+			side:     out.Side,
 			stream:   chunk.EdgeStream(a.cfg.UID, out.Edge, a.cfg.Replica),
 		}
 		if err := a.loadTarget(ctx, t); err != nil {
@@ -344,6 +345,11 @@ func (a *Agent) resume(ctx context.Context) error {
 		return nil
 	}
 	for _, s := range a.streams {
+		if s.in.Side && !allEnded {
+			// A side input is read again by every attempt, which builds
+			// its lookup data from it (GO-167).
+			continue
+		}
 		processed := s.acks.Last()
 		if len(a.targets) > 0 {
 			processed = -1

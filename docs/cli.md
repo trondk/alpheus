@@ -32,6 +32,9 @@ Reads the file strictly, so a misspelt field is an error, and runs the controlle
 | Flag | What it does |
 |---|---|
 | `-f string` | the flow file, or - for stdin |
+| `--image value` | &lt;step&gt;=&lt;image&gt; runs a step with another image, such as a fixed version; can be repeated |
+| `--log-level value` | &lt;step&gt;=&lt;level&gt; sets a step's log level: debug, info, warn or error; debug shows more of what it does; can be repeated |
+| `--name string` | the run's name instead of metadata.name in the file, such as for a second run of the same flow |
 
 ## alpheus get
 

@@ -47,6 +47,8 @@ create "Duplicate value" "duplicate step name" \
   < <(sample 's/- name: sum/- name: read/')
 create "Duplicate value" "duplicate edge" \
   < <(sample 's/{from: filter, to: sum}/{from: read, to: filter}/')
+create ok "a side input" \
+  < <(sample 's/{from: filter, to: sum}/{from: filter, to: sum, port: lookup, side: true}/')
 create ok "same edge with another output is allowed" \
   < <(sample 's/{from: filter, to: sum}/{from: read, output: rejects, to: filter}/')
 create "should match" "step name with capitals" \

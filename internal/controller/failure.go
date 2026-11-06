@@ -64,7 +64,11 @@ func (rc *Reconciler) captureFailure(ctx context.Context, r *v1alpha1.StreamRun,
 	if s.MaxOpen != nil {
 		perStream = int(*s.MaxOpen)
 	}
+	copySideInputs(ctx, st, r, g, s, prefix, &f)
 	for _, e := range g.in[s.Name] {
+		if e.Side {
+			continue
+		}
 		port := e.Port
 		if port == "" {
 			port = "default"
@@ -104,6 +108,43 @@ func (rc *Reconciler) captureFailure(ctx context.Context, r *v1alpha1.StreamRun,
 	for i := range r.Status.Steps {
 		if r.Status.Steps[i].Name == s.Name {
 			r.Status.Steps[i].Failures = fmt.Sprintf("s3://%s/%s", r.Spec.Storage.Bucket, chunk.FailurePrefix(r.Name, uid, s.Name, -1, 0))
+		}
+	}
+}
+
+// copySideInputs copies every chunk of the step's side inputs into a
+// failure's input/, so a replay has all of its lookup data (GO-167). They
+// do not count against the limits on inputs: a side input is small, and
+// without all of it the replay would not be the attempt it replays.
+func copySideInputs(ctx context.Context, st store.Store, r *v1alpha1.StreamRun, g *graph, s *v1alpha1.Step, prefix string, f *replay.Failure) {
+	uid := string(r.UID)
+	for _, e := range g.in[s.Name] {
+		if !e.Side {
+			continue
+		}
+		port := e.Port
+		if port == "" {
+			port = "default"
+		}
+		for p := range replicas(g.steps[e.From]) {
+			in := chunk.EdgeStream(uid, edgeName(e), p)
+			m, err := readManifest(ctx, st, in)
+			if err != nil || m == nil {
+				continue
+			}
+			chunks, err := allChunks(ctx, st, in, m)
+			if err != nil {
+				log.FromContext(ctx).Error(err, "capture failure: list a side input", "edge", edgeName(e))
+				continue
+			}
+			for _, c := range chunks {
+				file := fmt.Sprintf("%s-%d-%06d.%s", edgeName(e), p, c.N, c.Ext)
+				if err := store.Copy(ctx, st, in.ChunkKey(c.N, c.Ext), prefix+"input/"+file); err != nil {
+					log.FromContext(ctx).Error(err, "capture failure: copy chunk", "chunk", file)
+					continue
+				}
+				f.Inputs = append(f.Inputs, replay.Input{Port: port, Edge: edgeName(e), ProducerReplica: p, N: c.N, Bytes: c.Bytes, SHA256: c.SHA256, File: file, Side: true})
+			}
 		}
 	}
 }
@@ -150,10 +191,12 @@ func (rc *Reconciler) keepSkipped(ctx context.Context, r *v1alpha1.StreamRun, g 
 			if s.Settings != nil {
 				f.Settings = json.RawMessage(s.Settings.Raw)
 			}
+			copySideInputs(ctx, st, r, g, s, prefix, &f)
+			side := len(f.Inputs)
 			var seen int64
 			err := eachSkipped(ctx, st, r, g, s, replica, func(c skippedChunk) bool {
 				seen++
-				if len(f.Inputs) >= replay.MaxSkipped {
+				if len(f.Inputs)-side >= replay.MaxSkipped {
 					return true
 				}
 				port := c.edge.Port
@@ -172,7 +215,7 @@ func (rc *Reconciler) keepSkipped(ctx context.Context, r *v1alpha1.StreamRun, g 
 			if err != nil {
 				log.FromContext(ctx).Error(err, "keep skipped chunks: list them", "step", s.Name, "replica", replica)
 			}
-			f.NotKept = seen - int64(len(f.Inputs))
+			f.NotKept = seen - int64(len(f.Inputs)-side)
 			if err := putJSON(ctx, st, prefix+"failure.json", f); err != nil {
 				log.FromContext(ctx).Error(err, "keep skipped chunks: write failure.json")
 				continue

@@ -74,12 +74,22 @@ func (rc *Reconciler) readStorage(ctx context.Context, st store.Store, r *v1alph
 				es.Chunks += m.Count()
 				es.Bytes += unsealedBytes(m)
 				es.EOS = es.EOS && m.EOS
+				// Every consumer replica reads all of a side input, so a
+				// chunk is acked when they all have (GO-167).
+				least := int64(-1)
 				for c := range replicas(g.steps[e.To]) {
 					n, err := ackCount(ctx, st, stream.AckKey(e.To, c))
 					if err != nil {
 						return err
 					}
-					es.Acked += n
+					if !e.Side {
+						es.Acked += n
+					} else if least < 0 || n < least {
+						least = n
+					}
+				}
+				if least > 0 {
+					es.Acked += least
 				}
 			}
 			edges = append(edges, es)
@@ -400,7 +410,7 @@ func (rc *Reconciler) closeStreams(ctx context.Context, r *v1alpha1.StreamRun, g
 			}
 			acks := chunk.NewAcks()
 			for n := int64(1); n <= done; n++ {
-				if chunk.Assign(n, p, replicas(s)) == replica {
+				if assigned(e, n, p, replicas(s), replica) {
 					acks.Ack(n)
 				}
 			}
@@ -446,6 +456,11 @@ type skippedChunk struct {
 func eachSkipped(ctx context.Context, st store.Store, r *v1alpha1.StreamRun, g *graph, s *v1alpha1.Step, replica int, yield func(skippedChunk) bool) error {
 	uid := string(r.UID)
 	for _, e := range g.in[s.Name] {
+		if e.Side {
+			// A side input is lookup data, not work left undone; a replay of
+			// the skipped chunks gets all of it (GO-167).
+			continue
+		}
 		for p := range replicas(g.steps[e.From]) {
 			in := chunk.EdgeStream(uid, edgeName(e), p)
 			m, err := readManifest(ctx, st, in)

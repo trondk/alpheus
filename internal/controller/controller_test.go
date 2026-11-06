@@ -364,6 +364,12 @@ func TestPodsAndSuccess(t *testing.T) {
 	if *comp.SecurityContext.ReadOnlyRootFilesystem != true || *p.Spec.SecurityContext.RunAsNonRoot != true {
 		t.Error("not restricted")
 	}
+	// The component gets the step's log level, if it has one (GO-166).
+	for _, e := range comp.Env {
+		if e.Name == "ALPHEUS_LOG_LEVEL" {
+			t.Errorf("a log level without logLevel: %+v", e)
+		}
+	}
 	// The root file system is read-only, so /tmp is a folder of the
 	// emptyDir, and TMPDIR and HOME point to it.
 	if !slices.ContainsFunc(comp.VolumeMounts, func(m corev1.VolumeMount) bool {
@@ -695,6 +701,117 @@ func put(t *testing.T, key string, v interface{ Marshal() ([]byte, error) }) {
 	data, _ := v.Marshal()
 	if err := mem.Put(t.Context(), key, bytes.NewReader(data), int64(len(data))); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A side input goes to every replica's agent as one, a failed attempt keeps
+// all of it for a replay next to the chunks it had not finished, and a
+// side input's chunks count as acked when every replica has read them
+// (GO-167).
+func TestSideInput(t *testing.T) {
+	ns := namespace(t)
+	r := testcase03(ns, 2)
+	r.Spec.Steps = append(r.Spec.Steps, v1alpha1.Step{Name: "lookup", Image: "registry.alpheus.test:30500/lookup" + digest})
+	r.Spec.Edges = append(r.Spec.Edges, v1alpha1.Edge{From: "lookup", To: "filter", Port: "lookup", Side: true})
+	r.Spec.Steps[1].MaxRestarts = ptr.To[int32](0)
+	create(t, r)
+	uid := string(get(t, r).UID)
+
+	write := func(edge string, chunks int) {
+		m := chunk.NewManifest("sales", uid, edge, 0, 1)
+		for n := int64(1); n <= int64(chunks); n++ {
+			body := fmt.Sprintf("%s %d\n", edge, n)
+			sum := sha256.Sum256([]byte(body))
+			m.Append(chunk.Chunk{N: n, Ext: "csv", Bytes: int64(len(body)), SHA256: hex.EncodeToString(sum[:])})
+			mem.Put(t.Context(), chunk.EdgeStream(uid, edge, 0).ChunkKey(n, "csv"), strings.NewReader(body), int64(len(body)))
+		}
+		put(t, chunk.EdgeStream(uid, edge, 0).ManifestKey(), m)
+	}
+	write("generate-filter", 2)
+	write("lookup-filter", 3)
+	ack := func(replica int, ns ...int64) {
+		a := chunk.NewAcks()
+		for _, n := range ns {
+			a.Ack(n)
+		}
+		put(t, chunk.EdgeStream(uid, "lookup-filter", 0).AckKey("filter", replica), a)
+	}
+	ack(0, 1, 2, 3)
+	ack(1, 1)
+
+	p := waitPod(t, ns, "sales-filter-0-1")
+	var cfg string
+	for _, e := range p.Spec.InitContainers[0].Env {
+		if e.Name == "ALPHEUS_AGENT_CONFIG" {
+			cfg = e.Value
+		}
+	}
+	if !strings.Contains(cfg, `"edge":"lookup-filter","from":"lookup","replicas":1,"port":"lookup","side":true`) {
+		t.Errorf("agent config without the side input: %s", cfg)
+	}
+	eventually(t, "edge status", func() string {
+		for _, e := range get(t, r).Status.Edges {
+			if e.Name == "lookup-filter" && (e.Chunks != 3 || e.Acked != 1) {
+				return fmt.Sprintf("%+v, want 3 chunks and 1 acked by both replicas", e)
+			}
+		}
+		return ""
+	})
+
+	exit(t, p, 1)
+	waitPhase(t, r, v1alpha1.RunFailed)
+	data, err := store.ReadAll(t.Context(), mem, chunk.FailurePrefix("sales", uid, "filter", 0, 1)+"failure.json")
+	var f replay.Failure
+	if err == nil {
+		err = json.Unmarshal(data, &f)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	var side, main []int64
+	for _, in := range f.Inputs {
+		if in.Side {
+			side = append(side, in.N)
+			if in.Port != "lookup" {
+				t.Errorf("side input on port %q", in.Port)
+			}
+		} else {
+			main = append(main, in.N)
+		}
+	}
+	// Chunk 2 of generate-filter is replica 0's (GO-76); the side input is
+	// all there, though replica 0 had acked it.
+	if !slices.Equal(side, []int64{1, 2, 3}) || !slices.Equal(main, []int64{2}) {
+		t.Errorf("side input %v, main input %v", side, main)
+	}
+}
+
+// A step's logLevel reaches its component as ALPHEUS_LOG_LEVEL, and only
+// that step's (GO-166); the CRD refuses another level.
+func TestLogLevel(t *testing.T) {
+	ns := namespace(t)
+	r := testcase03(ns, 1)
+	r.Spec.Steps[1].LogLevel = "debug"
+	create(t, r)
+	env := func(pod string) string {
+		for _, e := range waitPod(t, ns, pod).Spec.Containers[0].Env {
+			if e.Name == "ALPHEUS_LOG_LEVEL" {
+				return e.Value
+			}
+		}
+		return ""
+	}
+	if got := env("sales-filter-0-1"); got != "debug" {
+		t.Errorf("filter's log level %q, want debug", got)
+	}
+	if got := env("sales-sum-0-1"); got != "" {
+		t.Errorf("sum's log level %q, want none", got)
+	}
+	loud := testcase03(ns, 1)
+	loud.Name = "loud"
+	loud.Spec.Steps[0].LogLevel = "loud"
+	if err := k8s.Create(t.Context(), loud); err == nil || !strings.Contains(err.Error(), "Unsupported value") {
+		t.Errorf("log level loud: %v", err)
 	}
 }
 

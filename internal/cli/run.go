@@ -21,6 +21,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
+	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -84,10 +86,35 @@ func namespaceFor(r *v1alpha1.StreamRun, o *opts, ns string) error {
 	return nil
 }
 
+// override changes one step of a flow before it is created: its image
+// (GO-161) or its log level (GO-166), given as step=value.
+func override(r *v1alpha1.StreamRun, flag string, values []string, set func(*v1alpha1.Step, string)) error {
+	for _, v := range values {
+		name, value, ok := strings.Cut(v, "=")
+		if !ok || name == "" || value == "" {
+			return usagef("--%s %s: want <step>=<value>", flag, v)
+		}
+		i := slices.IndexFunc(r.Spec.Steps, func(s v1alpha1.Step) bool { return s.Name == name })
+		if i < 0 {
+			var names []string
+			for _, s := range r.Spec.Steps {
+				names = append(names, s.Name)
+			}
+			return usagef("--%s %s: the flow has no step %q; its steps are %s", flag, v, name, strings.Join(names, ", "))
+		}
+		set(&r.Spec.Steps[i], value)
+	}
+	return nil
+}
+
 func runCmd(ctx context.Context, e *Env, args []string) error {
 	var o opts
 	fs := newFlags(e, "run", "-f flow.yaml", &o)
 	file := fs.String("f", "", "the flow file, or - for stdin")
+	name := fs.String("name", "", "the run's name instead of metadata.name in the file, such as for a second run of the same flow")
+	var images, levels stringList
+	fs.Var(&images, "image", "<step>=<image> runs a step with another image, such as a fixed version; can be repeated")
+	fs.Var(&levels, "log-level", "<step>=<level> sets a step's log level: debug, info, warn or error; debug shows more of what it does; can be repeated")
 	pos, err := parse(fs, args, &o)
 	if err != nil {
 		return err
@@ -98,6 +125,20 @@ func runCmd(ctx context.Context, e *Env, args []string) error {
 	r, err := readFlow(e, *file)
 	if err != nil {
 		return err
+	}
+	if *name != "" {
+		r.Name, r.GenerateName = *name, ""
+	}
+	if err := override(r, "image", images, func(s *v1alpha1.Step, v string) { s.Image = v }); err != nil {
+		return err
+	}
+	if err := override(r, "log-level", levels, func(s *v1alpha1.Step, v string) { s.LogLevel = v }); err != nil {
+		return err
+	}
+	for _, s := range r.Spec.Steps {
+		if s.LogLevel != "" && !slices.Contains([]string{"debug", "info", "warn", "error"}, s.LogLevel) {
+			return usagef("step %s: log level %q: want debug, info, warn or error", s.Name, s.LogLevel)
+		}
 	}
 	warnings, err := check(*file, r)
 	if err != nil {

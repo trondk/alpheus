@@ -117,6 +117,12 @@ func ValidateGraph(spec *v1alpha1.StreamRunSpec) error {
 	return err
 }
 
+// assigned reports whether chunk n of producer replica p on edge e goes to
+// the consumer's replica: by GO-76, or always for a side input (GO-167).
+func assigned(e v1alpha1.Edge, n int64, p, consumers, replica int) bool {
+	return e.Side || chunk.Assign(n, p, consumers) == replica
+}
+
 // EdgeName is an edge's name in storage and in status.edges.
 func EdgeName(e v1alpha1.Edge) string { return edgeName(withDefaults(e)) }
 

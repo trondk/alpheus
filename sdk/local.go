@@ -358,6 +358,12 @@ func (l *local) Create(ctx context.Context, output, ext string) (*File, error) {
 	if err != nil {
 		return nil, fmt.Errorf("output %s: %w", output, err)
 	}
+	// Output is there to be read, also by another user than the
+	// component's, such as after alpheus replay in a container.
+	if err := f.Chmod(0o644); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("output %s: %w", output, err)
+	}
 	file := &File{f: f, path: f.Name(), output: output, ext: ext, onClose: l.closedFile}
 	l.open = append(l.open, file)
 	return file, nil

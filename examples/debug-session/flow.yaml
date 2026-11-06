@@ -1,0 +1,38 @@
+# The debug-session example: a web shop's orders for 20 days, joined with
+# its customers and sorted into a report by region and amount. merge has a
+# bug on purpose: it fails on a customer without a region (see
+# docs/debug-example.md). Build the images with images.sh, which puts their
+# digests here and writes _out/debug-session.yaml, and create a Secret
+# alpheus-s3 with keys for the bucket.
+apiVersion: alpheus-dev.org/v1alpha1
+kind: StreamRun
+metadata:
+  name: shop-report
+spec:
+  steps:
+    - name: orders
+      image: registry.example/debug-session/orders@sha256:…
+      settings: {files: 20, rows: 200000, customers: 50000, cancelledPerMille: 50, seed: 21}
+    - name: customers
+      image: registry.example/debug-session/customers@sha256:…
+      settings: {customers: 50000, blankFrom: 46001, blank: 20, seed: 21}
+    - name: filter
+      image: registry.example/debug-session/filter@sha256:…
+      replicas: 3
+    - name: merge
+      image: registry.example/debug-session/merge@sha256:…
+      maxRestarts: 2
+    - name: sort
+      image: registry.example/debug-session/sort@sha256:…
+      settings: {bytes: 33554432}
+  edges:
+    - {from: orders, to: filter}
+    - {from: filter, to: merge, port: orders}
+    - {from: customers, to: merge, port: customers, side: true}
+    - {from: merge, to: sort}
+  chunks: {maxUnacked: 4}
+  resultsTTL: 24h
+  storage:
+    endpoint: http://s3.example:3900
+    bucket: flows
+    secretRef: alpheus-s3

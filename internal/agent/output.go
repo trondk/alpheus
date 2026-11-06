@@ -44,6 +44,7 @@ type target struct {
 	edge     string // empty for a result
 	to       string
 	replicas int
+	side     bool // the edge is a side input of its consumer (GO-167)
 	stream   chunk.Stream
 	m        *chunk.Manifest
 
@@ -217,7 +218,7 @@ func (a *Agent) targetsFor(ctx context.Context, output string) ([]*target, error
 	a.mu.Lock()
 	stateful := a.stateful
 	for _, s := range a.streams {
-		if !stateful && s.processed > 0 {
+		if !stateful && !s.in.Side && s.processed > 0 {
 			t.m.SetConsumed(s.stream.ID, s.processed)
 		}
 	}
@@ -259,6 +260,14 @@ func (a *Agent) commit(ctx context.Context, src *inChunk, files []*outFile, r *r
 	stateful := a.stateful
 	a.mu.Unlock()
 	slices.SortFunc(files, func(x, y *outFile) int { return int(x.seq - y.seq) })
+	// A side input chunk is committed only with the end of the streams, as
+	// every attempt reads it again (GO-167). So it can have no output of
+	// its own, which a new attempt would write twice, and its counts and
+	// log entries are held until then, as a stateful step's are.
+	side := src != nil && src.s.in.Side
+	if side && len(files) > 0 {
+		return fmt.Errorf("side input chunk %s/%d #%d has %d output files", src.s.in.Edge, src.s.p, src.meta.N, len(files))
+	}
 
 	changed := map[*target]bool{}
 	// committed says an earlier attempt already committed this commit in
@@ -272,7 +281,7 @@ func (a *Agent) commit(ctx context.Context, src *inChunk, files []*outFile, r *r
 		srcRef = &chunk.Source{Edge: src.s.in.Edge, Replica: src.s.p, N: src.meta.N}
 	}
 	for _, t := range a.targets {
-		if src != nil && !stateful && t.m.IsConsumed(src.s.stream.ID, src.meta.N) || final && t.m.EOS {
+		if src != nil && !stateful && !side && t.m.IsConsumed(src.s.stream.ID, src.meta.N) || final && t.m.EOS {
 			committed = true
 		}
 	}
@@ -313,18 +322,18 @@ func (a *Agent) commit(ctx context.Context, src *inChunk, files []*outFile, r *r
 	}
 
 	for _, t := range a.targets {
-		if src != nil && !stateful && !t.m.IsConsumed(src.s.stream.ID, src.meta.N) && !t.m.EOS {
+		if src != nil && !stateful && !side && !t.m.IsConsumed(src.s.stream.ID, src.meta.N) && !t.m.EOS {
 			t.m.SetConsumed(src.s.stream.ID, src.meta.N)
 			changed[t] = true
 		}
 		if final && !t.m.EOS {
-			if stateful {
-				a.mu.Lock()
-				for _, s := range a.streams {
+			a.mu.Lock()
+			for _, s := range a.streams {
+				if stateful || s.in.Side {
 					t.m.SetConsumed(s.stream.ID, s.last)
 				}
-				a.mu.Unlock()
 			}
+			a.mu.Unlock()
 			t.m.End()
 			changed[t] = true
 		}
@@ -342,14 +351,14 @@ func (a *Agent) commit(ctx context.Context, src *inChunk, files []*outFile, r *r
 			a.obs.held = &report{counts: map[string]int64{}}
 			a.mu.Unlock()
 		}
-	case stateful && !final:
-		// Committed with the OnEOS output, since a restart before that
-		// reads every chunk again (GO-95).
+	case (stateful || side) && !final:
+		// Committed with the OnEOS output or the end of the streams, since
+		// a restart before that reads every chunk again (GO-95, GO-167).
 		a.mu.Lock()
 		a.obs.held.merge(r, chunkName)
 		a.mu.Unlock()
 		r = nil
-	case stateful:
+	case final:
 		a.mu.Lock()
 		held := a.obs.held
 		a.obs.held = &report{counts: map[string]int64{}}
@@ -537,7 +546,9 @@ func (a *Agent) waitForConsumers(ctx context.Context, output string) error {
 	}
 	var ts []*target
 	for _, t := range a.edges {
-		if t.output == output {
+		// A side input is small and read whole, so its consumer does not
+		// hold it back (GO-167).
+		if t.output == output && !t.side {
 			ts = append(ts, t)
 		}
 	}

@@ -116,10 +116,10 @@ func agentConfig(r *v1alpha1.StreamRun, g *graph, s *v1alpha1.Step, replica int,
 		cfg.ScratchLimit = s.Scratch.Value()
 	}
 	for _, e := range g.in[s.Name] {
-		cfg.Inputs = append(cfg.Inputs, agent.InputEdge{Edge: edgeName(e), From: e.From, Replicas: replicas(g.steps[e.From]), Port: e.Port})
+		cfg.Inputs = append(cfg.Inputs, agent.InputEdge{Edge: edgeName(e), From: e.From, Replicas: replicas(g.steps[e.From]), Port: e.Port, Side: e.Side})
 	}
 	for _, e := range g.out[s.Name] {
-		cfg.Outputs = append(cfg.Outputs, agent.OutputEdge{Edge: edgeName(e), Output: e.Output, To: e.To, Replicas: replicas(g.steps[e.To])})
+		cfg.Outputs = append(cfg.Outputs, agent.OutputEdge{Edge: edgeName(e), Output: e.Output, To: e.To, Replicas: replicas(g.steps[e.To]), Side: e.Side})
 	}
 	return cfg
 }
@@ -179,6 +179,9 @@ func (rc *Reconciler) pod(r *v1alpha1.StreamRun, g *graph, s *v1alpha1.Step, rep
 	}
 	if s.Resources != nil {
 		component.Resources = *s.Resources
+	}
+	if s.LogLevel != "" {
+		component.Env = append(component.Env, corev1.EnvVar{Name: "ALPHEUS_LOG_LEVEL", Value: s.LogLevel})
 	}
 	tmp(&component, sharedVolume)
 

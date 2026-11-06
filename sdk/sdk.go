@@ -59,7 +59,10 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path"
 	"path/filepath"
+	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"syscall"
@@ -107,7 +110,9 @@ type Input interface {
 	Chunks(ctx context.Context) iter.Seq2[Chunk, error]
 
 	// Port returns the chunks of one input only (GO-109). A component may
-	// read a small port to the end first and then stream another.
+	// read a small port to the end first and then stream another; mark the
+	// edge to such a port side: true in the flow, so every replica and
+	// every new attempt gets all of it (GO-167).
 	Port(name string) Port
 
 	// OnEOS registers a function that runs once all input has been read,
@@ -194,7 +199,7 @@ func Run(h Handler) {
 	// place.
 	slog.SetDefault(log)
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
-	err := run(ctx, log, h)
+	err := run(ctx, log, recovering(log, h))
 	// The code first: stop cancels ctx, which would make every error look
 	// like SIGTERM.
 	code := exitCode(ctx, err)
@@ -204,6 +209,40 @@ func Run(h Handler) {
 		terminationMessage(err.Error())
 	}
 	os.Exit(code)
+}
+
+// recovering turns a panic in the handler into an error, so a component
+// with a bug fails with exit code 1 like any other failure, not 2, which
+// means wrong settings. The error says where it panicked, in the
+// component's code, and the whole stack goes to the log.
+func recovering(log *slog.Logger, h Handler) Handler {
+	return func(ctx context.Context, in Input, out Output) (err error) {
+		defer func() {
+			r := recover()
+			if r == nil {
+				return
+			}
+			log.Error("component panicked", "panic", fmt.Sprint(r), "stack", string(debug.Stack()))
+			err = fmt.Errorf("panic: %v%s", r, panicSite())
+		}()
+		return h(ctx, in, out)
+	}
+}
+
+// panicSite is " at file:line" of the frame that panicked: the first one
+// outside the Go runtime and this package.
+func panicSite() string {
+	pcs := make([]uintptr, 32)
+	frames := runtime.CallersFrames(pcs[:runtime.Callers(3, pcs)])
+	for {
+		f, more := frames.Next()
+		if !strings.HasPrefix(f.Function, "runtime.") && !strings.HasPrefix(f.Function, "alpheus-dev.org/alpheus/sdk.") && f.File != "" {
+			return fmt.Sprintf(" at %s:%d", path.Join(path.Base(path.Dir(f.File)), path.Base(f.File)), f.Line)
+		}
+		if !more {
+			return ""
+		}
+	}
 }
 
 // terminationMessage leaves why the component failed where Kubernetes

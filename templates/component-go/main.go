@@ -23,7 +23,9 @@ limitations under the License.
 // Settings: {"match": "ERROR", "invert": false}
 //
 // It counts the units lines_in and lines_out, and warns about an empty
-// input chunk with the code empty_chunk.
+// input chunk with the code empty_chunk. At debug level it logs its
+// settings and each chunk: set logLevel: debug on the step, or run
+// alpheus run --log-level <step>=debug; alpheus replay always does.
 //
 // Copy this folder to start a component: replace handle with your own,
 // keep sdk.Run in main.
@@ -36,6 +38,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 
 	"alpheus-dev.org/alpheus/sdk"
 )
@@ -59,6 +62,10 @@ func handle(ctx context.Context, in sdk.Input, out sdk.Output) error {
 	if err := in.Settings(&s); err != nil {
 		return err
 	}
+	// The SDK sets slog's default logger to ALPHEUS_LOG_LEVEL, so debug
+	// lines cost nothing unless the step's logLevel is debug. Log what
+	// helps find a bug, not the data itself, which may be personal.
+	slog.DebugContext(ctx, "settings", "match", s.Match, "invert", s.Invert, "replica", in.Replica(), "replicas", in.Replicas())
 	// Chunks yields the input chunks of this replica, one file at a time.
 	// A chunk is done when the loop asks for the next one: what was
 	// written and counted for it is then committed together.
@@ -114,6 +121,7 @@ func grep(ctx context.Context, s settings, c sdk.Chunk, out sdk.Output) error {
 	}
 	sdk.Count(ctx, "lines_in", in)
 	sdk.Count(ctx, "lines_out", kept)
+	slog.DebugContext(ctx, "chunk done", "from", c.Step, "replica", c.Replica, "n", c.N, "bytes", c.Bytes, "lines_in", in, "lines_out", kept)
 	if dst == nil {
 		return nil
 	}

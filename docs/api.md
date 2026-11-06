@@ -1,5 +1,5 @@
 ---
-title: Using Alpheus from a program
+title: "The API: using Alpheus from a program"
 description: Start a run, follow it, fetch its result, find out why it failed and run the failure again from your own program, through the Kubernetes API and S3 alone, with kubectl, Go or plain HTTP, and the rights the program needs.
 weight: 12
 lastmod: 2026-11-06
@@ -322,7 +322,9 @@ The highest `attempt-<n>` is the last one. `failure.json`:
 ```
 
 Check each file in `input/` against `bytes` and `sha256` before you use
-it.
+it. The chunks of a side input (an edge with `side: true`) have
+`"side": true`, and all of them are there, since the component reads its
+lookup data whole.
 
 ### Running it again
 

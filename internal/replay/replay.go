@@ -95,6 +95,9 @@ type Input struct {
 	SHA256          string `json:"sha256"`
 	// File is the copy's name in input/.
 	File string `json:"file"`
+	// Side marks a chunk of a side input, which the replay gets whole
+	// (GO-167).
+	Side bool `json:"side,omitempty"`
 }
 
 // LocalEnv is the environment that runs the component in local mode on

@@ -9,7 +9,11 @@ When something goes wrong, Alpheus tries to answer three questions without
 anyone digging through the cluster: what failed, why, and on which data.
 Everything here is in the `StreamRun`'s status and in the run's bucket,
 so it is there for `alpheus`, for `kubectl`, for your own tools and for
-[`alpheus ui`](#alpheus-ui), also after the pods are gone.
+[`alpheus ui`](#alpheus-ui), also after the pods are gone. For a program,
+[The API](/docs/api/#when-a-run-fails) has the fields, the formats in the
+bucket, and how to run a failed attempt again without the CLI.
+[A debug session, step by step](/docs/debug-example/) uses all of this on
+one failing flow, from the first error to the fix.
 
 ## Why it failed
 

@@ -48,6 +48,9 @@ type replayView struct {
 	Pod      string         `json:"pod,omitempty"`
 	Command  []string       `json:"command,omitempty"`
 	ExitCode *int           `json:"exitCode,omitempty"`
+	// FailedImage is the image of the failed attempt, when the replay ran
+	// another version of the component with --image (GO-161).
+	FailedImage string `json:"failedImage,omitempty"`
 }
 
 // stringList is a flag that can be given more than once.
@@ -123,10 +126,19 @@ func replayCmd(ctx context.Context, e *Env, args []string) error {
 	if err != nil {
 		return hint(err, reachable)
 	}
+	failed := f.Image
 	if *image != "" {
 		f.Image = *image
 	}
+	// Another digest is another version of the component, such as a fix
+	// to try on the inputs that made it fail; the same digest from another
+	// registry is the same version.
+	digest := func(ref string) string { _, d, _ := strings.Cut(ref, "@"); return d }
+	newVersion := *image != "" && digest(*image) != digest(failed)
 	view := replayView{Failure: *f}
+	if newVersion {
+		view.FailedImage = failed
+	}
 	if o.output == "" {
 		fmt.Fprintf(e.Stdout, "Step %s replica %d, attempt %d: %s\n", f.Step, f.Replica, f.Attempt, f.Reason)
 		fmt.Fprintf(e.Stdout, "  %s\n", f.Message)
@@ -137,6 +149,9 @@ func replayCmd(ctx context.Context, e *Env, args []string) error {
 			}
 		}
 		fmt.Fprintf(e.Stdout, "Image:  %s\n", f.Image)
+		if newVersion {
+			fmt.Fprintf(e.Stdout, "        another version than the one that failed: %s\n", failed)
+		}
 		fmt.Fprintf(e.Stdout, "Inputs: %d chunks, checked against their SHA-256\n", len(f.Inputs))
 		fmt.Fprintf(e.Stdout, "Logs of the attempt: %s\n", f.Logs)
 	}
@@ -184,8 +199,13 @@ func replayCmd(ctx context.Context, e *Env, args []string) error {
 		}
 		// The root file system is read-only and /tmp is the only other
 		// place to write, as in the pod.
-		cmd := []string{*with, "run", "--rm", "--network=none", "--read-only", "--tmpfs", controller.TmpPath,
-			"-v", abs + ":/replay:Z", "-e", "TMPDIR=" + controller.TmpPath, "-e", "HOME=" + controller.TmpPath}
+		cmd := []string{*with, "run", "--rm", "--network=none", "--read-only", "--tmpfs", controller.TmpPath}
+		if *with == "podman" {
+			// The component's user, 65532 as in the pod, is you outside the
+			// container, so you can read and delete what it writes.
+			cmd = append(cmd, "--userns=keep-id:uid=65532,gid=65532")
+		}
+		cmd = append(cmd, "-v", abs+":/replay:Z", "-e", "TMPDIR="+controller.TmpPath, "-e", "HOME="+controller.TmpPath)
 		for _, kv := range replay.LocalEnv(f, "/replay/in", "/replay/out") {
 			cmd = append(cmd, "-e", kv)
 		}
@@ -205,8 +225,23 @@ func replayCmd(ctx context.Context, e *Env, args []string) error {
 	if o.output != "" {
 		return write(e.Stdout, o.output, view, nil)
 	}
-	switch code {
-	case 0:
+	switch {
+	case code == 125 && *with != "cluster":
+		// podman and docker exit with 125 when they cannot run the
+		// container at all, such as when the image cannot be pulled.
+		fmt.Fprintf(e.Stdout, "\n%s could not run the component (exit code 125); see its error above.\n", *with)
+		fmt.Fprintln(e.Stdout, "If the image's registry is only reachable in the cluster, pull the same digest from an address you reach and pass it with --image.")
+		return nil
+	case code == 0 && newVersion:
+		fmt.Fprintf(e.Stdout, "\nThis version of the component succeeded on the inputs the failed attempt had; the attempt failed with: %s\n", f.Message)
+		if view.Dir != "" {
+			fmt.Fprintf(e.Stdout, "Its output is in %s, and what it counted and logged in _summary.json and _errors.jsonl there.\n", filepath.Join(view.Dir, "out"))
+		}
+		fmt.Fprintf(e.Stdout, "To run the flow with it: alpheus run -f <flow file> --name <a new name> --image %s=%s\n", f.Step, f.Image)
+		if *with != "cluster" {
+			fmt.Fprintln(e.Stdout, "(with the address of the registry that the cluster pulls from)")
+		}
+	case code == 0:
 		fmt.Fprintf(e.Stdout, "\nThe component succeeded on these inputs; in the run it failed with: %s\n", f.Message)
 		fmt.Fprintln(e.Stdout, "The failure may depend on chunks before these, on the environment or on resources.")
 	default:
@@ -214,7 +249,11 @@ func replayCmd(ctx context.Context, e *Env, args []string) error {
 		if view.Dir != "" {
 			where = " Its output is in " + filepath.Join(view.Dir, "out") + "."
 		}
-		fmt.Fprintf(e.Stdout, "\nThe component exited with code %d, as in the run.%s\n", code, where)
+		if newVersion {
+			fmt.Fprintf(e.Stdout, "\nThis version of the component also failed, with exit code %d.%s\n", code, where)
+		} else {
+			fmt.Fprintf(e.Stdout, "\nThe component exited with code %d, as in the run.%s\n", code, where)
+		}
 	}
 	return nil
 }

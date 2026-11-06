@@ -86,7 +86,10 @@ func Reference(w io.Writer) error {
 			fmt.Fprintln(w, "\n| Flag | What it does |")
 			fmt.Fprintln(w, "|---|---|")
 			for _, f := range flags {
-				fmt.Fprintf(w, "| `%s` | %s |\n", f[0], f[1])
+				// A flag's text such as <step>=<image> would be taken for
+				// HTML in Markdown and dropped.
+				text := strings.NewReplacer("<", "&lt;", ">", "&gt;", "|", "\\|").Replace(f[1])
+				fmt.Fprintf(w, "| `%s` | %s |\n", f[0], text)
 			}
 		}
 	}
