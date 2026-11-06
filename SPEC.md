@@ -628,6 +628,23 @@ det.
 | GO-156 | SKAL | `results`, `errors`, `chunks` og `logs --kept` finder S3-adressen i denne rækkefølge: `--endpoint` og `--ca-file`; miljøvariablerne `ALPHEUS_S3_ENDPOINT` og `ALPHEUS_S3_CA_FILE`; annotationerne `alpheus-dev.org/external-endpoint` og `alpheus-dev.org/external-ca` på runnets storage-Secret (5.2); endpointet i `status.results` eller `spec.storage`. Kan lageret ikke nås, siger fejlen, hvilken adresse der blev prøvet, og hvad man kan sætte. |
 
 
+### 9.2 Andre programmer end CLI'en
+
+CLI'en har ingen særlig adgang: den bruger brugerens kubeconfig (GO-43)
+og nøglerne i runnets storage-Secret. Et andet program med samme
+rettigheder skal kunne alt, hvad CLI'en og `alpheus ui` kan, også at finde
+ud af, hvorfor et run fejlede, og at køre et fejlet forsøg igen, uden at
+importere Alpheus' kode og uden at kende dens interne navne.
+Dokumentationen beskriver det i `docs/api.md` (Using Alpheus from a
+program).
+
+| ID | Niveau | Krav |
+|---|---|---|
+| GO-162 | SKAL | Debug-data er en del af API'et og dokumenteret i `docs/api.md`: statusfelterne (`reason`, `message`, `failedStep`, `failedReplica`, `steps[].replicas[]`, `steps[].logs`, `errorLog`, `failures`), og S3-layoutet og JSON-formaterne for `failure.json` og `input/` (GO-141), de gemte logs (GO-140), fejlloggen med `manifest.json` og segmenterne (GO-118) og, når de er bygget, replays (GO-159). Hvert JSON-format har feltet `version`; et format ændres kun bagudkompatibelt, ellers med et nyt versionsnummer, og læsere afviser en version, de ikke kender. |
+| GO-163 | SKAL | `-o json` er en stabil grænseflade for programmer, der kalder CLI'en: formen for `get`, `watch`, `chunks`, `logs`, `replay` og de kommende `results`- og `errors`-kommandoer er dokumenteret i CLI-referencen og ændres efter samme regel som GO-162. Fejl skrives til stderr, aldrig blandet med JSON på stdout. |
+| GO-164 | SKAL | Controlleren skriver agentens image, låst med digest, i `status.agentImage`, når runnet starter. Alle trin i et run bruger det (GO-24), og en replay i klyngen bruger det til at hente input, så hverken CLI'en eller andre programmer skal læse controllerens Deployment. Indtil det findes, læser CLI'en `-agent-image` fra `alpheus-system/alpheus-controller`. |
+| GO-165 | SKAL | Replay-pod'en er dokumenteret, så et program kan oprette den uden CLI'en: navn og labels, ejer (runnet), ServiceAccount og NetworkPolicy (6.1), init-containeren med agentens image og `-fetch-failure <prefix> -dest /replay`, komponent-containeren med trinnets image eller et andet (GO-161), miljøet for lokal mode, `/tmp`, trinnets ressourcer, `envFrom` og scratch, og `restartPolicy: Never`. Komponentens log er replayens resultat, og pod'ens exit-kode siger, om fejlen kom igen. |
+
 ## 10. Komponent-SDK (`sdk/`)
 
 En komponent læser input-chunks som filer og skriver output-chunks som

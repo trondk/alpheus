@@ -1,6 +1,6 @@
 ---
 title: Using Alpheus from a program
-description: Start a run, follow it, fetch its result and cancel it from your own program, through the Kubernetes API and S3 alone, with kubectl, Go or plain HTTP, and the rights the program needs.
+description: Start a run, follow it, fetch its result, find out why it failed and run the failure again from your own program, through the Kubernetes API and S3 alone, with kubectl, Go or plain HTTP, and the rights the program needs.
 weight: 12
 lastmod: 2026-11-06
 ---
@@ -220,6 +220,168 @@ pods and its chunks, but not its result, so a program can delete the run
 as soon as it has fetched what it needs. While the run exists, the
 controller deletes the result when `resultsTTL` has run out, 7 days by
 default; after that, `alpheus results gc` does.
+
+## When a run fails
+
+Everything the CLI and `alpheus ui` show about a failure, a program can
+read too: there is no other way in. The JSON formats below each have a
+`version`; a format only changes in a way that older readers can still
+read, or else with a new version number, so reject a version you do not
+know.
+
+### What the status says
+
+| Field | What it holds |
+|---|---|
+| `status.reason`, `status.message` | Why the run stopped, as a code and in words |
+| `status.failedStep`, `status.failedReplica` | The replica whose failure stopped the run |
+| `status.steps[].replicas[]` | Each replica's `phase`, `attempt`, `restarts`, `reason`, `message` and `pod` |
+| `status.steps[].logs` | Where the logs of the step's failed attempts are kept |
+| `status.steps[].errorLog` | Where the step's error log is, with `errors`, `warnings` and `errorsDropped` |
+| `status.steps[].failures` | Where the step's failed attempts are kept for a replay |
+
+The controller also writes Kubernetes events on the run: when it starts,
+at each failed attempt and restart, when a replica gives up, and when the
+run ends. [When a run fails](/docs/debugging/) has the reason codes.
+
+All the paths are in the run's results bucket, under
+`results/<run>/<uid>/`, read with the Secret in `status.results`.
+
+### The logs of failed attempts
+
+Before the controller replaces or deletes a failed attempt's pod, it
+keeps the end of each container's log, at most 4 MiB:
+
+```
+_logs/<step>/<replica>/attempt-<n>/component.log
+                                   agent.log
+                                   agent-previous.log   (if the agent restarted in place)
+```
+
+### The error log
+
+Bad records a component reported, committed with the chunks:
+
+```
+_errors/<step>/<replica>/manifest.json
+                         log-000001.jsonl
+                         log-000002.jsonl …
+```
+
+`manifest.json` lists the segments, oldest first, and the replica's
+totals:
+
+```json
+{"version": 1, "run": "meter-etl", "uid": "…", "step": "clean", "replica": 0,
+ "epoch": 1, "seq": 24, "segments": ["log-000001.jsonl", "…", "log-000024.jsonl"],
+ "counts": {"rows_in": 6522839, "rows_out": 6490308, "rows_rejected": 32531},
+ "errors": 32531, "warnings": 0, "errorsDropped": 0}
+```
+
+Each line of a segment is one entry, here from the
+[ETL example](/docs/etl/):
+
+```json
+{"time": "2026-11-06T09:40:41.103742555Z", "level": "error", "code": "bad_timestamp",
+ "message": "row rejected", "fields": {"line": 94}, "step": "clean", "replica": 0,
+ "chunk": "default/split/4"}
+```
+
+`chunk` is the input chunk the entry came from: its port, the step that
+made it and its number.
+
+Read only the segments the manifest lists.
+
+### The failed attempt
+
+The inputs of a failed attempt are kept so it can run again on its own:
+
+```
+_failures/<step>/<replica>/attempt-<n>/failure.json
+                                       input/<file>
+```
+
+The highest `attempt-<n>` is the last one. `failure.json`:
+
+```json
+{
+  "version": 1,
+  "run": "debug-demo", "namespace": "flows", "uid": "…",
+  "step": "pass", "replica": 0, "replicas": 1, "attempt": 2,
+  "reason": "ComponentFailed",
+  "message": "the component exited with code 1: chunk 5 (source chunk 5) is one this component cannot handle",
+  "time": "…",
+  "image": "registry.alpheus.test:30500/alpheus-test/bench@sha256:…",
+  "settings": {"role": "pass", "fail": 5, "delay": 1000},
+  "inputs": [
+    {"port": "default", "edge": "source-pass", "producerReplica": 0, "n": 5,
+     "bytes": 65536, "sha256": "…", "file": "source-pass-0-000005.bin"}
+  ],
+  "logs": "results/debug-demo/<uid>/_logs/pass/0/attempt-2/"
+}
+```
+
+Check each file in `input/` against `bytes` and `sha256` before you use
+it.
+
+### Running it again
+
+With the CLI, a program gets the result as JSON:
+
+```console
+$ alpheus replay debug-demo pass -n flows --with cluster -o json
+{"failure": {…}, "pod": "debug-demo-pass-0-replay-2-cfcdc2", "exitCode": 1}
+```
+
+Without it, put each input in `in/<port>/` and run the image in
+[local mode](/docs/components/#testing-without-kubernetes) with:
+
+| Variable | Value |
+|---|---|
+| `ALPHEUS_MODE` | `local` |
+| `ALPHEUS_LOCAL_INPUT` | `in/default`, for a step with one input port |
+| `ALPHEUS_LOCAL_INPUTS` | `<port>=in/<port>,…`, for several ports |
+| `ALPHEUS_LOCAL_OUTPUT` | `out` |
+| `ALPHEUS_SETTINGS` | `settings` from `failure.json` |
+| `ALPHEUS_REPLICA`, `ALPHEUS_REPLICAS` | `0` and `1`: the inputs are already this replica's |
+| `ALPHEUS_LOG_LEVEL` | `debug` |
+| `TMPDIR`, `HOME` | `/tmp` |
+
+Run it as the pod does: as uid 65532, with a read-only root file system,
+a writable `/tmp`, no network and no capabilities. A step with no inputs
+(`"source": true`) runs with none.
+
+To run it in the cluster instead, so the data stays there, create a pod
+in the run's namespace like the one `alpheus replay --with cluster`
+makes:
+
+- owned by the run, with the labels `alpheus-dev.org/replay: <run>`,
+  `alpheus-dev.org/network: <run>`, `alpheus-dev.org/step` and
+  `alpheus-dev.org/replica`, so the run's NetworkPolicy applies;
+- the ServiceAccount `alpheus-run-<run>`, without a token, and
+  `restartPolicy: Never`;
+- an `emptyDir` at `/replay`, with the step's `scratch` as its size;
+- an init container with the agent's image, args
+  `-fetch-failure <the attempt's prefix> -dest /replay`, and the S3
+  variables the step's agent gets (`ALPHEUS_S3_ENDPOINT`,
+  `ALPHEUS_S3_BUCKET`, `ALPHEUS_S3_REGION`, and `ALPHEUS_S3_ACCESS_KEY` and
+  `ALPHEUS_S3_SECRET_KEY` from the Secret). It fetches and checks the
+  inputs into `/replay/in/` and makes `/replay/out/`;
+- the component container with the image from `failure.json`, or a new
+  version to try a fix, the variables above with `/replay/in` and
+  `/replay/out`, `/tmp` as a `subPath: tmp` of the same volume, and the
+  step's `resources` and `envFrom`.
+
+The component's log is the replay's result, and its exit code says
+whether the failure came back.
+
+{{% planned %}}The agent's image will be in `status.agentImage`. Until
+then, it is the `-agent-image` argument of the Deployment
+`alpheus-system/alpheus-controller`.{{% /planned %}}
+
+A program that does this needs more than the Role at the top of this
+page: `get` on `pods/log`, and `create`, `get` and `delete` on `pods` for a
+replay in the cluster.
 
 ## What a run can reach
 
