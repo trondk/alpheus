@@ -32,6 +32,9 @@ shows.
 | `agent.image.digest` | `""` | Required unless `controller.allowTags` is set: the agent runs next to every component and is pinned by digest. |
 | `signalHub.enabled` | `true` | Without the hub, agents only poll the manifests: slower, but correct. |
 | `signalHub.port` | `7070` | |
+| `networkPolicy.enabled` | `true` | Each run gets a NetworkPolicy: its pods may reach DNS, the storage and the signal hub, and only the agent's metrics port can be reached. Needs a network plugin that enforces NetworkPolicies; flannel does not. |
+| `networkPolicy.storagePorts` | `[]` | The ports the storage is reached on. Empty means the port in each run's endpoint; set it when the storage is a Service whose port differs from its target port. |
+| `networkPolicy.storageTo` | `[]` | Where the storage is, as NetworkPolicy peers (`namespaceSelector`, `ipBlock`). Empty means any address on the storage ports. |
 | `crds.install` | `true` | Installs and upgrades the CRD. The CRD is kept when the release is uninstalled, since deleting it deletes every StreamRun. |
 
 The CRD and the ClusterRole in `files/` are copies of the generated files

@@ -209,6 +209,17 @@ func need(t *testing.T, name string) string {
 // by environment variables.
 func (e *env) create(name string) *v1alpha1.StreamRun {
 	e.t.Helper()
+	r := e.load(name)
+	if err := e.c.Create(e.t.Context(), r); err != nil {
+		e.t.Fatal(err)
+	}
+	return r
+}
+
+// load reads the StreamRun in testdata/<name>.yaml as create makes it,
+// without creating it.
+func (e *env) load(name string) *v1alpha1.StreamRun {
+	e.t.Helper()
 	data, err := os.ReadFile("testdata/" + name + ".yaml")
 	if err != nil {
 		e.t.Fatal(err)
@@ -221,9 +232,6 @@ func (e *env) create(name string) *v1alpha1.StreamRun {
 	r.Namespace = e.ns
 	if st := storage(e.t); r.Spec.Storage.Endpoint == garageTarget.Endpoint {
 		r.Spec.Storage.Endpoint, r.Spec.Storage.Region = st.Endpoint, st.Region
-	}
-	if err := e.c.Create(e.t.Context(), &r); err != nil {
-		e.t.Fatal(err)
 	}
 	return &r
 }

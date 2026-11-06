@@ -22,11 +22,14 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/go-logr/logr"
@@ -51,18 +54,55 @@ func main() {
 		storageCA   = flag.String("storage-ca-file", "", "CA bundle for storage endpoints")
 		metricsAddr = flag.String("metrics-listen", ":9090", "where /metrics is served (GO-51)")
 		probeAddr   = flag.String("health-listen", ":8081", "where /healthz and /readyz are served (GO-52)")
+		netPolicy   = flag.Bool("network-policy", true, "give each run a NetworkPolicy that lets its pods reach only DNS, the storage and the signal hub (SPEC 6.1)")
+		storagePort = flag.String("storage-ports", "", "comma-separated ports the run's pods may reach the storage on; empty means the port of each run's endpoint")
+		storageTo   = flag.String("storage-egress-to", "", "JSON list of NetworkPolicy peers where the storage is, such as [{\"namespaceSelector\":{...}}]; empty means any address")
 	)
 	flag.Parse()
 
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil)).With("component", "alpheus-controller")
 	ctrl.SetLogger(logr.FromSlogHandler(log.Handler()))
-	if err := run(*agentImage, *allowTags, *hubAddr, *hubAddress, *storageCA, *metricsAddr, *probeAddr); err != nil {
+	netOpts, err := networkOptions(*netPolicy, *hubAddr, *storagePort, *storageTo)
+	if err == nil {
+		err = run(*agentImage, *allowTags, *hubAddr, *hubAddress, *storageCA, *metricsAddr, *probeAddr, netOpts)
+	}
+	if err != nil {
 		log.Error("controller failed", "error", err.Error())
 		os.Exit(1)
 	}
 }
 
-func run(agentImage string, allowTags bool, hubAddr, hubAddress, storageCA, metricsAddr, probeAddr string) error {
+// networkOptions are the controller's options for the runs'
+// NetworkPolicies, from the flags.
+func networkOptions(enabled bool, hubAddr, ports, to string) (controller.Options, error) {
+	o := controller.Options{NoNetworkPolicy: !enabled}
+	if hubAddr != "" {
+		_, p, err := net.SplitHostPort(hubAddr)
+		n, perr := strconv.ParseUint(p, 10, 16)
+		if err != nil || perr != nil {
+			return o, fmt.Errorf("-hub-listen %q: bad port", hubAddr)
+		}
+		o.HubPort = int32(n)
+	}
+	for f := range strings.SplitSeq(ports, ",") {
+		if f = strings.TrimSpace(f); f == "" {
+			continue
+		}
+		n, err := strconv.ParseUint(f, 10, 16)
+		if err != nil || n == 0 {
+			return o, fmt.Errorf("-storage-ports: %q is not a port", f)
+		}
+		o.StoragePorts = append(o.StoragePorts, int32(n))
+	}
+	if strings.TrimSpace(to) != "" {
+		if err := json.Unmarshal([]byte(to), &o.StorageEgressTo); err != nil {
+			return o, fmt.Errorf("-storage-egress-to: %w", err)
+		}
+	}
+	return o, nil
+}
+
+func run(agentImage string, allowTags bool, hubAddr, hubAddress, storageCA, metricsAddr, probeAddr string, netOpts controller.Options) error {
 	if !strings.Contains(agentImage, "@sha256:") && !allowTags {
 		return fmt.Errorf("-agent-image %q must be pinned by digest (GO-24)", agentImage)
 	}
@@ -107,6 +147,11 @@ func run(agentImage string, allowTags bool, hubAddr, hubAddress, storageCA, metr
 			HubAddress:    hubAddress,
 			Namespace:     namespace,
 			StorageCAFile: storageCA,
+
+			NoNetworkPolicy: netOpts.NoNetworkPolicy,
+			HubPort:         netOpts.HubPort,
+			StoragePorts:    netOpts.StoragePorts,
+			StorageEgressTo: netOpts.StorageEgressTo,
 		},
 	}
 	if err := rc.SetupWithManager(mgr); err != nil {

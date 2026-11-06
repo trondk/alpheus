@@ -1,14 +1,16 @@
 # Alpheus — implementeringsspecifikation (Go)
 
-Status: udkast, 2026-11-02. Trin 1–8 i afsnit 15 er bygget: API-typer og
+Status: udkast, 2026-11-05. Trin 1–8 i afsnit 15 er bygget: API-typer og
 CRD, chunks og lager, komponent-SDK'et, agenten, controlleren og
 end-to-end-tests på Kubernetes (Talos på to VM'er) med fan-out, fan-in,
 replikaer, genstart, backpressure og kaos, og fejltests (testcase09 til
-testcase19: lageret går ned, controlleren dør, afviste nøgler, fuld
+testcase20: lageret går ned, controlleren dør, afviste nøgler, fuld
 bucket, for lille scratch-mappe, en komponent med en fejl, set gennem UI'et
 i klyngen, et run på to noder, en node, der forsvinder, et chart, der
-opgraderes midt i et run, og en dårlig chunk, der lægges til side med
-`failurePolicy: continue`). Fejlsøgning (GO-138 til GO-143) er bygget: årsagskoder, events,
+opgraderes midt i et run, en dårlig chunk, der lægges til side med
+`failurePolicy: continue`, og et run, der kun kan nå lageret og
+signal-hub'en). Hvert run har sin egen ServiceAccount og NetworkPolicy
+(6.1 trin 2). Fejlsøgning (GO-138 til GO-143) er bygget: årsagskoder, events,
 gemte logs, genkørsel af et fejlet forsøg, `alpheus ui` på maskinen og i
 klyngen, og metrics. Af trin 9 er CLI, Helm-chart,
 skabeloner til komponenter i Go og Python og en guide til at skrive
@@ -108,9 +110,10 @@ alpheus/
 ├── templates/             skabeloner til komponenter: component-go og component-python (findes)
 ├── examples/log-report/   eksemplet fra komponent-guiden, i Go og Python (findes)
 ├── examples/meter-etl/    flagskibet: ETL af store filer med elmåler-aflæsninger (findes)
+├── examples/api-client/   et program, der starter et run, venter og henter resultatet gennem Kubernetes-API'et og S3 alene (`docs/api.md`, findes)
 ├── test/
 │   ├── components/        testkomponenter: bench (findes), filter og sum i CSV (findes)
-│   ├── e2e/               testcase01 til testcase19 (findes)
+│   ├── e2e/               testcase01 til testcase20 (findes)
 │   └── internal/table/    CSV og decimaltal for testkomponenterne (findes)
 ├── vagrant/               testklyngen: Talos på to VM'er med Garage og Zot (findes)
 ├── docs/                  dokumentationen, som hjemmesiden henter ved byg (findes)
@@ -631,7 +634,7 @@ sdk.Progress(ctx, "4,2 mio. rækker behandlet")
 | Integration | controller mod API-server | envtest |
 | Integration | agent mod S3 | Garage i en container |
 | Driver | `builtin` | hub og klient i samme proces, og agenter gennem hub'en mod Garage |
-| E2E | testcase01 til testcase19 | Talos på to VM'er (control plane og worker) med Vagrant og libvirt (`vagrant/` i repo'ets rod) med Garage og Zot, og med MinIO i stedet for Garage (12.2) |
+| E2E | testcase01 til testcase20 | Talos på to VM'er (control plane og worker) med Vagrant og libvirt (`vagrant/` i repo'ets rod) med Garage og Zot, og med MinIO i stedet for Garage (12.2) |
 
 | ID | Niveau | Krav |
 |---|---|---|
@@ -962,6 +965,19 @@ behandlede, gemt i `skipped/`, lige så mange som `failedChunks`, chunk 5
 først, og `alpheus replay --skipped --with none` henter dem alle, tjekket
 mod deres SHA-256. Det er mønstret i `docs/dead-letters.md`.
 
+**testcase20: hvad et run kan nå (6.1 trin 2).** `source` prøver, før den
+skriver, at åbne en TCP-forbindelse til tre ting i klyngen, som et run
+ikke har noget at gøre med: Kubernetes-API'et, Garages admin-port og Zot,
+og tæller hver som `reached`, `blocked` eller `unresolved`. Runnets
+NetworkPolicy skal blokere alle tre, og runnet skal stadig lykkes, så
+lageret og signal-hub'en slipper igennem. Runnets ServiceAccount og
+NetworkPolicy skal være runnets egne, og ServiceAccount'en uden token.
+Derefter lægger testen en policy af sin egen, der lader `source` nå Zot,
+som `docs/isolation.md` viser, og et nyt run skal nå Zot og stadig ikke de
+to andre: policies lægges sammen, og blokeringerne i første run skyldtes
+policy'en. Testen kræver et netværk, der håndhæver NetworkPolicies;
+`hack/e2e.sh` springer den over på en klynge med flannel.
+
 **Agent-test: hvert commit-punkt (GO-74).** En pod, der slås ihjel,
 rammer ikke et bestemt sted mellem to skrivninger til S3. Derfor kører
 `TestCrashAtEveryWrite` to pipelines i hukommelsen: testcase03's form
@@ -981,7 +997,11 @@ GO-118).
 `alpheus-talos`, control plane, som også kører workloads (4 CPU'er, 8 GiB),
 og `alpheus-talos-worker` (2 CPU'er, 4 GiB); størrelserne kan sættes med
 miljøvariabler. Klyngen har de samme tjenester som MCPipe bruger, i de
-samme versioner: Garage (S3) og Zot (container-registry). Tjenesterne,
+samme versioner: Garage (S3) og Zot (container-registry). Netværket er
+Cilium i stedet for Talos' flannel, fordi flannel ikke håndhæver
+NetworkPolicies, og hvert run har en (6.1, testcase20). `talos.sh`
+installerer det med Helm, så snart API-serveren svarer, med chartet
+tjekket mod dets SHA-256. Tjenesterne,
 controlleren og UI'et er låst til control plane, så workeren kan forsvinde
 uden at tage dem med (testcase17). `talos.sh ip` viser control planes IP,
 som tjenesterne nås på, og `talos.sh ip worker` workerens.
@@ -1110,11 +1130,12 @@ for EU. GitHub er kun et spejl af kildekoden, der læses fra (hjemmesidens
    henter envtest-binærerne): pod-spec med agenten som native sidecar,
    genstart og `maxRestarts`, `failurePolicy: continue` med lukkede
    strømme og `failedChunks`, ugyldig graf, image uden digest, cancel,
-   finalizer, status fra lageret og mTLS til hub'en. CEL-reglerne for
+   finalizer, status fra lageret og mTLS til hub'en. ServiceAccount og
+   NetworkPolicy pr. run (6.1 trin 2) kom senere, testet med envtest og
+   testcase20. CEL-reglerne for
    `resultsTTL` og `ttlAfterFinished` sammenligner nu som varigheder,
    fordi Go-klienten skriver `168h` tilbage som `168h0m0s`. Ikke med
-   endnu: ServiceAccount og NetworkPolicy pr. run (6.1 trin 2),
-   webhook (GO-23), og at hub'en afviser ældre forsøg (GO-41), da
+   endnu: webhook (GO-23), og at hub'en afviser ældre forsøg (GO-41), da
    certifikaterne er pr. run og ikke pr. forsøg.
 6. E2E på Talos i Vagrant-VM'en med testcase01. *Færdig*: `make e2e`
    (`hack/e2e.sh`) bygger agent, controller og testkomponenterne som

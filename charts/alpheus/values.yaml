@@ -40,6 +40,23 @@ signalHub:
   enabled: true
   port: 7070
 
+networkPolicy:
+  # Each run gets a NetworkPolicy: its pods may reach DNS, the storage and
+  # the signal hub, and be reached only on the agent's metrics port. It
+  # needs a network plugin that enforces NetworkPolicies (Cilium, Calico);
+  # flannel ignores them. A step that needs more network gets a policy of
+  # its own (docs/isolation.md).
+  enabled: true
+  # The ports the storage is reached on. Empty means the port in each
+  # run's endpoint, which is right unless the storage is a Service whose
+  # port differs from its target port.
+  storagePorts: []
+  # Where the storage is, as NetworkPolicy peers, such as
+  #   - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: storage}}
+  #   - ipBlock: {cidr: 10.0.20.0/24}
+  # Empty means any address, on the storage ports.
+  storageTo: []
+
 ui:
   # alpheus ui as a Deployment, a page the team shares (GO-143). Reach it
   # with kubectl port-forward -n <release namespace> svc/alpheus-ui 7171,

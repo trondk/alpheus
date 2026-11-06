@@ -97,4 +97,14 @@ reject "no hub Service" "name: alpheus-signal-hub" "$out"
 reject "no hub address" "-hub-address" "$out"
 reject "no CRD" "kind: CustomResourceDefinition" "$out"
 
+check "a NetworkPolicy per run by default" "-network-policy=true" "$(render "${PINNED[@]}")"
+out=$(render "${PINNED[@]}" --set networkPolicy.enabled=false)
+check "NetworkPolicy turned off" "-network-policy=false" "$out"
+reject "no storage ports by default" "-storage-ports" "$out"
+out=$(render "${PINNED[@]}" --set 'networkPolicy.storagePorts={3900,9000}' \
+  --set-json 'networkPolicy.storageTo=[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"storage"}}}]')
+check "storage ports" "- -storage-ports=3900,9000" "$out"
+check "where the storage is" '- "-storage-egress-to=[{\"namespaceSelector\":{\"matchLabels\":{\"kubernetes.io/metadata.name\":\"storage\"}}}]"' "$out"
+check "the controller may create NetworkPolicies" "networkpolicies" "$out"
+
 exit $FAILED

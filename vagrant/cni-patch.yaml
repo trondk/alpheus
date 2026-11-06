@@ -1,0 +1,6 @@
+# No flannel: it ignores NetworkPolicies, and every run has one (SPEC 6.1).
+# talos.sh installs Cilium instead, before it waits for the nodes to be
+# ready.
+apiVersion: v1alpha1
+kind: KubeFlannelCNIConfig
+$patch: delete

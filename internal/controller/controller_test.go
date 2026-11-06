@@ -44,11 +44,13 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"google.golang.org/grpc/credentials"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/util/retry"
@@ -169,6 +171,7 @@ func runTests(m *testing.M, cfg *rest.Config) (int, error) {
 		Options: Options{
 			AgentImage: agentImage,
 			HubAddress: "alpheus-signal-hub.alpheus-system.svc:7070",
+			HubPort:    7070,
 			Namespace:  "alpheus-system",
 			NewStore: func(_ context.Context, r *v1alpha1.StreamRun) (store.Store, error) {
 				if r.Spec.Storage.Bucket == refusedBucket {
@@ -1155,4 +1158,147 @@ func TestScheduling(t *testing.T) {
 	if g := waitPod(t, ns, "sales-generate-0-1"); g.Spec.NodeSelector != nil || g.Spec.Affinity != nil {
 		t.Errorf("a step without them has %v %v", g.Spec.NodeSelector, g.Spec.Affinity)
 	}
+}
+
+// A run gets a ServiceAccount with no token and a NetworkPolicy, both its
+// own, and its pods use them (SPEC 6.1, step 2). A policy that is changed
+// is put right, and one that is deleted comes back.
+func TestRunObjects(t *testing.T) {
+	ns := namespace(t)
+	r := create(t, testcase03(ns, 1))
+	name := RunObjectName("sales")
+	uid := get(t, r).UID
+
+	var sa corev1.ServiceAccount
+	eventually(t, "ServiceAccount", func() string {
+		if err := k8s.Get(t.Context(), client.ObjectKey{Namespace: ns, Name: name}, &sa); err != nil {
+			return err.Error()
+		}
+		return ""
+	})
+	if sa.AutomountServiceAccountToken == nil || *sa.AutomountServiceAccountToken || !ownedBy(sa.OwnerReferences, uid) {
+		t.Errorf("ServiceAccount %+v", sa)
+	}
+	p := waitPod(t, ns, "sales-filter-0-1")
+	if p.Spec.ServiceAccountName != name || p.Labels[LabelNetwork] != "sales" {
+		t.Errorf("pod uses ServiceAccount %q with network label %q", p.Spec.ServiceAccountName, p.Labels[LabelNetwork])
+	}
+
+	key := client.ObjectKey{Namespace: ns, Name: name}
+	var np networkingv1.NetworkPolicy
+	eventually(t, "NetworkPolicy", func() string {
+		if err := k8s.Get(t.Context(), key, &np); err != nil {
+			return err.Error()
+		}
+		return ""
+	})
+	if !ownedBy(np.OwnerReferences, uid) || np.Spec.PodSelector.MatchLabels[LabelNetwork] != "sales" {
+		t.Errorf("NetworkPolicy %+v", np.ObjectMeta)
+	}
+	if got := egressPorts(np.Spec); got != "53/UDP 53/TCP 3900/TCP 7070/TCP" {
+		t.Errorf("egress ports %s, want DNS, the endpoint's port and the hub's", got)
+	}
+
+	np.Spec.Egress = nil
+	if err := k8s.Update(t.Context(), &np); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "the policy put right", func() string {
+		var got networkingv1.NetworkPolicy
+		if err := k8s.Get(t.Context(), key, &got); err != nil {
+			return err.Error()
+		}
+		if len(got.Spec.Egress) != 3 {
+			return fmt.Sprintf("%d egress rules", len(got.Spec.Egress))
+		}
+		return ""
+	})
+	if err := k8s.Delete(t.Context(), &np); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "the policy back", func() string {
+		var got networkingv1.NetworkPolicy
+		if err := k8s.Get(t.Context(), key, &got); err != nil {
+			return err.Error()
+		}
+		if got.UID == np.UID {
+			return "not deleted yet"
+		}
+		return ""
+	})
+}
+
+// A ServiceAccount with the run's name that is not the run's own stops
+// the run before any pod starts.
+func TestRunObjectsNotOurs(t *testing.T) {
+	ns := namespace(t)
+	sa := &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: RunObjectName("sales")}}
+	if err := k8s.Create(t.Context(), sa); err != nil {
+		t.Fatal(err)
+	}
+	r := waitPhase(t, create(t, testcase03(ns, 1)), v1alpha1.RunFailed)
+	if r.Status.Reason != v1alpha1.ReasonInvalidSpec || !strings.Contains(r.Status.Message, "ServiceAccount alpheus-run-sales exists and does not belong to the run") {
+		t.Errorf("%s: %s", r.Status.Reason, r.Status.Message)
+	}
+	if n := len(pods(t, ns)); n != 0 {
+		t.Errorf("%d pods", n)
+	}
+}
+
+// The policy's storage rule follows the endpoint, or the ports and peers
+// the installation gives; without a hub there is no rule for it, and the
+// agent's metrics port is the only way in.
+func TestNetworkPolicy(t *testing.T) {
+	r := testcase03("ns", 1)
+	for _, c := range []struct {
+		endpoint string
+		opts     Options
+		want     string
+	}{
+		{"http://garage:3900", Options{HubAddress: "hub:7070", HubPort: 7070, Namespace: "alpheus-system"}, "53/UDP 53/TCP 3900/TCP 7070/TCP"},
+		{"https://s3.example", Options{}, "53/UDP 53/TCP 443/TCP"},
+		{"http://s3.example", Options{}, "53/UDP 53/TCP 80/TCP"},
+		{"http://minio:80", Options{StoragePorts: []int32{9000}}, "53/UDP 53/TCP 9000/TCP"},
+	} {
+		r.Spec.Storage.Endpoint = c.endpoint
+		rc := &Reconciler{Options: c.opts}
+		np := rc.networkPolicy(r)
+		if got := egressPorts(np.Spec); got != c.want {
+			t.Errorf("%s %+v: %s, want %s", c.endpoint, c.opts, got, c.want)
+		}
+		if len(np.Spec.Ingress) != 1 || len(np.Spec.Ingress[0].From) != 0 || np.Spec.Ingress[0].Ports[0].Port.IntVal != AgentMetricsPort {
+			t.Errorf("ingress %+v", np.Spec.Ingress)
+		}
+		if len(np.Spec.PolicyTypes) != 2 {
+			t.Errorf("policy types %v", np.Spec.PolicyTypes)
+		}
+	}
+	peers := []networkingv1.NetworkPolicyPeer{{IPBlock: &networkingv1.IPBlock{CIDR: "10.0.20.0/24"}}}
+	np := (&Reconciler{Options: Options{StorageEgressTo: peers}}).networkPolicy(r)
+	if to := np.Spec.Egress[1].To; len(to) != 1 || to[0].IPBlock.CIDR != "10.0.20.0/24" {
+		t.Errorf("storage peers %+v", to)
+	}
+	if to := np.Spec.Egress[0].To; len(to) != 0 {
+		t.Errorf("DNS peers %+v", to)
+	}
+}
+
+func ownedBy(refs []metav1.OwnerReference, uid types.UID) bool {
+	for _, o := range refs {
+		if o.UID == uid && o.Controller != nil && *o.Controller {
+			return true
+		}
+	}
+	return false
+}
+
+// egressPorts lists a policy's egress ports in order, such as "53/UDP".
+func egressPorts(s networkingv1.NetworkPolicySpec) string {
+	var out []string
+	for _, e := range s.Egress {
+		for _, p := range e.Ports {
+			out = append(out, fmt.Sprintf("%s/%s", p.Port.String(), *p.Protocol))
+		}
+	}
+	return strings.Join(out, " ")
 }

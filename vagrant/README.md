@@ -16,7 +16,7 @@ middle of a run and on again.
 
 1. Vagrant with the libvirt plugin. On Fedora: `vagrant plugin install vagrant-libvirt`
 2. libvirt/KVM, with your user in the `libvirt` group
-3. `talosctl` (same minor version as `TALOS_VERSION`) and `kubectl`
+3. `talosctl` (same minor version as `TALOS_VERSION`), `kubectl` and `helm`
 4. Run `deploy.sh` in this folder
 
 ## Usage
@@ -33,7 +33,7 @@ source ./credentials.sh     # only set KUBECONFIG and TALOSCONFIG in your shell
 the Talos ISO to `.cache/`, boots both VMs from it, and runs
 `talos.sh bootstrap` once both are up. That generates the Talos config in
 `_out/`, installs Talos to both disks, bootstraps Kubernetes on the control
-plane, joins the worker and writes the kubeconfig. At the end
+plane, joins the worker, writes the kubeconfig and installs the network. At the end
 `credentials.sh` prints where the kubeconfig and talosconfig are and how
 to use them. Running `deploy.sh` again on a running cluster only checks
 health and refreshes the kubeconfig.
@@ -44,6 +44,14 @@ the reports, the benchmarks and the logs, so the next `make e2e` serves
 the earlier reports again on the new cluster. `destroy.sh --clean` removes
 those too, so the next deploy starts with no history. It keeps
 `_out/release/`, `_out/vulndb/` and the ISO in `.cache/`.
+
+The network is Cilium 1.20.3, not Talos' default flannel
+(`cni-patch.yaml`), because flannel ignores NetworkPolicies and every run
+gets one (SPEC 6.1). `talos.sh` downloads the chart to `.cache/`, checks
+its SHA-256 and installs it with `services/cilium/values.yaml` as soon as
+the API server answers; until then the nodes are not ready. A cluster
+from before this change still has flannel, which does not enforce the
+policies; `destroy.sh` and `deploy.sh` give it Cilium.
 
 The VMs get their IPs by DHCP on the Vagrant management network.
 `./talos.sh ip` prints the control plane's, which the services below are

@@ -1,0 +1,39 @@
+# testcase20 (SPEC 12.1, 6.1): the run's NetworkPolicy. Before it writes,
+# source tries to reach three things in the cluster that a run has no
+# business with: the Kubernetes API, Garage's admin port and Zot. The
+# policy lets the pods reach only DNS, the storage's S3 port and the signal
+# hub, so all three must be blocked, and the run must still succeed. The
+# test then adds a policy of its own that lets source reach Zot, and runs
+# it again under another name: Zot must now be reached, the other two not.
+# hack/e2e.sh sets the image, pinned by digest, and the test creates the
+# Secret alpheus-s3 in its namespace. The sizes are small; the test is
+# about the network.
+apiVersion: alpheus-dev.org/v1alpha1
+kind: StreamRun
+metadata:
+  name: testcase20
+spec:
+  steps:
+    - name: source
+      image: ${BENCH_IMAGE}
+      settings:
+        role: source
+        chunks: 8
+        size: 65536
+        seed: 20
+        dialTimeout: 3000
+        dial:
+          - kubernetes.default.svc.cluster.local:443
+          - garage-admin.storage.svc.cluster.local:3903
+          - zot.registry.svc.cluster.local:5000
+    - name: sink
+      image: ${BENCH_IMAGE}
+      settings: {role: sink, chunks: 8, size: 65536, seed: 20}
+  edges:
+    - {from: source, to: sink}
+  chunks: {maxBytes: 1Gi, maxUnacked: 4}
+  storage:
+    endpoint: http://garage.storage.svc.cluster.local:3900
+    bucket: alpheus-data
+    region: garage
+    secretRef: alpheus-s3

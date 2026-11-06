@@ -18,6 +18,11 @@ CLUSTER_NAME="alpheus"
 OUT="$HERE/_out"
 LIBVIRT_URI="qemu:///system"
 REGISTRY_HOST="registry.alpheus.test:30500"
+# Cilium enforces the runs' NetworkPolicies; the chart is checked against
+# the SHA-256 in helm.cilium.io's index.
+CILIUM_VERSION="1.20.3"
+CILIUM_SHA256="0805a5273118c436c9772bb9566d87ec558d8b25cc2ce5dc32918ecdd36f2c7c"
+CILIUM_CHART="$HERE/.cache/cilium-$CILIUM_VERSION.tgz"
 
 export TALOSCONFIG="$OUT/talosconfig"
 
@@ -63,6 +68,23 @@ vm_ip() {  # [vm]
 
 has_ip() { [[ -n $(vm_ip "$1") ]]; }
 
+# The cluster has no network until Cilium runs (cni-patch.yaml), so the
+# nodes are not ready and talosctl health would wait for ever. Cilium is
+# installed as soon as the API server answers.
+install_cilium() {
+  if [[ ! -s $CILIUM_CHART ]]; then
+    log "downloading the Cilium $CILIUM_VERSION chart"
+    mkdir -p "$(dirname "$CILIUM_CHART")"
+    curl -fsSL -o "$CILIUM_CHART.part" "https://helm.cilium.io/cilium-$CILIUM_VERSION.tgz"
+    mv "$CILIUM_CHART.part" "$CILIUM_CHART"
+  fi
+  echo "$CILIUM_SHA256  $CILIUM_CHART" | sha256sum -c --quiet - ||
+    { rm -f "$CILIUM_CHART"; die "the Cilium chart does not match its SHA-256"; }
+  log "installing Cilium $CILIUM_VERSION"
+  KUBECONFIG="$OUT/kubeconfig" helm upgrade --install cilium "$CILIUM_CHART" \
+    --namespace kube-system --values "$HERE/services/cilium/values.yaml" --wait --timeout 10m >/dev/null
+}
+
 # Bootstrap is refused until Talos has installed to disk and started etcd,
 # so this is retried. A cluster that is already bootstrapped counts as done.
 try_bootstrap() {
@@ -105,7 +127,7 @@ EOF
 }
 
 bootstrap() {
-  need talosctl kubectl virsh openssl flock
+  need talosctl kubectl virsh openssl flock helm curl sha256sum
 
   # One bootstrap at a time: two would each generate a config with new
   # secrets, and a node installed with one could not be reached with the
@@ -135,6 +157,7 @@ bootstrap() {
       --config-patch-control-plane @"$HERE/patch.yaml" \
       --config-patch-worker @"$HERE/worker-patch.yaml" \
       --config-patch @"$OUT/registry-patch.yaml" \
+      --config-patch @"$HERE/cni-patch.yaml" \
       --additional-sans "$ip" \
       --output "$OUT" --force
 
@@ -155,9 +178,13 @@ bootstrap() {
     wait_for 900 "etcd bootstrap" try_bootstrap
   fi
 
+  talosctl kubeconfig "$OUT/kubeconfig" --force --merge=false
+  log "waiting for the API server"
+  wait_for 600 "the API server" kubectl --kubeconfig "$OUT/kubeconfig" get --raw /readyz
+  install_cilium
+
   log "waiting for Kubernetes on both nodes"
   talosctl health --wait-timeout 10m --control-plane-nodes "$ip" --worker-nodes "$wip"
-  talosctl kubeconfig "$OUT/kubeconfig" --force --merge=false
 
   log "cluster ready"
   KUBECONFIG="$OUT/kubeconfig" kubectl get nodes -o wide >&2

@@ -175,6 +175,7 @@ func (rc *Reconciler) pod(r *v1alpha1.StreamRun, g *graph, s *v1alpha1.Step, rep
 			Namespace: r.Namespace,
 			Labels: map[string]string{
 				LabelRun:     r.Name,
+				LabelNetwork: r.Name,
 				LabelStep:    s.Name,
 				LabelReplica: strconv.Itoa(replica),
 				LabelAttempt: strconv.Itoa(int(attempt)),
@@ -189,6 +190,7 @@ func (rc *Reconciler) pod(r *v1alpha1.StreamRun, g *graph, s *v1alpha1.Step, rep
 		},
 		Spec: corev1.PodSpec{
 			RestartPolicy:                corev1.RestartPolicyNever,
+			ServiceAccountName:           RunObjectName(r.Name),
 			AutomountServiceAccountToken: ptr.To(false),
 			EnableServiceLinks:           ptr.To(false),
 			SecurityContext: &corev1.PodSecurityContext{
@@ -280,13 +282,14 @@ func ReplayPod(r *v1alpha1.StreamRun, f *replay.Failure, prefix, agentImage, nam
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: name, Namespace: r.Namespace,
-			Labels: map[string]string{LabelReplay: r.Name, LabelStep: f.Step, LabelReplica: strconv.Itoa(f.Replica)},
+			Labels: map[string]string{LabelReplay: r.Name, LabelNetwork: r.Name, LabelStep: f.Step, LabelReplica: strconv.Itoa(f.Replica)},
 			OwnerReferences: []metav1.OwnerReference{{
 				APIVersion: v1alpha1.GroupVersion.String(), Kind: "StreamRun", Name: r.Name, UID: r.UID,
 			}},
 		},
 		Spec: corev1.PodSpec{
 			RestartPolicy:                corev1.RestartPolicyNever,
+			ServiceAccountName:           RunObjectName(r.Name),
 			AutomountServiceAccountToken: ptr.To(false),
 			EnableServiceLinks:           ptr.To(false),
 			SecurityContext: &corev1.PodSecurityContext{

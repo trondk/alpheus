@@ -52,6 +52,13 @@ spec:
             {{- if .Values.controller.allowTags }}
             - -allow-tags
             {{- end }}
+            - -network-policy={{ .Values.networkPolicy.enabled }}
+            {{- with .Values.networkPolicy.storagePorts }}
+            - -storage-ports={{ join "," . }}
+            {{- end }}
+            {{- with .Values.networkPolicy.storageTo }}
+            - {{ printf "-storage-egress-to=%s" (toJson .) | quote }}
+            {{- end }}
           env:
             - name: POD_NAME
               valueFrom: {fieldRef: {fieldPath: metadata.name}}

@@ -40,6 +40,11 @@ limitations under the License.
 //     fails if a chunk is wrong, comes twice on a port, comes on a port
 //     not in ports, should have been skipped, or is missing.
 //
+// With dial, a list of host:port, every role first tries to open a TCP
+// connection to each, waiting at most dialTimeout milliseconds (default
+// 3000), and counts each in the unit reached, blocked or unresolved, as
+// testcase20 does to see what the run's NetworkPolicy lets through.
+//
 // Settings: {"role": "source", "chunks": 64, "size": 4194304, "seed": 1}.
 // sink needs the same chunks, size and seed as source, and takes ports,
 // which defaults to ["default"], and skip; pass takes drop. Both take
@@ -58,6 +63,7 @@ import (
 	"io"
 	"log/slog"
 	"math/rand/v2"
+	"net"
 	"os"
 	"slices"
 	"time"
@@ -86,6 +92,10 @@ type settings struct {
 	// Fail makes pass fail on the chunk with this number in its header;
 	// 0 means never.
 	Fail uint64 `json:"fail"`
+	// Dial are addresses to try before the role starts, and DialTimeout
+	// how long to wait for each, in milliseconds.
+	Dial        []string `json:"dial"`
+	DialTimeout int      `json:"dialTimeout"`
 }
 
 func main() {
@@ -100,9 +110,10 @@ func handle(ctx context.Context, in sdk.Input, out sdk.Output) error {
 	if s.Role != "pass" && (s.Chunks < 1 || s.Size < headerSize) {
 		return fmt.Errorf("%w: %s needs chunks of at least 1 and size of at least %d bytes", sdk.ErrUsage, s.Role, headerSize)
 	}
-	if s.Drop < 0 || s.Skip < 0 || s.Delay < 0 {
-		return fmt.Errorf("%w: drop, skip and delay must not be negative", sdk.ErrUsage)
+	if s.Drop < 0 || s.Skip < 0 || s.Delay < 0 || s.DialTimeout < 0 {
+		return fmt.Errorf("%w: drop, skip, delay and dialTimeout must not be negative", sdk.ErrUsage)
 	}
+	dial(ctx, s.Dial, s.DialTimeout)
 	switch s.Role {
 	case "source":
 		return source(ctx, s, out)
@@ -112,6 +123,40 @@ func handle(ctx context.Context, in sdk.Input, out sdk.Output) error {
 		return sink(ctx, s, in)
 	}
 	return fmt.Errorf("%w: role must be source, pass or sink, not %q", sdk.ErrUsage, s.Role)
+}
+
+// dial tries each address and counts what came of it. A name that does
+// not resolve is not counted as blocked: the policy lets DNS through, so
+// it would be a wrong address, not the policy.
+func dial(ctx context.Context, addrs []string, timeoutMS int) {
+	timeout := 3 * time.Second
+	if timeoutMS > 0 {
+		timeout = time.Duration(timeoutMS) * time.Millisecond
+	}
+	for _, a := range addrs {
+		host, port, err := net.SplitHostPort(a)
+		if err != nil {
+			slog.WarnContext(ctx, "not an address", "addr", a, "error", err.Error())
+			sdk.Count(ctx, "unresolved", 1)
+			continue
+		}
+		ips, err := net.DefaultResolver.LookupHost(ctx, host)
+		if err != nil || len(ips) == 0 {
+			slog.WarnContext(ctx, "not resolved", "addr", a, "error", fmt.Sprint(err))
+			sdk.Count(ctx, "unresolved", 1)
+			continue
+		}
+		d := net.Dialer{Timeout: timeout}
+		c, err := d.DialContext(ctx, "tcp", net.JoinHostPort(ips[0], port))
+		if err != nil {
+			slog.InfoContext(ctx, "blocked", "addr", a, "ip", ips[0], "error", err.Error())
+			sdk.Count(ctx, "blocked", 1)
+			continue
+		}
+		c.Close()
+		slog.InfoContext(ctx, "reached", "addr", a, "ip", ips[0])
+		sdk.Count(ctx, "reached", 1)
+	}
 }
 
 // payload returns chunk n's bytes after the header.

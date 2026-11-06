@@ -22,6 +22,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
@@ -31,6 +32,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -82,6 +84,19 @@ type Options struct {
 	NewStore func(ctx context.Context, r *v1alpha1.StreamRun) (store.Store, error)
 	// StorageCAFile is a CA bundle for storage endpoints, or empty.
 	StorageCAFile string
+	// NoNetworkPolicy turns off the run's NetworkPolicy (SPEC 6.1, step
+	// 2), for a cluster whose network does not enforce them or that has
+	// its own.
+	NoNetworkPolicy bool
+	// HubPort is the port the signal hub listens on, which the run's
+	// NetworkPolicy lets agents reach.
+	HubPort int32
+	// StoragePorts are the ports the run's pods may reach the storage on;
+	// empty means the port of the run's endpoint.
+	StoragePorts []int32
+	// StorageEgressTo narrows where the storage is, such as a namespace or
+	// an address range; empty means any address.
+	StorageEgressTo []networkingv1.NetworkPolicyPeer
 	// Resync is how often a running run's status is read again from
 	// storage; default 2s, which also keeps status patches to at most one
 	// a second (GO-22).
@@ -116,8 +131,11 @@ type Reconciler struct {
 // +kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=pods/log,verbs=get
 // +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups="",resources=serviceaccounts,verbs=get;list;watch;create
+// +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update
 
-// SetupWithManager registers the reconciler; it watches the pods it owns.
+// SetupWithManager registers the reconciler; it watches the pods,
+// ServiceAccounts and NetworkPolicies it owns.
 func (rc *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 	if rc.Options.Resync == 0 {
 		rc.Options.Resync = 2 * time.Second
@@ -125,6 +143,8 @@ func (rc *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.StreamRun{}).
 		Owns(&corev1.Pod{}).
+		Owns(&corev1.ServiceAccount{}).
+		Owns(&networkingv1.NetworkPolicy{}).
 		Named("streamrun").
 		Complete(rc)
 }
@@ -182,6 +202,17 @@ func Terminal(p v1alpha1.RunPhase) bool {
 
 func (rc *Reconciler) reconcile(ctx context.Context, r *v1alpha1.StreamRun) (ctrl.Result, error) {
 	st := &r.Status
+	// A finished run keeps them too: a replay pod uses them (GO-141).
+	if err := rc.ensureRunObjects(ctx, r); err != nil {
+		var no *errNotOurs
+		if !errors.As(err, &no) {
+			return ctrl.Result{}, err
+		}
+		if !terminal(st.Phase) {
+			rc.fail(ctx, r, v1alpha1.ReasonInvalidSpec, err.Error())
+			return ctrl.Result{}, nil
+		}
+	}
 	if terminal(st.Phase) {
 		return rc.afterFinish(ctx, r)
 	}

@@ -1,0 +1,17 @@
+# Cilium as the cluster's network, so NetworkPolicies are enforced. The
+# settings Talos needs (its documentation, "Deploy Cilium CNI"): kube-proxy
+# stays, IP addresses come from the node's pod CIDR, Talos mounts cgroup2
+# itself, and the agent may not load kernel modules (no SYS_MODULE).
+ipam:
+  mode: kubernetes
+kubeProxyReplacement: false
+securityContext:
+  capabilities:
+    ciliumAgent: [CHOWN, KILL, NET_ADMIN, NET_RAW, IPC_LOCK, SYS_ADMIN, SYS_RESOURCE, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
+    cleanCiliumState: [NET_ADMIN, SYS_ADMIN, SYS_RESOURCE]
+cgroup:
+  autoMount:
+    enabled: false
+  hostRoot: /sys/fs/cgroup
+operator:
+  replicas: 1

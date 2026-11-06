@@ -40,7 +40,9 @@ $ helm upgrade --install alpheus charts/alpheus \
 ```
 
 The chart installs the `StreamRun` CRD, the controller and its signal hub.
-The agent's image must be pinned by digest. `make e2e` does the same before
+The agent's image must be pinned by digest. Each run gets a NetworkPolicy,
+which needs a network plugin that enforces them, such as Cilium (see
+[What a run can reach](/docs/isolation/)). `make e2e` does the same before
 it runs the tests.
 
 Then build the CLI and check that it reaches the cluster:
@@ -153,3 +155,5 @@ that: it finds results whose TTL has run out and deletes them.
 - [Writing components](/docs/components/) explains what happened above,
   step by step, and how to write your own steps in Go or Python.
 - The [CLI reference](/docs/cli/) lists every command and flag.
+- [Using Alpheus from a program](/docs/api/) does the same as this page
+  from your own code, through the Kubernetes API and S3.

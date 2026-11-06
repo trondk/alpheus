@@ -83,6 +83,14 @@ fi
 export ALPHEUS_E2E_S3_RESULTS_ACCESS_KEY ALPHEUS_E2E_S3_RESULTS_SECRET_KEY \
   ALPHEUS_E2E_S3_ACCESS_KEY ALPHEUS_E2E_S3_SECRET_KEY ALPHEUS_E2E_S3_ENDPOINT ALPHEUS_E2E_S3_CA_FILE
 
+# testcase20 needs a network that enforces NetworkPolicies. A cluster
+# built before vagrant/ installed Cilium still has flannel, which ignores
+# them; rebuild it with vagrant/destroy.sh and vagrant/deploy.sh.
+if kubectl -n kube-system get daemonset kube-flannel >/dev/null 2>&1; then
+  echo "the cluster has flannel, which ignores NetworkPolicies: testcase20 is skipped" >&2
+  export ALPHEUS_E2E_NETWORK_POLICY=0
+fi
+
 # The output is kept for the report (hack/report.sh), which is built and
 # served in the cluster when the tests are done, unless REPORT=0.
 mkdir -p "$OUT/e2e"
