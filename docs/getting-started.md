@@ -2,12 +2,13 @@
 title: Getting started
 description: Install Alpheus, run the log-report example, follow it and find its result.
 weight: 5
-lastmod: 2026-10-31
+lastmod: 2026-11-06
 ---
 
 This page installs Alpheus from source, runs the example flow from
 [Writing components](/docs/components/), and shows how to follow it and
-find its result.
+find its result. [How a run runs on Kubernetes](/docs/kubernetes/)
+explains what you will see in the cluster.
 
 {{% planned %}}Nothing is released yet, so there are no images to pull and
 no published chart. This page builds everything from the repository and

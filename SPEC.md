@@ -228,6 +228,13 @@ en strøm med manifest, ligesom en kant, men under
 | GO-99 | BØR | `alpheus results gc` finder resultater, hvis TTL er udløbet, regnet fra `finishedAt` i `run.json`, og sletter dem efter bekræftelse (eller med `--yes`). Resultater, hvis StreamRun-objektet ikke længere findes, vises, men slettes kun med `--orphans`, da resultater er beregnet til at overleve objektet (GO-78). Resultater med `resultsTTL` 0 og uden `run.json` slettes aldrig. Med `--dry-run` vises kun, hvad der ville blive slettet. |
 | GO-79 | SKAL | `status.results` har én post pr. resultat med S3-endpoint, bucket, region, prefix, navnet på Secret'en med nøglerne til at læse det og antal chunks, bytes og komponentens committede tællere (10.1). Det er det, der skal til for at hente resultatet, og `alpheus get` viser det. |
 
+Endpointet i `status.results` er lagerets adresse inde i klyngen. Den,
+der driver klyngen, kan sætte adressen udefra som annotationen
+`alpheus-dev.org/external-endpoint` på storage-Secret'en, og en CA til den
+som `alpheus-dev.org/external-ca` (PEM), så CLI'en når lageret uden flag
+(GO-156). Controller og agenter bruger dem ikke. Testklyngens
+`vagrant/talos.sh` sætter dem, når Garage installeres.
+
 Uden `resultsBucket` er Secret'en i `status.results` den samme som
 agenternes, med adgang til hele bucketen. En læser, der kun skal kunne
 læse resultaterne, får det med `resultsBucket` og `resultsSecretRef`
@@ -271,11 +278,25 @@ idempotent: samme input giver samme ønskede tilstand.
 - Pod'en har `restartPolicy: Never`. Genstart af et fejlet trin
   håndteres af controlleren, så antallet kan tælles og begrænses
   (`spec.steps[].maxRestarts`, standard 3).
+- Controlleren opretter pod'erne selv, én pr. replika og forsøg
+  (`<run>-<trin>-<replika>-<forsøg>`), ikke gennem Jobs eller
+  StatefulSets. De starter selv en ny pod, når en fejler, også mens den
+  gamle måske stadig kører på en node uden forbindelse, og det ville give
+  to skrivere (GO-67). Med pod'er alene bestemmer controlleren, hvornår et
+  nyt forsøg starter, og den kan give hvert forsøg sit nummer, sit
+  certifikat og sin fencing-epoke (GO-41, GO-68), gemme loggen før pod'en
+  slettes (GO-140) og lade én replika give op uden resten (GO-97).
 - Kun agenten får S3- og signal-legitimation. Komponenten får kun de
   Secrets, der står i `envFrom`.
 - securityContext på begge containere: `runAsNonRoot`,
   `readOnlyRootFilesystem`, `allowPrivilegeEscalation: false`, alle
   capabilities fjernet, seccomp `RuntimeDefault`.
+- Komponenten får en skrivbar `/tmp`, en mappe i samme `emptyDir`
+  (`subPath: tmp`), og `TMPDIR` og `HOME` peger på den. Root-filsystemet
+  er read-only, og mange biblioteker skriver midlertidige filer, fx
+  Pythons `tempfile`, sortering af store filer og JVM'en. Den tæller med
+  i `scratch`. Replay-pod'en og `alpheus replay` med podman eller docker
+  giver samme `/tmp`, og podman kører med `--read-only` som pod'en.
 
 | ID | Niveau | Krav |
 |---|---|---|
@@ -431,6 +452,9 @@ Manifestformat (version 1):
 | GO-141 | SKAL | Et fejlet forsøg gemmes, så det kan køres igen for sig selv: `results/<run>/<uid>/_failures/<trin>/<replika>/attempt-<n>/failure.json` med årsag, besked, image (låst med digest), settings og input-chunks, og kopier af de input-chunks, forsøget havde fået og ikke var færdigt med, under `input/`: de første `maxOpen` i hver strøm, højst 16. Lageret kopierer dem selv (server-side copy). Fejl i lageret gemmer intet. `alpheus replay` henter dem, kontrollerer hver mod sin SHA-256 og kører samme image på dem i local mode med podman eller docker, som replika 0 af 1, uden netværk og med `ALPHEUS_LOG_LEVEL=debug`; `--with none` henter kun. SDK'erne sætter log-niveauet fra `ALPHEUS_LOG_LEVEL`, og Go-SDK'et tager flere porte i `ALPHEUS_LOCAL_INPUTS`. |
 | GO-142 | SKAL | `alpheus ui` serverer en side på brugerens maskine (standard `127.0.0.1:7171`) med brugerens kubeconfig, uden noget installeret i klyngen: runs, ét run med flow, replikaer, resultater og events, og én replika med tællere, fejllog, logs (live eller gemte) og fejlede forsøg med en knap, der kører `alpheus replay`. Den opdateres live med server-sent events. Den er skrivebeskyttet, bortset fra replay, svarer kun på forespørgsler til localhost (mod DNS rebinding), og replay kræver et token, som kun siden har. Siden er indlejret i CLI'en, i Go og ren HTML, CSS og JavaScript uden afhængigheder. |
 | GO-143 | SKAL | Chartet kan køre `alpheus ui --in-cluster` som en Deployment (`ui.enabled`, standard fra), med CLI'ens binær i sit eget image, bygget, signeret og udgivet med de andre. Den viser runs og events i alle namespaces; logs, fejllog og fejlede forsøg kun i `ui.namespaces`, hvor dens service account må læse Secrets og pod-logs (`["*"]` er alle). Replay-knappen kører `alpheus replay --with cluster`: en pod i runnets namespace, ejet af runnet, hvor agentens image (`-fetch-failure`) henter og kontrollerer chunks, og trinnets image kører på dem i local mode med trinnets ressourcer, `envFrom` og scratch-størrelse; podden slettes bagefter. `ui.replay: false` slår knappen fra og fjerner retten til at oprette pods. Siden svarer kun på forespørgsler til localhost (gennem `kubectl port-forward`), Ingress'ens vært og værterne i `ui.hosts` (`--host`), og den har ingen login: en Ingress eller en NodePort (`ui.service`) skal have en proxy, der autentificerer, foran, uden for testklyngen. I testklyngen kører UI'et altid efter `make deploy` eller `make e2e` på VM'ens port 30717. Siden starter lyst og har et mørkt cyberpunk-look, som brugeren slår til; browseren husker valget. |
+| GO-159 | SKAL | Output fra en replay i klyngen gemmes, før pod'en slettes: under `results/<run>/<uid>/_failures/<trin>/<replika>/attempt-<n>/replays/<tidspunkt>/` ligger `out/<udgang>/` med komponentens filer, `component.log` med debug-loggen og `replay.json` med image (digest), settings, exit-kode, tidspunkt og hvilken bruger der startede den. Agentens image uploader dem i samme pod, så data bliver i klyngen. Det har runnets `resultsTTL` og læses med samme Secret som fejlen. Det er kun til at se på: det er ikke en del af runnets resultater, står ikke i `status.results`, og `results get` rører det ikke. En lokal replay (`--with podman`, `docker`) lader output ligge i `./alpheus-replay/…/out/` som i dag; `--keep-output` gemmer det også i lageret. Når replay er færdig, skriver CLI'en, hvor output ligger, og kommandoerne til at hente det. |
+| GO-160 | SKAL | `alpheus replay ls <run> <trin>` lister replays af et forsøg med tidspunkt, image, om settings var ændret, exit-kode og antal output-filer. `alpheus replay get <run> <trin> [--replay <tidspunkt>] [-d mappe]` henter en replays output og log efter samme regler som `results get` (GO-147 til GO-149), standard den seneste. |
+| GO-161 | SKAL | En replay kan køre en ny version af komponenten på samme input, for at prøve en rettelse, før den bruges i et run: `--image <ref>` kører et andet image end forsøgets, `--settings <json>` eller `--settings-file <fil>` andre settings. Et image skal være låst med digest, medmindre installationen tillader tags (GO-26), som i et run. CLI'en skriver tydeligt, at det ikke er det image, der fejlede, og `replay.json` gemmer både forsøgets og replayens image og settings. Med `--compare <tidspunkt>` sammenligner den output med en tidligere replay chunk for chunk (størrelse og SHA-256) og skriver, hvad der er ens, ændret, nyt og væk. Selve runnet ændres ikke: spec'en er uforanderlig. Virker rettelsen, kører man flowet igen som et nyt run med det nye image; `alpheus run -f flow.yaml --image <trin>=<ref>` sætter et trins image uden at redigere filen. |
 | GO-144 | SKAL | Et trin kan vælge sine noder med `spec.steps[].nodeSelector`, `tolerations` og `affinity`, som i en pods spec; trinnets pods og replay-pods får dem. |
 | GO-34 | BØR | Lokale kopier af chunks i scratch-mappen slettes, så snart de er ackede eller skrevet. |
 
@@ -501,6 +525,11 @@ API'et. De bruges ikke til andet.
 | `alpheus cancel <run>` | Sæt `spec.cancel` |
 | `alpheus chunks <run> <kant>` | Vis manifestet for en kant |
 | `alpheus validate -f flow.yaml` | Valider en flow-fil uden at oprette den |
+| `alpheus results get <run> [resultat …]` | Hent resultater til en mappe (9.1, planlagt) |
+| `alpheus results cat <run> <resultat>` | Skriv ét resultat til stdout (9.1, planlagt) |
+| `alpheus results ls <run> [resultat …]` | List de committede chunks som S3-stier (9.1, planlagt) |
+| `alpheus results copy <run> <resultat> --to …` | Kopiér et resultat til et andet lager uden om maskinen (9.1, planlagt, anden omgang) |
+| `alpheus errors <run> [trin]` | Vis eller hent fejlloggen (9.1, planlagt) |
 | `alpheus results gc [--dry-run]` | Find og slet resultater med udløbet TTL eller uden StreamRun (GO-99) |
 | `alpheus version` | Vis CLI-, controller- og CRD-version |
 
@@ -532,6 +561,71 @@ stå før og efter argumenterne. Alle kommandoer har `--kubeconfig`,
 | GO-43 | SKAL | CLI'en bruger brugerens kubeconfig og har ingen egen server eller egen login. |
 | GO-44 | SKAL | Alle kommandoer understøtter `-o json` og `-o yaml`, så de kan bruges i scripts. |
 | GO-45 | SKAL | Fejl giver en exit-kode ≠ 0 og en besked, der siger, hvad der gik galt, og hvad man kan gøre. |
+
+### 9.1 At få data ud (planlagt)
+
+Et run er ikke færdigt for brugeren, før data, fejllog og logs er ude.
+CLI'en skal føre brugeren derhen uden at kende S3, nøgler eller stier, og
+uden at flytte data, der ikke skal flyttes. Den er bygget i to omgange:
+først `watch`-listen, `results get`, `cat`, `ls`, `errors` og S3-adressen
+(GO-146 til GO-154 og GO-156), derefter `results copy` (GO-155).
+
+**Når `watch` slutter.** `watch` udskriver den sidste status som i dag og
+derefter en blok med de kommandoer, der passer til netop det run, med `-n`
+udfyldt, så de kan kopieres:
+
+```
+Succeeded in 49s. Next:
+
+  Results     alpheus results get meter-etl -n flows                      → ./meter-etl/  (359.5 MiB)
+              add -d <dir> to put them somewhere else
+              alpheus results cat meter-etl aggregate.default -n flows    (4.9 KiB, to stdout)
+  Error log   alpheus errors meter-etl clean -n flows                     (160070 errors)
+  Logs        alpheus logs meter-etl -n flows
+  Clean up    kubectl -n flows delete streamrun meter-etl                 (results stay 7 days)
+```
+
+**Hvor data lander.** `results get` henter til `./<run>/` i den aktuelle
+mappe, eller med `-d <mappe>` direkte i den mappe, som oprettes med sine
+forældre. `-d -` skriver ét resultat til stdout, som `results cat`.
+Mappen har én undermappe pr. resultat og én pr. replika, med chunks under
+deres egne navne, og `alpheus-results.json` med runnet, dets UID og hver
+chunks navn, størrelse og SHA-256:
+
+```
+meter-etl/
+├── clean.dataset/
+│   ├── 0/part-000001.gz …
+│   └── 3/part-000024.gz
+├── aggregate.default/
+│   └── 0/part-000001.csv
+└── alpheus-results.json
+```
+
+`--flat` lægger alle chunks i én mappe pr. resultat som
+`<replika>-part-<n>.<ext>`.
+
+**Store resultater.** Et resultat kan være større end disken, og en
+chunk kan være på 1 TB, da Alpheus ikke deler filer op. CLI'en flytter
+ikke data, der ikke skal flyttes: `results ls` lister de committede
+chunks som S3-stier til værktøjer, der læser S3 selv, og `results copy`
+kopierer dem til et andet lager. Skal resultatet altid samme sted hen,
+hører det hjemme i flowet som et sidste trin, og dokumentationen siger
+det.
+
+| ID | Niveau | Krav |
+|---|---|---|
+| GO-146 | SKAL | Når `watch` slutter i tekst-output, udskriver den efter status en liste af kommandoer til at få resultater, fejllog og logs ud og rydde op, med runnets navn og `-n`. Listen har kun linjer, der passer til runnet: fejllog kun med fejl, `results cat` kun for resultater under 1 MiB, `replay --skipped` ved overspringede chunks. Ved `Failed` står `logs`, `logs --kept` og `replay` for den replika, der stoppede runnet, først. Er et resultat over grænsen i GO-150, foreslås `results ls` og `results copy` i stedet for `results get`. `get <run>` viser samme liste for et færdigt run. Med `-o json` og `-o yaml` udskrives ingen liste. |
+| GO-147 | SKAL | `results get <run> [<trin>.<udgang> …]` henter alle runnets resultater eller de nævnte til `./<run>/` eller `-d <mappe>`, i layoutet ovenfor. Kun chunks, som manifesterne og deres segmenter lister, hentes; filer under prefixet, som ikke står i et manifest, blev aldrig committet og ignoreres (GO-32). Hver chunk tjekkes mod `bytes` og `sha256`, før den regnes for hentet. |
+| GO-148 | SKAL | `results get` skriver aldrig oven i noget, den ikke selv har hentet. En mappe, der findes, bruges kun, hvis den er tom, eller hvis dens `alpheus-results.json` har samme run og UID; ellers er det en fejl, der nævner `-d` og `--force`. `--force` overskriver kun runnets egne filer og rører intet andet i mappen. |
+| GO-149 | SKAL | `results get` kan afbrydes og fortsættes. En chunk skrives først som `<navn>.partial` og omdøbes, når størrelse og SHA-256 stemmer, så en fil uden `.partial` altid er hel. Næste kørsel springer filer over, der stemmer med `alpheus-results.json`, og fortsætter en `.partial` med en Range-forespørgsel fra, hvor den slap, kun hvis objektets ETag er den samme (GO-136). SHA-256 beregnes undervejs, så en stor chunk ikke læses to gange. Flere chunks hentes ad gangen (`--parallel`, standard 4). En chunk, der ikke stemmer, er en fejl med dens navn, og intet af den bliver liggende. |
+| GO-150 | SKAL | Før `results get` henter noget, lægger den størrelsen sammen fra manifesterne og tjekker den ledige plads i målmappen. Er der ikke plads, starter den ikke og foreslår `--replica`, `--chunks`, en anden `-d` eller `results ls`. Over 10 GiB spørger den først, medmindre `--yes` er sat. |
+| GO-151 | SKAL | `results get` og `results cat` kan nøjes med en del: `--replica <n>` og `--chunks <fra>-<til>` (chunk-numre pr. replika). `results cat` skriver chunks i rækkefølge, replika 0 først, efter samme tjek som `get`, så `results cat … --chunks 1 \| zcat \| head` viser begyndelsen af et resultat. |
+| GO-152 | SKAL | Er runnet `Failed`, eller mangler en replika EOS, henter `results get` de committede chunks og siger tydeligt, at resultatet er ufuldstændigt, pr. resultat og replika. `alpheus-results.json` har `complete: false` for hver replika uden EOS. Exit-koden er 0, når hentningen lykkedes; med `--complete` er den ≠ 0 for et ufuldstændigt resultat. |
+| GO-153 | SKAL | `results ls <run> [<trin>.<udgang> …]` lister de committede chunks som `s3://<bucket>/<nøgle>` med størrelse og SHA-256, i tekst og med `-o json`, så værktøjer, der læser S3 selv, får præcis de committede chunks og ikke alt under prefixet. |
+| GO-154 | SKAL | `errors <run> [trin]` viser fejlloggen (GO-118) for alle trin eller ét: tid, niveau, kode, besked og chunk, med `--tail <n>` og `-o json` som én post pr. linje. Til sidst kommer en optælling pr. kode. Med `-d <mappe>` gemmes segmenterne under `<mappe>/_errors/<trin>/<replika>/`, og `results get --errors` henter fejlloggen med resultaterne. |
+| GO-155 | BØR | `results copy <run> <trin>.<udgang> --to s3://<bucket>/<prefix> --to-secret <secret>` kopierer de committede chunks og `alpheus-results.json` til et andet lager. Er målet samme endpoint, bruges server-side copy, så data ikke går gennem maskinen; ellers streames chunk for chunk uden at gemme noget på disken. Den kan fortsættes som `results get` og tjekker SHA-256 på det, den streamer. |
+| GO-156 | SKAL | `results`, `errors`, `chunks` og `logs --kept` finder S3-adressen i denne rækkefølge: `--endpoint` og `--ca-file`; miljøvariablerne `ALPHEUS_S3_ENDPOINT` og `ALPHEUS_S3_CA_FILE`; annotationerne `alpheus-dev.org/external-endpoint` og `alpheus-dev.org/external-ca` på runnets storage-Secret (5.2); endpointet i `status.results` eller `spec.storage`. Kan lageret ikke nås, siger fejlen, hvilken adresse der blev prøvet, og hvad man kan sætte. |
 
 
 ## 10. Komponent-SDK (`sdk/`)
@@ -614,6 +708,36 @@ sdk.Progress(ctx, "4,2 mio. rækker behandlet")
 | GO-122 | BØR | Fremdrift er en kort tekst, der vises i `status.steps[].replicas[].message` og i `alpheus watch`, højst én opdatering i sekundet pr. replika (GO-22). Den er best-effort og committes ikke. |
 | GO-123 | SKAL | Når runnet er afsluttet, skriver controlleren `results/<run>/<uid>/summary.json` med fase, tællere, antal fejl og advarsler pr. trin og replika. Den overlever, at StreamRun-objektet slettes, og har samme TTL som resultater. |
 | GO-124 | SKAL | `Observe` blokerer aldrig komponenten. Tællere og fejl, der skal committes, holdes af agenten indtil `Done`; kun live-metrics og fremdrift kan smides væk, hvis agenten er travl. |
+
+### 10.2 Containerkontrakten
+
+En komponent er et image, som Alpheus kører i en pod med strenge
+begrænsninger (6.2). Containerkontrakten er alt, hvad et image skal kunne
+tåle og gøre for at køre godt på Alpheus, samlet ét sted, så en
+komponent, der virker med `podman run`, også virker i klyngen.
+Opførslen med chunks (10) er en del af den. Den står på hjemmesiden som
+én side (`docs/contract.md`), som komponent-guiden og skabelonerne
+henviser til, og `alpheus check` tjekker den (GO-158).
+
+| Område | Kontrakten |
+|---|---|
+| Image | Pinned med digest i flowet, også base-images i Dockerfilen. Bygget til amd64, gerne også arm64. |
+| Bruger | Kører som uid og gid 65532 uden root. Filer i imaget, som komponenten læser, kan læses af den uid. |
+| Filsystem | Root er read-only. Komponenten skriver kun chunks fra `Create` og midlertidige filer i `TMPDIR` (`/tmp`); begge tæller i `scratch`. |
+| Netværk | Ingen indgående forbindelser. Udgående kun DNS, lageret og hub'en (6.1); har et trin brug for mere, kræver det en egen NetworkPolicy. Komponenten lytter ikke på port 9090. |
+| Hemmeligheder | Kun via trinnets `envFrom`. Komponenten får aldrig S3-nøglerne. |
+| Signaler | Stopper på SIGTERM inden for pod'ens grace period og afslutter med 143. |
+| Exit-koder | 0 færdig med alt input, 1 fejl (replikaen genstartes), 2 forkerte settings eller forkert brug af API'et, 143 stoppet. |
+| Fejlbesked | Årsagen til en fejl skrives til `/dev/termination-log`; SDK'et og Python-skabelonen gør det. Uden den bruges slutningen af loggen (GO-139). |
+| Logs | Til stdout og stderr, med niveauet fra `ALPHEUS_LOG_LEVEL`. Fejl i data går til fejlloggen (10.1), ikke til loggen. |
+| Determinisme | Samme input og settings giver samme output, så en genstart og en replay giver det samme. Effekter uden for Alpheus sker mindst én gang og skal være idempotente. |
+| Ressourcer | `resources` og `scratch` sættes efter de største chunks, komponenten har åbne ad gangen (`maxOpen`). |
+| Lokal mode | Komponenten kan køre uden klynge med filer i mapper (GO-87), så `alpheus replay` og `alpheus check` kan køre den. |
+
+| ID | Niveau | Krav |
+|---|---|---|
+| GO-157 | SKAL | Containerkontrakten står som én side på hjemmesiden, og komponent-guiden, Go- og Python-skabelonerne og fejlbeskederne om read-only filsystem henviser til den. Skabelonerne overholder den og viser brugen af `TMPDIR`. |
+| GO-158 | BØR | `alpheus check <image>` kører imaget lokalt med podman eller docker under pod'ens begrænsninger: read-only root, `/tmp` som eneste skrivbare sted ud over chunks, uid 65532, alle capabilities fjernet og intet netværk. Den kører komponenten i lokal mode på en lille test-chunk eller på `--input <mappe>` og tjekker kontrakten: at den starter uden root, at den ikke skriver uden for chunks og `/tmp`, at samme input to gange giver samme output (SHA-256), at den stopper på SIGTERM med 143 inden for grace period, at den ikke lytter på 9090, og at exit-koden passer. Den udskriver én linje pr. punkt med ✓ eller ✗ og en forklaring, og exit-koden er ≠ 0, hvis et punkt fejler. Skabelonerne har en `make check`, der kører den. |
 
 
 ## 11. Logning, metrics og tracing

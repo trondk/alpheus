@@ -2,7 +2,7 @@
 title: "Large-file ETL on-prem"
 description: The flagship use case, run step by step on the test cluster, and what it measures.
 weight: 7
-lastmod: 2026-11-01
+lastmod: 2026-11-06
 ---
 
 This is the use case Alpheus is built and measured around: large files,
@@ -39,11 +39,26 @@ export ──> split ──> clean (4 replicas) ──> aggregate ──> totals
 results. Every step runs at the same time: `clean` works on the first
 chunks while `export` is still writing.
 
+## Build it
+
+Nothing is released yet, so Alpheus is built from the repository. You need
+Go, Helm and podman, a clone of the repository, and a cluster with an S3
+store and a registry; the test cluster from
+[Development](/development/#the-test-cluster) has both.
+
+1. Build the agent and the controller, install them with the Helm chart,
+   and build the `alpheus` CLI with `make cli`:
+   [Getting started, step 1](/docs/getting-started/#1-install-the-controller).
+2. Give the namespace `flows` the storage keys:
+   [step 2](/docs/getting-started/#2-give-a-namespace-the-storage-keys).
+
+[Build and unit tests](/development/#build-and-unit-tests) lists the other
+`make` targets, such as `make test`.
+
 ## Run it
 
-Install Alpheus and give a namespace the storage keys as in
-[Getting started](/docs/getting-started/), steps 1 and 2. Then build the
-four images and the flow:
+Build the example's four images, push them, and write the flow with their
+digests:
 
 ```console
 $ examples/meter-etl/images.sh

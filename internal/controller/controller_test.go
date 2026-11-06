@@ -364,6 +364,13 @@ func TestPodsAndSuccess(t *testing.T) {
 	if *comp.SecurityContext.ReadOnlyRootFilesystem != true || *p.Spec.SecurityContext.RunAsNonRoot != true {
 		t.Error("not restricted")
 	}
+	// The root file system is read-only, so /tmp is a folder of the
+	// emptyDir, and TMPDIR and HOME point to it.
+	if !slices.ContainsFunc(comp.VolumeMounts, func(m corev1.VolumeMount) bool {
+		return m.MountPath == TmpPath && m.Name == sharedVolume && m.SubPath == "tmp"
+	}) || !slices.Contains(comp.Env, corev1.EnvVar{Name: "TMPDIR", Value: TmpPath}) || !slices.Contains(comp.Env, corev1.EnvVar{Name: "HOME", Value: TmpPath}) {
+		t.Errorf("no writable /tmp: mounts %+v", comp.VolumeMounts)
+	}
 	if p.Spec.RestartPolicy != corev1.RestartPolicyNever || !metav1.IsControlledBy(p, get(t, r)) {
 		t.Error("restart policy or owner")
 	}

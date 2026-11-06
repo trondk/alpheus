@@ -182,7 +182,10 @@ func replayCmd(ctx context.Context, e *Env, args []string) error {
 		if err != nil {
 			return err
 		}
-		cmd := []string{*with, "run", "--rm", "--network=none", "-v", abs + ":/replay:Z"}
+		// The root file system is read-only and /tmp is the only other
+		// place to write, as in the pod.
+		cmd := []string{*with, "run", "--rm", "--network=none", "--read-only", "--tmpfs", controller.TmpPath,
+			"-v", abs + ":/replay:Z", "-e", "TMPDIR=" + controller.TmpPath, "-e", "HOME=" + controller.TmpPath}
 		for _, kv := range replay.LocalEnv(f, "/replay/in", "/replay/out") {
 			cmd = append(cmd, "-e", kv)
 		}

@@ -55,7 +55,19 @@ const (
 	signalVolume     = "signal"
 	signalPath       = "/etc/alpheus/signal"
 	runUID           = 65532
+	// TmpPath is the component's writable /tmp, in TMPDIR and HOME: the
+	// root file system is read-only, and many libraries write temporary
+	// files. It is a folder of the pod's emptyDir, so it counts against
+	// spec.steps[].scratch like the chunks do.
+	TmpPath = "/tmp"
 )
+
+// tmp gives a component a writable TmpPath in the emptyDir volume, which
+// the kubelet creates as the folder tmp.
+func tmp(c *corev1.Container, volume string) {
+	c.VolumeMounts = append(c.VolumeMounts, corev1.VolumeMount{Name: volume, MountPath: TmpPath, SubPath: "tmp"})
+	c.Env = append(c.Env, corev1.EnvVar{Name: "TMPDIR", Value: TmpPath}, corev1.EnvVar{Name: "HOME", Value: TmpPath})
+}
 
 // podName is unique per run, step, replica and attempt, and at most 63
 // characters: a run name that would make it longer is cut and gets a hash.
@@ -168,6 +180,7 @@ func (rc *Reconciler) pod(r *v1alpha1.StreamRun, g *graph, s *v1alpha1.Step, rep
 	if s.Resources != nil {
 		component.Resources = *s.Resources
 	}
+	tmp(&component, sharedVolume)
 
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -279,6 +292,7 @@ func ReplayPod(r *v1alpha1.StreamRun, f *replay.Failure, prefix, agentImage, nam
 	if s.Resources != nil {
 		component.Resources = *s.Resources
 	}
+	tmp(&component, "replay")
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: name, Namespace: r.Namespace,

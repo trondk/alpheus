@@ -118,7 +118,9 @@ pods here. In each pod:
 
 Both run as a user without privileges, with a read-only root file system.
 The component can only write in the scratch folder, in the files the agent
-gives it.
+gives it, and in `/tmp`, which `TMPDIR` and `HOME` point to, for the
+temporary files many libraries write. Both count against the step's
+`scratch` size.
 
 A step chooses where its pods run with `nodeSelector`, `tolerations` and
 `affinity`, as in a pod's spec, such as nodes with a GPU or a fast disk:

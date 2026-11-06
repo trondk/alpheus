@@ -1,4 +1,4 @@
-.PHONY: all generate proto check-generated check-deps test test-crd test-chart test-templates cli test-s3 test-agent-s3 vet images e2e e2e-minio test-upgrade fuzz bench bench-etl release verify-release vulndb vuln deploy
+.PHONY: all clean generate proto check-generated check-deps test test-crd test-chart test-templates cli test-s3 test-agent-s3 vet images e2e e2e-minio test-upgrade fuzz bench bench-etl release verify-release vulndb vuln deploy
 
 all: generate vet check-deps test
 
@@ -28,6 +28,12 @@ check-generated: generate
 
 vet:
 	go vet ./...
+
+# Deletes what the build leaves in _out/: binaries, image digests, the
+# example's files, measurements, test reports, releases and the
+# vulnerability database. The test cluster's keys in vagrant/_out/ stay.
+clean:
+	rm -rf _out
 
 # The alpheus CLI, for this machine, in _out/bin.
 cli:

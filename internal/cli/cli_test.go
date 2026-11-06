@@ -28,6 +28,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -580,7 +581,7 @@ func TestReplayAndKeptLogs(t *testing.T) {
 		t.Fatalf("commands %v", h.commands)
 	}
 	cmd := strings.Join(h.commands[0], " ")
-	for _, want := range []string{"podman run --rm --network=none", ":/replay:Z", "ALPHEUS_MODE=local", "ALPHEUS_LOG_LEVEL=debug",
+	for _, want := range []string{"podman run --rm --network=none --read-only --tmpfs /tmp", "TMPDIR=/tmp", ":/replay:Z", "ALPHEUS_MODE=local", "ALPHEUS_LOG_LEVEL=debug",
 		"ALPHEUS_LOCAL_INPUT=/replay/in/default", `ALPHEUS_SETTINGS={"match":"ERROR"}`, "TOKEN=x", "registry.example/filter" + pin} {
 		if !strings.Contains(cmd, want) {
 			t.Errorf("command has no %q: %s", want, cmd)
@@ -815,6 +816,12 @@ func TestReplayInCluster(t *testing.T) {
 	if comp.Image != f.Image || envs["ALPHEUS_MODE"] != "local" || envs["ALPHEUS_LOG_LEVEL"] != "debug" ||
 		envs["ALPHEUS_LOCAL_INPUT"] != "/replay/in/default" || envs["ALPHEUS_SETTINGS"] != `{"match":"x"}` {
 		t.Errorf("component container %+v", comp)
+	}
+	// A writable /tmp, as in the run's pods.
+	if envs["TMPDIR"] != "/tmp" || !slices.ContainsFunc(comp.VolumeMounts, func(m corev1.VolumeMount) bool {
+		return m.MountPath == "/tmp" && m.Name == "replay" && m.SubPath == "tmp"
+	}) {
+		t.Errorf("no /tmp in the replay pod: %+v", comp.VolumeMounts)
 	}
 	if pod.Labels[controller.LabelRun] != "" || pod.OwnerReferences[0].UID != r.UID || *pod.Spec.AutomountServiceAccountToken {
 		t.Errorf("pod meta %+v, automount %v", pod.ObjectMeta, *pod.Spec.AutomountServiceAccountToken)
