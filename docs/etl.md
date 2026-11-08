@@ -26,8 +26,9 @@ export ──> split ──> clean (4 replicas) ──> aggregate ──> totals
    thousand are bad: a missing reading, an impossible timestamp, a negative
    reading or a missing column. In real use, this step would read the
    night's exports.
-2. `split` decompresses each file and cuts it into chunks of 16 MiB at line
-   ends, so many chunks can be cleaned at once.
+2. `split` decompresses each file and cuts it at line ends into gzipped
+   chunks of about 16 MiB uncompressed, so many chunks can be cleaned at
+   once.
 3. `clean` checks every row, in four replicas. Valid rows go, gzipped and
    with an hour column, to its `dataset` output. Each bad row goes to the
    run's error log, with its code and line. A small partial total per
@@ -94,7 +95,7 @@ Error log of clean: s3://alpheus-data/results/meter-etl/<uid>/_errors/clean/ (16
 ```
 
 That run, on the test cluster, took 52 seconds from start to finish for
-1.36 GB of readings, 340 MB gzipped.
+1.36 GB of readings, 337 MB gzipped.
 
 The flow keeps its results for a day (`resultsTTL: 24h`), since the
 dataset is as large as the input.
@@ -129,8 +130,9 @@ Two tests run this flow on the test cluster.
   from when every component runs until the run has succeeded, so pulling
   images is not counted.
 
-Results from 31 October 2026, on the test cluster: one Talos node in a VM
-with 4 CPUs and 8 GiB of memory, with Garage on the same node. The flow is
+Results from 31 October 2026, on the test cluster as it was then: one
+Talos node in a VM with 4 CPUs and 8 GiB of memory, with Garage on the
+same node. The test cluster has two nodes now. The flow is
 16 files of 2 million readings, 1360 MB raw and 337 MB gzipped, cut into
 96 chunks. Each row counts once: 32 million rows in every run, 160,070
 rejected and logged, totals equal to the generator's.

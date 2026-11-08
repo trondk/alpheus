@@ -252,7 +252,7 @@ If the storage goes down, no pod fails. The agents try again, waiting a
 little longer each time, up to 15 seconds, and the components' calls take
 longer meanwhile, as under backpressure. Only when the storage has not
 answered for `storage.timeout`, 10 minutes by default, does the attempt
-fail, with the reason `storage unreachable` in `alpheus get`. An error
+fail, with the reason `StorageUnreachable`. An error
 that waiting will not fix, such as a refused key, fails at once.
 
 ### 10. Cleaning up
@@ -514,6 +514,10 @@ $ podman build -t registry.example/grep:v1 .
 $ podman push registry.example/grep:v1
 ```
 
+{{% planned %}}`go get alpheus-dev.org/alpheus` does not work until the site
+and the code are online. Until then, point your module at a clone with
+`go mod edit -replace alpheus-dev.org/alpheus=../alpheus`.{{% /planned %}}
+
 Use the pushed image's digest in the flow:
 `image: registry.example/grep@sha256:…`.
 
@@ -521,7 +525,7 @@ Use the pushed image's digest in the flow:
 
 There is no Python SDK. The template
 {{< repolink "templates/component-python/" >}} has a small module,
-`alpheus`, of about 300 lines, which implements the same contract over
+`alpheus`, of under 400 lines, which implements the same contract over
 gRPC, and local mode. Copy it with your component. The Dockerfile
 generates the gRPC code from the contract, so the folder holds no
 generated code. The module needs `grpcio` and `protobuf`, pinned in

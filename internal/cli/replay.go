@@ -67,7 +67,7 @@ func replayCmd(ctx context.Context, e *Env, args []string) error {
 	skipped := fs.Bool("skipped", false, "run every input chunk the replica never processed after it gave up with failurePolicy continue, instead of one attempt's")
 	dir := fs.String("dir", "", "where the inputs go; default: ./alpheus-replay/RUN-STEP-REPLICA-ATTEMPT")
 	with := fs.String("with", "podman", "run the component with podman or docker here, as a pod in the cluster (cluster), or not at all (none: only fetch the inputs)")
-	image := fs.String("image", "", "pull the component from here instead, such as a mirror's address for the same digest")
+	image := fs.String("image", "", "run this image instead: the same digest from a mirror, or a new version to try a fix on the same inputs")
 	agentImage := fs.String("agent-image", "", "with --with cluster: the agent's image, which fetches the inputs; default: the controller's")
 	keep := fs.Bool("keep", false, "with --with cluster: keep the replay pod")
 	var env stringList
@@ -143,7 +143,15 @@ func replayCmd(ctx context.Context, e *Env, args []string) error {
 		fmt.Fprintf(e.Stdout, "Step %s replica %d, attempt %d: %s\n", f.Step, f.Replica, f.Attempt, f.Reason)
 		fmt.Fprintf(e.Stdout, "  %s\n", f.Message)
 		if f.Skipped {
-			fmt.Fprintf(e.Stdout, "Skipped: the %d chunks the replica never processed, after it gave up\n", len(f.Inputs))
+			// The side inputs are kept too, but they are lookup data, not
+			// chunks the replica skipped (GO-167).
+			skipped := 0
+			for _, in := range f.Inputs {
+				if !in.Side {
+					skipped++
+				}
+			}
+			fmt.Fprintf(e.Stdout, "Skipped: the %d chunks the replica never processed, after it gave up\n", skipped)
 			if f.NotKept > 0 {
 				fmt.Fprintf(e.Stdout, "  and %d more that were not kept\n", f.NotKept)
 			}

@@ -121,7 +121,7 @@ alpheus replay <run> <step>
 | `--dir string` | where the inputs go; default: ./alpheus-replay/RUN-STEP-REPLICA-ATTEMPT |
 | `-e value` | KEY=VALUE for the component, such as what the step's envFrom gives; can be repeated |
 | `--endpoint string` | the S3 endpoint as seen from here, when spec.storage.endpoint is only reachable in the cluster |
-| `--image string` | pull the component from here instead, such as a mirror's address for the same digest |
+| `--image string` | run this image instead: the same digest from a mirror, or a new version to try a fix on the same inputs |
 | `--keep` | with --with cluster: keep the replay pod |
 | `--replica int` | the replica; default: the one that stopped the run, else one that gave up or failed, else 0 (default -1) |
 | `--skipped` | run every input chunk the replica never processed after it gave up with failurePolicy continue, instead of one attempt's |

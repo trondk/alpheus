@@ -24,10 +24,13 @@ which were accepted in March 2026 but are not yet in a stable release.
 
 Use one of them instead when it fits better:
 
-- **Argo Workflows**, when a step needs all of its input before it can
-  start, as a sort, a global join or model training does, or when you need
-  a general workflow engine: schedules, conditions, loops, retries per step
-  and approvals. Alpheus only streams; it has none of that.
+- **Argo Workflows**, when most steps need all of their input before
+  they can start, as model training does, or when you need a general
+  workflow engine: schedules, conditions, loops, retries per step and
+  approvals. Alpheus can have such a step, a stateful one such as the
+  sort in the [debug example](/docs/debug-example/), but if every step is
+  like that, nothing runs at the same time and streaming gains nothing.
+  Alpheus only streams; it has none of the rest.
 - **Pachyderm**, when you need versioned data and lineage: which version
   of which input made which output, and reprocessing only what changed
   when an input changes. Alpheus keeps no history between runs. Its last

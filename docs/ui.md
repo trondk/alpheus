@@ -70,7 +70,8 @@ steps have finished, when it started and how long it has taken. Below it:
   replica runs, the message is its component's latest progress report.
   "*n* chunks not processed" means the replica gave up with
   `failurePolicy: continue`. Click a row to open the replica.
-- **Results**: what the run's last steps wrote, with the number of chunks,
+- **Results**: the outputs that no edge goes from, such as the last
+  step's, with the number of chunks,
   the bytes, and the bucket and prefix they are in. `alpheus get <run>`
   shows how to fetch them.
 - **Events**: what happened when, oldest first: started, restarted, failed,
@@ -163,4 +164,4 @@ show the rest:
 | Lag | Chunks committed on an edge and not acked yet |
 | Backpressure | A step waiting because it is `maxUnacked` chunks ahead of a replica that reads from it |
 | Done | The step before has committed its last chunk on the edge |
-| Result | What a last step wrote, kept in the bucket for you to fetch |
+| Result | An output that no edge goes from, such as the last step's, kept in the bucket for you to fetch |

@@ -53,8 +53,10 @@ k8s-doc-grep-1-1       0/2     Completed   0          5s
 ```
 
 Every step's pods start at once: `count` runs while `generate` is still
-writing. The pods stay after the run, with their logs, until the run is
-deleted or `ttlAfterFinished` runs out. The labels
+writing. When the run succeeds, the pods stay, with their logs, until the
+run is deleted or `ttlAfterFinished` runs out. When it fails or is
+cancelled, the controller deletes them at once, so nothing goes on
+running; the logs of failed attempts are kept in S3 (below). The labels
 `alpheus-dev.org/run`, `step`, `replica` and `attempt` find them.
 
 ## One pod up close
@@ -116,7 +118,8 @@ each replica's attempt and the reason its last attempt failed.
 
 | When | What goes |
 |---|---|
-| The run finishes | Nothing yet; the pods stay so you can read their logs |
+| The run succeeds | Nothing yet; the pods stay so you can read their logs |
+| The run fails or is cancelled | The pods; the logs and inputs of failed attempts are kept in S3 |
 | `ttlAfterFinished` runs out | The pods and the run's chunks |
 | The run is deleted | The pods, the Secrets, the ServiceAccount, the NetworkPolicy and the chunks |
 | `resultsTTL` runs out, 7 days by default | The results, error logs and kept logs |

@@ -16,7 +16,7 @@ GitHub. A release consists of:
 | Where | What |
 |---|---|
 | `https://alpheus-dev.org/releases/vX.Y.Z/` | The `alpheus` CLI for Linux and macOS, the Helm chart as a file, an SPDX SBOM for every binary and image (`sbom/`), `images.txt`, `SHA256SUMS` and its signature `SHA256SUMS.bundle` |
-| `registry.alpheus-dev.org/alpheus-dev/agent` and `…/controller` | The images for `linux/amd64` and `linux/arm64`, signed, each with its SBOM attached |
+| `registry.alpheus-dev.org/alpheus-dev/agent`, `…/controller` and `…/ui` | The images for `linux/amd64` and `linux/arm64`, signed, each with its SBOM attached |
 | `oci://registry.alpheus-dev.org/alpheus-dev/charts/alpheus` | The Helm chart, signed, with the images' digests in it |
 
 Everything is signed with the project's own key, with

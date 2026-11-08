@@ -33,7 +33,7 @@ message.
 | `ScratchFull` | A chunk did not fit in the step's scratch folder | Raise `scratch` for the step, or make chunks smaller |
 | `PodDeleted` | The pod disappeared: evicted, a lost node, or deleted | Kubernetes' events for the pod |
 | `PodFailed` | The pod failed without a container saying why | Kubernetes' events for the pod |
-| `InvalidSpec` | The edges form a cycle, or an image is not pinned and the controller was installed without the chart | The message names the problem. Other mistakes in the graph, and an unpinned image with the chart, are rejected by `kubectl create` |
+| `InvalidSpec` | The edges form a cycle, an image is not pinned and the controller was installed without the chart, or a ServiceAccount or NetworkPolicy named `alpheus-run-<run>` exists and is not the run's | The message names the problem. Other mistakes in the graph, and an unpinned image with the chart, are rejected by `kubectl create` |
 | `Cancelled` | `spec.cancel` was set | |
 | `FailedReplicas` | The run finished, but replicas with `failurePolicy: continue` gave up | `failedChunks` of each replica says how much was not processed; see [Bad records and bad chunks](/docs/dead-letters/) |
 
@@ -117,11 +117,13 @@ with the log level at debug:
 ```console
 $ alpheus replay sales filter
 Step filter replica 1, attempt 4: ComponentFailed
-  step filter replica 1 failed after 3 restarts: the component exited with code 1: …
+  the component exited with code 1: …
 Image:  registry.example/filter@sha256:…
-Inputs: 2 chunks in alpheus-replay/sales-filter-1-4/in, checked against their SHA-256
+Inputs: 2 chunks, checked against their SHA-256
+Logs of the attempt: s3://flows/results/sales/…/_logs/filter/1/attempt-4/
+Fetched to alpheus-replay/sales-filter-1-4/in
 
-$ podman run --rm --network=none --read-only --tmpfs /tmp -v …/alpheus-replay/sales-filter-1-4:/replay:Z -e ALPHEUS_MODE=local … registry.example/filter@sha256:…
+$ podman run --rm --network=none --read-only --tmpfs /tmp --userns=keep-id:uid=65532,gid=65532 -v …/alpheus-replay/sales-filter-1-4:/replay:Z … -e ALPHEUS_MODE=local … registry.example/filter@sha256:…
 {"level":"DEBUG","msg":"read chunk","n":1, …}
 …
 ```
@@ -140,9 +142,11 @@ $ podman run --rm --network=none --read-only --tmpfs /tmp -v …/alpheus-replay/
   logs come to your terminal. The data stays in the cluster, and a failure
   that depends on the node's resources can show again. The pod is deleted
   afterwards, unless you pass `--keep`.
-- `--image` pulls the same digest from another registry, and `-e KEY=VALUE`
-  passes what the step's `envFrom` gives in the cluster, which replay does
-  not copy.
+- `--image` runs another image: the same digest from a mirror, or a new
+  version to try a fix on the same inputs, which replay then says. See
+  [A debug session](/docs/debug-example/#7-try-the-fix-on-the-same-data).
+- `-e KEY=VALUE` passes what the step's `envFrom` gives in the cluster,
+  which replay does not copy.
 - `--endpoint` and `--ca-file` reach the storage from your machine, as for
   `alpheus chunks`.
 - The component runs as replica 0 of 1, since the inputs are already this

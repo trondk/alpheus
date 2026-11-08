@@ -144,7 +144,9 @@ no network and the log level at debug:
 $ alpheus replay shop-report merge -n flows
 Step merge replica 0, attempt 3: ComponentFailed
   the component exited with code 1: panic: runtime error: slice bounds out of range [:1] with length 0 at merge/main.go:119
+Image:  …/debug-session/merge@sha256:1081930a…
 Inputs: 13 chunks, checked against their SHA-256
+Logs of the attempt: s3://alpheus-data/results/shop-report/c05553b3-…/_logs/merge/0/attempt-3/
 Fetched to alpheus-replay/shop-report-merge-0-3/in
 
 $ podman run --rm --network=none --read-only --tmpfs /tmp --userns=keep-id:uid=65532,gid=65532 … -e ALPHEUS_LOG_LEVEL=debug …

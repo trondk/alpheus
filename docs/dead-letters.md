@@ -29,9 +29,9 @@ the output, so it is there exactly once, also after restarts. This is what
 the meter-etl example does: each bad reading is an error with its line.
 
 ```go
-r, err := meter.Parse(line)
-if err != nil {
-	sdk.Error(ctx, "bad_row", err.Error(), sdk.Field("line", n))
+r, err := meter.Parse(sc.Text())
+if err != nil { // the error is a code, such as bad_timestamp
+	sdk.Error(ctx, err.Error(), "row rejected", sdk.Field("line", line))
 	continue
 }
 ```
@@ -108,7 +108,7 @@ that were processed, and `failedChunks` says how many were not.
 
 Each failed attempt is kept in the run's bucket, as in
 [When a run fails](/docs/debugging/#replaying-a-failed-attempt), with
-copies of the chunks it had open, the chunk it failed on first. When the
+copies of the chunks it had open, among them the one it failed on. When the
 run has finished, and nothing more can come to the replica, the controller
 also keeps every chunk the replica never processed, those that came after
 it gave up too, in `skipped/`:
