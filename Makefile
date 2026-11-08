@@ -1,4 +1,4 @@
-.PHONY: all clean generate proto check-generated check-deps test test-crd test-chart test-templates cli test-s3 test-agent-s3 vet images e2e e2e-minio test-upgrade fuzz bench bench-etl release verify-release vulndb vuln deploy
+.PHONY: all clean spec-status generate proto check-generated check-deps test test-crd test-chart test-templates cli test-s3 test-agent-s3 vet images e2e e2e-minio test-upgrade fuzz bench bench-etl release verify-release vulndb vuln deploy
 
 all: generate vet check-deps test
 
@@ -162,3 +162,7 @@ bench-etl:
 check-deps:
 	@if go list -deps ./... | grep -q '^github.com/apache/arrow-go'; then \
 		echo "arrow-go is a dependency (GO-101)"; exit 1; fi
+
+# The status of SPEC.md's requirements: labels counted, and every fail.
+spec-status:
+	hack/spec-status.sh

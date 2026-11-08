@@ -64,7 +64,7 @@ func uiCmd(ctx context.Context, e *Env, args []string) error {
 	fs := newFlags(e, "ui", "", &o)
 	listen := fs.String("listen", "127.0.0.1:7171", "where the page is served; keep it on this machine unless --in-cluster")
 	noOpen := fs.Bool("no-open", false, "do not open the page in the browser")
-	inCluster := fs.Bool("in-cluster", false, "run as a Deployment in the cluster: runs of every namespace, replays as pods (GO-143)")
+	inCluster := fs.Bool("in-cluster", false, "run as a Deployment in the cluster: runs of every namespace, replays as pods")
 	var hosts stringList
 	fs.Var(&hosts, "host", "a host name the page may be reached by besides localhost, such as an Ingress's; can be repeated")
 	agentImage := fs.String("agent-image", "", "with --in-cluster: the agent's image, for replay pods")

@@ -77,7 +77,7 @@ Shows the component's log, or the agent's with `-c agent`, of every step or one.
 | `--endpoint string` | with --kept: the S3 endpoint as seen from here, when spec.storage.endpoint is only reachable in the cluster |
 | `-f` | short for --follow |
 | `--follow` | keep printing new lines until the pods end |
-| `--kept` | show the logs kept from failed attempts in the bucket, also after the pods are gone (GO-140) |
+| `--kept` | show the logs kept from failed attempts in the bucket, also after the pods are gone |
 | `--tail int` | only the last lines of each container; -1 means all (default -1) |
 
 ## alpheus cancel
@@ -141,7 +141,7 @@ alpheus ui
 | `--ca-file string` | CA bundle for the storage endpoint |
 | `--endpoint string` | the S3 endpoint as seen from here, when spec.storage.endpoint is only reachable in the cluster |
 | `--host value` | a host name the page may be reached by besides localhost, such as an Ingress's; can be repeated |
-| `--in-cluster` | run as a Deployment in the cluster: runs of every namespace, replays as pods (GO-143) |
+| `--in-cluster` | run as a Deployment in the cluster: runs of every namespace, replays as pods |
 | `--listen string` | where the page is served; keep it on this machine unless --in-cluster (default "127.0.0.1:7171") |
 | `--no-open` | do not open the page in the browser |
 | `--replay string` | how the replay button runs: podman, docker, cluster or off; default podman, or cluster with --in-cluster |
@@ -163,7 +163,7 @@ Runs the same checks as `run` and has the API server check the fields and rules 
 
 ## alpheus results
 
-Delete results whose TTL has run out (GO-99).
+Delete results whose TTL has run out.
 
 ```
 alpheus results gc

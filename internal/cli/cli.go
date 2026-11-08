@@ -155,7 +155,7 @@ func commands() []command {
 		{"replay", "<run> <step>", "Run a failed attempt again on its own, on its inputs, at debug level", replayCmd},
 		{"ui", "", "Open a page in the browser that shows the runs live", uiCmd},
 		{"validate", "-f flow.yaml", "Check a flow file without creating it", validateCmd},
-		{"results", "gc [--dry-run]", "Delete results whose TTL has run out (GO-99)", resultsCmd},
+		{"results", "gc [--dry-run]", "Delete results whose TTL has run out", resultsCmd},
 		{"version", "", "Show the CLI, controller and CRD versions", versionCmd},
 	}
 }

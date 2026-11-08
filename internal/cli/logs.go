@@ -54,7 +54,7 @@ func logsCmd(ctx context.Context, e *Env, args []string) error {
 	followLogs := fs.Bool("follow", false, "keep printing new lines until the pods end")
 	fs.BoolVar(followLogs, "f", false, "short for --follow")
 	tail := fs.Int64("tail", -1, "only the last lines of each container; -1 means all")
-	kept := fs.Bool("kept", false, "show the logs kept from failed attempts in the bucket, also after the pods are gone (GO-140)")
+	kept := fs.Bool("kept", false, "show the logs kept from failed attempts in the bucket, also after the pods are gone")
 	caFile := fs.String("ca-file", "", "with --kept: CA bundle for the storage endpoint")
 	endpoint := fs.String("endpoint", "", "with --kept: the S3 endpoint as seen from here, when spec.storage.endpoint is only reachable in the cluster")
 	pos, err := parse(fs, args, &o)
