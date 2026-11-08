@@ -2,7 +2,7 @@
 title: Writing components
 description: What a component is, how a run moves its files step by step, and how to write one in Go or Python, with templates to start from.
 weight: 10
-lastmod: 2026-11-02
+lastmod: 2026-11-08
 ---
 
 A component is a container image that does one step of a flow. It reads
@@ -648,7 +648,11 @@ $ ALPHEUS_MODE=local \
 ```
 
 - Every file in the input folder is a chunk, read in name order. The
-  `n`-th file is chunk `n`.
+  `n`-th file is chunk `n`, from a step named after the port. A file
+  `_chunks.json` in the folder can give a chunk its producer and number
+  instead, as `{"<file>": {"step": "filter", "replica": 0, "n": 3}}`;
+  `alpheus replay` writes it, so a replay sees the chunks as the failed
+  attempt did.
 - Each output gets a folder, `out/default/`, with the chunks as
   `part-000001.<ext>` and so on.
 - `out/_summary.json` has the counters and the number of errors and

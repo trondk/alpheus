@@ -96,7 +96,7 @@ func (rc *Reconciler) captureFailure(ctx context.Context, r *v1alpha1.StreamRun,
 					log.FromContext(ctx).Error(err, "capture failure: copy chunk", "chunk", file)
 					continue
 				}
-				f.Inputs = append(f.Inputs, replay.Input{Port: port, Edge: edgeName(e), ProducerReplica: p, N: c.N, Bytes: c.Bytes, SHA256: c.SHA256, File: file})
+				f.Inputs = append(f.Inputs, replay.Input{Port: port, Edge: edgeName(e), From: e.From, ProducerReplica: p, N: c.N, Bytes: c.Bytes, SHA256: c.SHA256, File: file})
 				taken++
 			}
 		}
@@ -143,7 +143,7 @@ func copySideInputs(ctx context.Context, st store.Store, r *v1alpha1.StreamRun, 
 					log.FromContext(ctx).Error(err, "capture failure: copy chunk", "chunk", file)
 					continue
 				}
-				f.Inputs = append(f.Inputs, replay.Input{Port: port, Edge: edgeName(e), ProducerReplica: p, N: c.N, Bytes: c.Bytes, SHA256: c.SHA256, File: file, Side: true})
+				f.Inputs = append(f.Inputs, replay.Input{Port: port, Edge: edgeName(e), From: e.From, ProducerReplica: p, N: c.N, Bytes: c.Bytes, SHA256: c.SHA256, File: file, Side: true})
 			}
 		}
 	}
@@ -208,7 +208,7 @@ func (rc *Reconciler) keepSkipped(ctx context.Context, r *v1alpha1.StreamRun, g 
 					log.FromContext(ctx).Error(err, "keep skipped chunks: copy chunk", "chunk", file)
 					return true
 				}
-				f.Inputs = append(f.Inputs, replay.Input{Port: port, Edge: edgeName(c.edge), ProducerReplica: c.producer,
+				f.Inputs = append(f.Inputs, replay.Input{Port: port, Edge: edgeName(c.edge), From: c.edge.From, ProducerReplica: c.producer,
 					N: c.chunk.N, Bytes: c.chunk.Bytes, SHA256: c.chunk.SHA256, File: file})
 				return true
 			})

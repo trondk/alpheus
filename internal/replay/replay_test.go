@@ -17,10 +17,17 @@ limitations under the License.
 package replay
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"alpheus-dev.org/alpheus/internal/chunk"
+	"alpheus-dev.org/alpheus/internal/store"
 )
 
 func validFailure() Failure {
@@ -105,4 +112,32 @@ func FuzzParse(f *testing.F) {
 			}
 		}
 	})
+}
+
+// Fetch writes the index that gives each fetched chunk its producer and
+// number in local mode.
+func TestFetchWritesIndex(t *testing.T) {
+	st := store.NewMemory()
+	data := []byte("data")
+	sum := sha256.Sum256(data)
+	f := validFailure()
+	f.Inputs[0].From, f.Inputs[0].Bytes, f.Inputs[0].SHA256 = "source", int64(len(data)), hex.EncodeToString(sum[:])
+	if err := st.Put(t.Context(), "p/input/"+f.Inputs[0].File, bytes.NewReader(data), int64(len(data))); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := Fetch(t.Context(), st, "p/", &f, dir); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "in", "default", chunk.LocalIndex))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var index map[string]chunk.LocalChunk
+	if err := json.Unmarshal(raw, &index); err != nil {
+		t.Fatal(err)
+	}
+	if got := index[f.Inputs[0].File]; got != (chunk.LocalChunk{Step: "source", Replica: 0, N: 7}) {
+		t.Errorf("index %v", index)
+	}
 }

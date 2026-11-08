@@ -340,3 +340,30 @@ func TestErrors(t *testing.T) {
 		}
 	})
 }
+
+// An index in the input folder, as a replay writes, gives the chunks it
+// names their producer and number; the others keep the defaults.
+func TestLocalIndex(t *testing.T) {
+	in, out := inputs(t, "csv", "a\n", "b\n"), t.TempDir()
+	index := `{"in-001.csv": {"step": "filter", "replica": 2, "n": 6}}`
+	if err := os.WriteFile(filepath.Join(in, chunk.LocalIndex), []byte(index), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	h := func(ctx context.Context, in sdk.Input, out sdk.Output) error {
+		for c, err := range in.Chunks(ctx) {
+			if err != nil {
+				return err
+			}
+			got = append(got, fmt.Sprintf("%s/%d #%d", c.Step, c.Replica, c.N))
+		}
+		return nil
+	}
+	cfg := sdk.LocalConfig{Inputs: map[string]string{sdk.DefaultPort: in}, OutputDir: out}
+	if err := sdk.RunLocal(context.Background(), cfg, h); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"filter/2 #6", "default/0 #2"}; !slices.Equal(got, want) {
+		t.Errorf("chunks %q, want %q", got, want)
+	}
+}

@@ -48,6 +48,9 @@ import time
 from dataclasses import dataclass
 
 DEFAULT_OUTPUT = "default"
+# LOCAL_INDEX is the file a replay writes in an input folder, with each
+# chunk's producer and number (internal/chunk/local.go).
+LOCAL_INDEX = "_chunks.json"
 EXIT_OK, EXIT_FAILED, EXIT_USAGE, EXIT_STOPPED = 0, 1, 2, 143
 
 
@@ -256,9 +259,14 @@ class _Local(_Component):
         # Every file is a chunk, except a manifest local mode in Go writes,
         # so another step's output folder can be the input.
         names = sorted(n for n in os.listdir(input_dir) if not re.fullmatch(r"manifest(-\d+)?\.json", n)
-                       and os.path.isfile(os.path.join(input_dir, n))) if input_dir else []
+                       and n != LOCAL_INDEX and os.path.isfile(os.path.join(input_dir, n))) if input_dir else []
+        # A replay writes an index with each chunk's producer and number.
+        index = {}
+        if input_dir and os.path.isfile(os.path.join(input_dir, LOCAL_INDEX)):
+            with open(os.path.join(input_dir, LOCAL_INDEX)) as f:
+                index = json.load(f)
         # Chunk n goes to replica n mod replicas, as in a run.
-        self._inputs = [(i + 1, os.path.join(input_dir, name)) for i, name in enumerate(names)
+        self._inputs = [(i + 1, os.path.join(input_dir, name), index.get(name)) for i, name in enumerate(names)
                         if (i + 1) % replicas == replica]
         self._out, self._numbers = output_dir, {}
         self._summary = {"counts": {}, "errors": 0, "warnings": 0, "errorsDropped": 0}
@@ -281,10 +289,11 @@ class _Local(_Component):
     def _next(self, port):
         if not self._inputs:
             return None
-        n, path = self._inputs.pop(0)
+        n, path, id = self._inputs.pop(0)
         self._chunk = os.path.basename(path)
         ext = os.path.splitext(path)[1].lstrip(".")
-        return Chunk("default", "local", 0, n, path, ext, os.path.getsize(path)), n
+        step, producer, number = (id["step"], id["replica"], id["n"]) if id else ("local", 0, n)
+        return Chunk("default", step, producer, number, path, ext, os.path.getsize(path)), n
 
     def _done(self, id):
         self._chunk = ""

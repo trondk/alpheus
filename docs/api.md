@@ -2,7 +2,7 @@
 title: "The API: using Alpheus from a program"
 description: Start a run, follow it, fetch its result, find out why it failed and run the failure again from your own program, through the Kubernetes API and S3 alone, with kubectl, Go or plain HTTP, and the rights the program needs.
 weight: 12
-lastmod: 2026-11-06
+lastmod: 2026-11-08
 ---
 
 Alpheus has no API of its own. A run is a `StreamRun` object in
@@ -314,7 +314,7 @@ The highest `attempt-<n>` is the last one. `failure.json`:
   "image": "registry.alpheus.test:30500/alpheus-test/bench@sha256:…",
   "settings": {"role": "pass", "fail": 5, "delay": 1000},
   "inputs": [
-    {"port": "default", "edge": "source-pass", "producerReplica": 0, "n": 5,
+    {"port": "default", "edge": "source-pass", "from": "source", "producerReplica": 0, "n": 5,
      "bytes": 65536, "sha256": "…", "file": "source-pass-0-000005.bin"}
   ],
   "logs": "results/debug-demo/<uid>/_logs/pass/0/attempt-2/"
@@ -336,7 +336,10 @@ $ alpheus replay debug-demo pass -n flows --with cluster -o json
 ```
 
 Without it, put each input in `in/<port>/` and run the image in
-[local mode](/docs/components/#testing-without-kubernetes) with:
+[local mode](/docs/components/#testing-without-kubernetes). So that the
+component sees each chunk's producer and number as in the run, write
+`in/<port>/_chunks.json` with `{"<file>": {"step": <from>, "replica":
+<producerReplica>, "n": <n>}}` for each of the port's inputs. Run it with:
 
 | Variable | Value |
 |---|---|

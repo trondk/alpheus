@@ -2,7 +2,7 @@
 title: "A debug session, step by step"
 description: A flow fails in its merge step. Follow it with the CLI, read the kept logs, replay the failed attempt at debug level on your machine and in the cluster, try a fixed version on the same data, and run the flow again.
 weight: 6
-lastmod: 2026-11-06
+lastmod: 2026-11-08
 ---
 
 This page follows one failure from start to fix, with the real output of
@@ -29,7 +29,10 @@ the region's first letter as its code, `strings.ToUpper(region[:1])`,
 which panics on an empty region.
 
 The example is in {{< repolink "examples/debug-session/" >}}, with
-version 1 of merge in `merge/` and the fix in `merge-v2/`.
+version 1 of merge in `merge/` and the fix in `merge-v2/`. Each component
+is written as in the [Go template](/docs/components/#start-from-a-template),
+and its image is built the same way: a static binary on `scratch`, run as
+user 65532.
 
 ## 0. Build it
 
@@ -145,15 +148,17 @@ Fetched to alpheus-replay/shop-report-merge-0-3/in
 $ podman run --rm --network=none --read-only --tmpfs /tmp --userns=keep-id:uid=65532,gid=65532 … -e ALPHEUS_LOG_LEVEL=debug …
 
 {"level":"DEBUG","msg":"customers loaded","component":"merge","customers":50000,"regions":{"":20,"central":10212,"east":9993,"north":9918,"south":9906,"west":9951}}
-{"level":"DEBUG","msg":"joining a chunk","component":"merge","from":"orders","replica":0,"n":1,"bytes":6947660}
+{"level":"DEBUG","msg":"joining a chunk","component":"merge","from":"filter","replica":0,"n":3,"bytes":6947660}
 {"level":"ERROR","msg":"component failed","component":"merge","error":"panic: runtime error: slice bounds out of range [:1] with length 0 at merge/main.go:119","exit_code":1}
 
 The component exited with code 1, as in the run. Its output is in alpheus-replay/shop-report-merge-0-3/out.
 ```
 
-The failure comes back, on your machine. And the debug line that merge
-writes when it has loaded the customers gives it away: `"":20`, twenty
-customers with an empty region.
+The failure comes back, on your machine, on the same chunk: replica 0 of
+`filter`, its chunk 3, as in the run. A replay gives each chunk its
+producer and number, from the `_chunks.json` it writes next to the
+inputs. And the debug line that merge writes when it has loaded the
+customers gives it away: `"":20`, twenty customers with an empty region.
 
 ## 5. Look at the data
 
@@ -175,6 +180,8 @@ C046003,Customer 46003,
 
 $ grep -m1 -n "C046001" in/orders/filter-merge-1-000003.csv
 18817:O01219826,C046001,2026-10-07,1405.49
+
+$ cd ../..
 ```
 
 Customers 46001 to 46020 have no region, and the first of their orders is
@@ -224,11 +231,10 @@ To run the flow with it: alpheus run -f <flow file> --name <a new name> --image 
 The output is yours to read:
 
 ```console
-$ cd ../..
 $ grep -h ",None,None" alpheus-replay-v2/out/default/*.csv | head -3
-O02200830,C046015,2026-10-12,1152.04,Customer 46015,None,None
-O02203442,C046003,2026-10-12,313.01,Customer 46003,None,None
-O02203470,C046018,2026-10-12,2162.68,Customer 46018,None,None
+O01606399,C046001,2026-10-09,261.46,Customer 46001,None,None
+O01606521,C046001,2026-10-09,932.52,Customer 46001,None,None
+O01611825,C046016,2026-10-09,129.31,Customer 46016,None,None
 
 $ cat alpheus-replay-v2/out/_summary.json
 {
@@ -241,6 +247,11 @@ $ cat alpheus-replay-v2/out/_summary.json
   "errorsDropped": 0
 }
 ```
+
+868 warnings here, and 1,014 in the whole run in step 9: the failed
+attempt had twelve chunks of orders, days 7 to 18, since `filter` had not
+yet written days 19 and 20 when merge failed. A replay has only the
+inputs of the attempt it replays.
 
 ## 8. Or try it in the cluster
 
@@ -319,7 +330,8 @@ $ alpheus logs shop-report-v2 merge -n flows
 - **The lookup data is a side input.** Every attempt of merge, and every
   replay, gets all of the customers again. Without `side: true`, a new
   attempt would start with the customers already done and so without
-  them, and fail on every order.
+  them: it would reject every order as an unknown customer, and the run
+  could end Succeeded with nothing joined.
 - **Debug on demand.** `logLevel: debug`, or `alpheus run --log-level`,
   turns on a step's debug log without a new image; a replay always runs
   at debug.

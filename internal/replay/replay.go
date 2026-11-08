@@ -87,8 +87,11 @@ type Failure struct {
 
 // Input is one input chunk of a failed attempt.
 type Input struct {
-	Port            string `json:"port"`
-	Edge            string `json:"edge"`
+	Port string `json:"port"`
+	Edge string `json:"edge"`
+	// From is the producing step. A failure kept before it was recorded
+	// has none, and a replay then names the chunks after their port.
+	From            string `json:"from,omitempty"`
 	ProducerReplica int    `json:"producerReplica"`
 	N               int64  `json:"n"`
 	Bytes           int64  `json:"bytes"`
@@ -176,12 +179,30 @@ func Fetch(ctx context.Context, st store.Store, prefix string, f *Failure, dir s
 	if err := os.Chmod(out, 0o777); err != nil { // the image's user is not this one
 		return err
 	}
+	index := map[string]map[string]chunk.LocalChunk{}
 	for _, in := range f.Inputs {
 		pdir := filepath.Join(dir, "in", in.Port)
 		if err := os.MkdirAll(pdir, 0o755); err != nil {
 			return err
 		}
 		if err := fetchChunk(ctx, st, prefix+"input/"+in.File, filepath.Join(pdir, in.File), in); err != nil {
+			return err
+		}
+		if in.From != "" {
+			if index[in.Port] == nil {
+				index[in.Port] = map[string]chunk.LocalChunk{}
+			}
+			index[in.Port][in.File] = chunk.LocalChunk{Step: in.From, Replica: in.ProducerReplica, N: in.N}
+		}
+	}
+	// The index gives each chunk its producer and number, so the component
+	// sees the chunks as the failed attempt saw them.
+	for port, chunks := range index {
+		data, err := json.MarshalIndent(chunks, "", "  ")
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(dir, "in", port, chunk.LocalIndex), data, 0o644); err != nil {
 			return err
 		}
 	}

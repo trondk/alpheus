@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"iter"
 	"log/slog"
 	"os"
@@ -164,10 +165,18 @@ func readInputs(port, dir string, replica, replicas int) ([]Chunk, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: input %s: %w", ErrUsage, port, err)
 	}
+	index := map[string]chunk.LocalChunk{}
+	if data, err := os.ReadFile(filepath.Join(dir, chunk.LocalIndex)); err == nil {
+		if err := json.Unmarshal(data, &index); err != nil {
+			return nil, fmt.Errorf("%w: input %s: %s: %w", ErrUsage, port, chunk.LocalIndex, err)
+		}
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return nil, fmt.Errorf("input %s: %w", port, err)
+	}
 	var chunks []Chunk
 	n := int64(0)
 	for _, e := range entries { // os.ReadDir sorts by name
-		if !e.Type().IsRegular() || manifestFile.MatchString(e.Name()) {
+		if !e.Type().IsRegular() || manifestFile.MatchString(e.Name()) || e.Name() == chunk.LocalIndex {
 			continue
 		}
 		n++
@@ -178,14 +187,18 @@ func readInputs(port, dir string, replica, replicas int) ([]Chunk, error) {
 		if err != nil {
 			return nil, fmt.Errorf("input %s: %w", port, err)
 		}
-		chunks = append(chunks, Chunk{
+		c := Chunk{
 			Port:  port,
 			Step:  port,
 			N:     n,
 			Path:  filepath.Join(dir, e.Name()),
 			Ext:   strings.ToLower(strings.TrimPrefix(filepath.Ext(e.Name()), ".")),
 			Bytes: info.Size(),
-		})
+		}
+		if id, ok := index[e.Name()]; ok {
+			c.Step, c.Replica, c.N = id.Step, id.Replica, id.N
+		}
+		chunks = append(chunks, c)
 	}
 	return chunks, nil
 }
