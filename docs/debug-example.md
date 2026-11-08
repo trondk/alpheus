@@ -59,7 +59,9 @@ $ alpheus watch shop-report -n flows
 
 `watch` prints the whole status at each change. Four seconds in, every
 step is running at once: `merge` has joined 570,074 orders while `orders`
-is still writing.
+is still writing. Counts and acks are written one after the other, so a
+snapshot can show a chunk counted before it is acked: here three chunks
+of orders counted and two acked.
 
 ```
 --- 11:54:28
@@ -149,6 +151,7 @@ $ podman run --rm --network=none --read-only --tmpfs /tmp --userns=keep-id:uid=6
 
 {"level":"DEBUG","msg":"customers loaded","component":"merge","customers":50000,"regions":{"":20,"central":10212,"east":9993,"north":9918,"south":9906,"west":9951}}
 {"level":"DEBUG","msg":"joining a chunk","component":"merge","from":"filter","replica":0,"n":3,"bytes":6947660}
+{"level":"ERROR","msg":"component panicked","component":"merge","panic":"runtime error: slice bounds out of range [:1] with length 0","stack":"goroutine 1 [running]:\n…main.join(…)\n\t…/examples/debug-session/merge/main.go:119 …"}
 {"level":"ERROR","msg":"component failed","component":"merge","error":"panic: runtime error: slice bounds out of range [:1] with length 0 at merge/main.go:119","exit_code":1}
 
 The component exited with code 1, as in the run. Its output is in alpheus-replay/shop-report-merge-0-3/out.
@@ -249,9 +252,14 @@ $ cat alpheus-replay-v2/out/_summary.json
 ```
 
 868 warnings here, and 1,014 in the whole run in step 9: the failed
-attempt had twelve chunks of orders, days 7 to 18, since `filter` had not
-yet written days 19 and 20 when merge failed. A replay has only the
-inputs of the attempt it replays.
+attempt had twelve chunks of orders, days 7 to 18. Days 1 to 6 were done
+and acked, and days 19 and 20 were not yet written. The flow has
+`chunks: {maxUnacked: 4}`: a `filter` replica waits while four of its
+chunks are not acked by merge, and merge acked none after day 6.
+Replicas 1 and 2 of `filter` had written four more each and waited with
+days 19 and 20; replica 0 had written all of its six.
+That backpressure keeps a failing step from piling up data in the
+bucket. A replay has only the inputs of the attempt it replays.
 
 ## 8. Or try it in the cluster
 
@@ -260,7 +268,10 @@ inputs of the attempt it replays.
 When the data may not leave the cluster, `--with cluster` runs the same
 replay as a pod in the run's namespace, under the run's NetworkPolicy:
 the agent's image fetches and checks the inputs there, and only the log
-comes to your terminal.
+comes to your terminal. The output stays in the pod and is deleted with
+it when the replay ends; to read the output, replay with podman as in
+step 7. Keeping a cluster replay's output in the bucket is planned
+(GO-159).
 
 ```console
 $ alpheus replay shop-report merge -n flows --with cluster --image $MERGE_V2_IMAGE
@@ -346,12 +357,22 @@ storage's address from outside once (planned):
 - Add `--endpoint https://$(vagrant/talos.sh ip):30900 --ca-file
   vagrant/_out/ca.crt` to `logs --kept` and `replay`: the run's
   storage address only works inside the cluster.
-- For a replay with podman, pull the image from the VM's address first
+  This goes for `replay --with cluster` too: the CLI reads the failure
+  from the bucket before it starts the pod.
+- For a replay with podman, pull each image from the VM's address first
   and pass that with `--image`: `registry.alpheus.test` is the cluster's
-  name for the registry.
+  name for the registry. That is version 1 in step 4 and
+  `$MERGE_V2_IMAGE` in step 7. A replay with `--with cluster` pulls in
+  the cluster and needs no pull.
 
 ```console
-$ podman pull --cert-dir _out/certs $(vagrant/talos.sh ip):30500/debug-session/merge@sha256:1081930a…
-$ alpheus replay shop-report merge -n flows --image $(vagrant/talos.sh ip):30500/debug-session/merge@sha256:1081930a… \
-    --endpoint https://$(vagrant/talos.sh ip):30900 --ca-file vagrant/_out/ca.crt
+$ ip=$(vagrant/talos.sh ip)
+$ podman pull --cert-dir _out/certs $ip:30500/debug-session/merge@sha256:1081930a…
+$ alpheus replay shop-report merge -n flows --image $ip:30500/debug-session/merge@sha256:1081930a… \
+    --endpoint https://$ip:30900 --ca-file vagrant/_out/ca.crt
+
+$ v2=${MERGE_V2_IMAGE/registry.alpheus.test/$ip}
+$ podman pull --cert-dir _out/certs $v2
+$ alpheus replay shop-report merge -n flows --image $v2 --dir alpheus-replay-v2 \
+    --endpoint https://$ip:30900 --ca-file vagrant/_out/ca.crt
 ```
