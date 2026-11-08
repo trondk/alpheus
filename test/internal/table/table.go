@@ -51,7 +51,7 @@ func Delimiter(s string) (rune, error) {
 func NewReader(r io.Reader, comma rune) *csv.Reader {
 	br := bufio.NewReader(r)
 	if b, err := br.Peek(len(bom)); err == nil && bytes.Equal(b, bom) {
-		br.Discard(len(bom))
+		_, _ = br.Discard(len(bom)) // cannot fail after the Peek
 	}
 	cr := csv.NewReader(br)
 	cr.Comma = comma

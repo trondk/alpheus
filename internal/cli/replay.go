@@ -225,7 +225,13 @@ func replayCmd(ctx context.Context, e *Env, args []string) error {
 		if o.output == "" {
 			fmt.Fprintf(e.Stdout, "\n$ %s\n\n", strings.Join(cmd, " "))
 		}
-		if code, err = e.RunCommand(ctx, cmd, e.Stdout, e.Stderr); err != nil {
+		// With -o, stdout has only the JSON or YAML, so what the component
+		// prints goes to stderr (GO-163).
+		stdout := e.Stdout
+		if o.output != "" {
+			stdout = e.Stderr
+		}
+		if code, err = e.RunCommand(ctx, cmd, stdout, e.Stderr); err != nil {
 			return hint(fmt.Errorf("%s: %w", *with, err), "install "+*with+", run it in the cluster with --with cluster, or pass --with none and run the component yourself")
 		}
 	}
@@ -307,13 +313,23 @@ func replayInCluster(ctx context.Context, e *Env, c *Clients, r *v1alpha1.Stream
 		return "", 0, hint(apiError(err), "a replay in the cluster creates a pod in the run's namespace")
 	}
 	if !keep {
-		defer c.Client.Delete(context.WithoutCancel(ctx), pod)
+		defer func() {
+			if err := c.Client.Delete(context.WithoutCancel(ctx), pod); err != nil && !isNotFound(err) {
+				fmt.Fprintf(e.Stderr, "the replay pod %s/%s was not deleted: %v\n", pod.Namespace, pod.Name, err)
+			}
+		}()
 	}
 	if text {
 		fmt.Fprintf(e.Stdout, "\nReplaying in pod %s/%s, at debug level:\n\n", r.Namespace, name)
 	}
+	// With -o, stdout has only the JSON or YAML, so the logs go to stderr
+	// (GO-163).
+	logs := e.Stdout
+	if !text {
+		logs = e.Stderr
+	}
 	for _, container := range []string{controller.ReplayContainer, controller.ComponentContainer} {
-		if err := followLog(ctx, c, r.Namespace, name, container, e.Stdout); err != nil {
+		if err := followLog(ctx, c, r.Namespace, name, container, logs); err != nil {
 			return name, 0, err
 		}
 	}

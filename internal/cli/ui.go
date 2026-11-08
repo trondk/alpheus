@@ -203,12 +203,12 @@ func (u *ui) index(w http.ResponseWriter, r *http.Request) {
 	page = bytes.Replace(page, []byte("{{token}}"), []byte(u.token), 1)
 	page = bytes.Replace(page, []byte("{{replay}}"), []byte(u.replayMode), 1)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write(page)
+	_, _ = w.Write(page) // a browser that went away needs no answer
 }
 
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(v)
+	_ = json.NewEncoder(w).Encode(v) // a browser that went away needs no answer
 }
 
 func httpError(w http.ResponseWriter, err error) {
@@ -478,7 +478,7 @@ func (u *ui) logs(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		defer body.Close()
-		io.Copy(w, body)
+		_, _ = io.Copy(w, body)
 		return
 	}
 	pod := ""
@@ -502,7 +502,7 @@ func (u *ui) logs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer body.Close()
-	io.Copy(w, body)
+	_, _ = io.Copy(w, body)
 }
 
 // errorLog is a replica's committed error log (GO-118), at most
@@ -560,7 +560,7 @@ func (u *ui) failure(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	w.Write(data)
+	_, _ = w.Write(data)
 }
 
 // replay runs alpheus replay for a failed attempt and streams its output.

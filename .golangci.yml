@@ -1,0 +1,40 @@
+# golangci-lint's configuration (GO-59). make lint runs it with the version
+# pinned in hack/golangci-lint.mod, and fails on any finding.
+version: "2"
+
+linters:
+  default: standard
+  settings:
+    errcheck:
+      # A bufio or csv Writer keeps its first error and returns it from
+      # Flush or Error, which the code checks.
+      exclude-functions:
+        - (*bufio.Writer).Write
+        - (*bufio.Writer).WriteByte
+        - (*bufio.Writer).WriteRune
+        - (*bufio.Writer).WriteString
+        - (*encoding/csv.Writer).Write
+    staticcheck:
+      # The defaults, and not QF1001: a condition written as "not the
+      # case where all is well" reads better than De Morgan's form.
+      checks: ["all", "-ST1000", "-ST1003", "-ST1016", "-ST1020", "-ST1021", "-ST1022", "-QF1001"]
+  exclusions:
+    # Unchecked errors of Close, Fprint and the like, as Go code commonly
+    # leaves them.
+    presets:
+      - std-error-handling
+    rules:
+      # A test that ignores an error in its setup fails on what it checks
+      # next.
+      - path: _test\.go
+        linters:
+          - errcheck
+
+formatters:
+  enable:
+    - gofmt
+
+issues:
+  # Every finding, not the first few of each kind.
+  max-issues-per-linter: 0
+  max-same-issues: 0

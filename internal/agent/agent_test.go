@@ -651,8 +651,14 @@ func TestBackpressure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if a.Ready() {
+		t.Error("ready before Run")
+	}
 	go a.Run(ctx)
 	sdk.RunAgent(ctx, sdk.AgentConfig{Socket: gen.cfg.Socket}, gen.h)
+	if !a.Ready() {
+		t.Error("not ready after serving the component (GO-52)")
+	}
 
 	m := readManifest(t, st, chunk.EdgeStream(testUID, "generate-filter", 0))
 	if m.Count() != 4 || m.EOS {

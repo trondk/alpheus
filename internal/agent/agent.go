@@ -33,6 +33,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"google.golang.org/grpc"
@@ -112,6 +113,9 @@ type Agent struct {
 	contact  bool // the component has called the agent
 	finished bool
 	err      error // fatal; stops the agent
+
+	// ready is set once the agent serves the component's socket (GO-52).
+	ready atomic.Bool
 }
 
 // New returns an agent. sig may be nil, in which case the agent only
@@ -149,6 +153,10 @@ func New(cfg Config, st store.Store, sig signal.Driver, log *slog.Logger) (*Agen
 // before Run.
 func (a *Agent) SetMetrics(m *Metrics) { a.metrics = m }
 
+// Ready reports whether the agent has recovered from earlier attempts and
+// serves the component's socket, for /readyz (GO-52).
+func (a *Agent) Ready() bool { return a.ready.Load() }
+
 // source reports whether the step has no incoming edges (GO-91).
 func (a *Agent) source() bool { return len(a.cfg.Inputs) == 0 }
 
@@ -176,8 +184,13 @@ func (a *Agent) Run(ctx context.Context) error {
 	}
 	srv := grpc.NewServer()
 	componentpb.RegisterAgentServer(srv, &server{a: a, ctx: ctx})
-	go srv.Serve(lis)
+	go func() {
+		if err := srv.Serve(lis); err != nil {
+			a.fail(fmt.Errorf("socket: %w", err))
+		}
+	}()
 	defer srv.Stop()
+	a.ready.Store(true)
 	a.log.Info("agent ready", "socket", a.cfg.Socket, "attempt", a.cfg.Attempt)
 
 	start := time.NewTimer(a.cfg.StartTimeout.Duration)

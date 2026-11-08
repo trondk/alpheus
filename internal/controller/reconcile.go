@@ -98,9 +98,11 @@ type Options struct {
 	// an address range; empty means any address.
 	StorageEgressTo []networkingv1.NetworkPolicyPeer
 	// Resync is how often a running run's status is read again from
-	// storage; default 2s, which also keeps status patches to at most one
-	// a second (GO-22).
+	// storage; default 2s.
 	Resync time.Duration
+	// StatusInterval is the least time between two status writes of one
+	// run; default 1s (GO-22).
+	StatusInterval time.Duration
 }
 
 // Reconciler reconciles StreamRuns.
@@ -121,6 +123,8 @@ type Reconciler struct {
 
 	caOnce sync.Mutex
 	ca     *CA
+
+	status statusLimit
 }
 
 // +kubebuilder:rbac:groups=alpheus-dev.org,resources=streamruns,verbs=get;list;watch;update;patch
@@ -140,6 +144,9 @@ func (rc *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 	if rc.Options.Resync == 0 {
 		rc.Options.Resync = 2 * time.Second
 	}
+	if rc.Options.StatusInterval == 0 {
+		rc.Options.StatusInterval = time.Second
+	}
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.StreamRun{}).
 		Owns(&corev1.Pod{}).
@@ -154,10 +161,19 @@ func (rc *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 func (rc *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	var r v1alpha1.StreamRun
 	if err := rc.Get(ctx, req.NamespacedName, &r); err != nil {
+		if apierrors.IsNotFound(err) {
+			rc.status.forget(req.NamespacedName)
+		}
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 	if !r.DeletionTimestamp.IsZero() {
 		return ctrl.Result{}, rc.finalize(ctx, &r)
+	}
+	// Every change of a pod starts a pass, so a run with many pods would
+	// write its status many times a second. A pass that comes too soon
+	// after the last write waits for the rest of the interval (GO-22).
+	if wait := rc.status.wait(req.NamespacedName, time.Now(), rc.Options.StatusInterval); wait > 0 {
+		return ctrl.Result{RequeueAfter: wait}, nil
 	}
 	orig := r.DeepCopy()
 	if controllerutil.AddFinalizer(&r, Finalizer) {
@@ -180,10 +196,11 @@ func (rc *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Res
 			if apierrors.IsConflict(perr) {
 				// The events of this pass go with it: the next pass sees
 				// the same changes and records them again.
-				return ctrl.Result{Requeue: true}, nil
+				return ctrl.Result{RequeueAfter: 100 * time.Millisecond}, nil
 			}
 			return ctrl.Result{}, perr
 		}
+		rc.status.wrote(req.NamespacedName, time.Now())
 	}
 	ev.flush(rc.Recorder, &r)
 	return res, err
@@ -599,7 +616,10 @@ func (rc *Reconciler) finish(ctx context.Context, r *v1alpha1.StreamRun, g *grap
 		edgeLag.DeletePartialMatch(prometheus.Labels{"namespace": ns, "run": name})
 	})
 	if g != nil {
-		rc.refreshStorage(ctx, r, g)
+		// The status keeps the counts last read; the run finishes anyway.
+		if err := rc.refreshStorage(ctx, r, g); err != nil {
+			log.FromContext(ctx).Error(err, "read the storage at the end of the run")
+		}
 		rc.keepSkipped(ctx, r, g)
 	}
 	if err := rc.writeSummary(ctx, r); err != nil {

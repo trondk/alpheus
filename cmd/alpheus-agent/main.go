@@ -28,8 +28,8 @@ limitations under the License.
 //	ALPHEUS_S3_RESULTS_BUCKET  optional bucket for results/ (GO-129)
 //	ALPHEUS_S3_TIMEOUT     how long to keep trying while the storage is
 //	                       unreachable, as a Go duration; empty means 0 (GO-136)
-//	ALPHEUS_METRICS_LISTEN where /metrics is served, such as :9090; empty
-//	                       serves none (GO-51)
+//	ALPHEUS_METRICS_LISTEN where /metrics, /healthz and /readyz are served,
+//	                       such as :9090; empty serves none (GO-51, GO-52)
 //	ALPHEUS_SIGNAL_HUB     the builtin signal hub; empty means poll only
 //	ALPHEUS_SIGNAL_CA      the hub's CA, and this agent's certificate and
 //	ALPHEUS_SIGNAL_CERT    key, issued by the controller per run (GO-41)
@@ -56,6 +56,8 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -124,8 +126,10 @@ func run(ctx context.Context, log *slog.Logger, exitOnFinish bool) error {
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 	metrics := agent.NewMetrics(reg, cfg)
+	var running atomic.Pointer[agent.Agent]
+	ready := func() bool { a := running.Load(); return a != nil && a.Ready() }
 	if addr := os.Getenv("ALPHEUS_METRICS_LISTEN"); addr != "" {
-		stopMetrics, err := serveMetrics(addr, reg, log)
+		stopMetrics, err := serveMetrics(addr, reg, ready, log)
 		if err != nil {
 			return err
 		}
@@ -136,6 +140,7 @@ func run(ctx context.Context, log *slog.Logger, exitOnFinish bool) error {
 	if err != nil {
 		return err
 	}
+	go checkStorage(ctx, log)
 
 	var sig alsignal.Driver
 	if hub := os.Getenv("ALPHEUS_SIGNAL_HUB"); hub != "" {
@@ -158,6 +163,7 @@ func run(ctx context.Context, log *slog.Logger, exitOnFinish bool) error {
 		return err
 	}
 	a.SetMetrics(metrics)
+	running.Store(a)
 	if err := a.Run(ctx); err != nil {
 		return err
 	}
@@ -202,6 +208,25 @@ func storeFromEnv(log *slog.Logger, retried func()) (store.Store, error) {
 	return st, nil
 }
 
+// checkStorage warns when the storage is not one Alpheus is tested with,
+// since Alpheus needs strong read-after-write consistency and has only
+// seen it in those (GO-69). It only warns: the run goes on.
+func checkStorage(ctx context.Context, log *slog.Logger) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	endpoint := os.Getenv("ALPHEUS_S3_ENDPOINT")
+	name, err := store.Identify(ctx, store.S3Config{Endpoint: endpoint, CAFile: os.Getenv("ALPHEUS_S3_CA_FILE")})
+	switch {
+	case err != nil:
+		log.Debug("could not tell which storage this is", "endpoint", endpoint, "error", err.Error())
+	case name == "":
+		log.Warn("the storage is not one Alpheus is tested with ("+strings.Join(store.Tested, ", ")+
+			"); it must have strong read-after-write consistency for new objects, overwrites and listings", "endpoint", endpoint)
+	default:
+		log.Debug("storage", "endpoint", endpoint, "store", name)
+	}
+}
+
 // fetch fetches a kept failure into dest, each chunk checked against its
 // SHA-256, for a replay pod's component (GO-141).
 func fetch(ctx context.Context, log *slog.Logger, prefix, dest string) error {
@@ -223,16 +248,14 @@ func fetch(ctx context.Context, log *slog.Logger, prefix, dest string) error {
 	return nil
 }
 
-// serveMetrics serves reg on addr's /metrics (GO-51) until the returned
-// function is called.
-func serveMetrics(addr string, reg *prometheus.Registry, log *slog.Logger) (func(), error) {
+// serveMetrics serves reg on addr's /metrics (GO-51), and /healthz and
+// /readyz (GO-52), until the returned function is called.
+func serveMetrics(addr string, reg *prometheus.Registry, ready func() bool, log *slog.Logger) (func(), error) {
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("metrics: %w", err)
 	}
-	mux := http.NewServeMux()
-	mux.Handle("/metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
-	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	srv := &http.Server{Handler: handler(reg, ready), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Warn("metrics server stopped", "error", err.Error())
@@ -243,6 +266,25 @@ func serveMetrics(addr string, reg *prometheus.Registry, log *slog.Logger) (func
 		defer cancel()
 		_ = srv.Shutdown(ctx)
 	}, nil
+}
+
+// handler serves /metrics, /healthz, which answers while the agent's
+// process runs, and /readyz, which answers 200 once ready says so and 503
+// before.
+func handler(reg *prometheus.Registry, ready func() bool) http.Handler {
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprintln(w, "ok")
+	})
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
+		if !ready() {
+			http.Error(w, "not ready", http.StatusServiceUnavailable)
+			return
+		}
+		fmt.Fprintln(w, "ok")
+	})
+	return mux
 }
 
 // hubCredentials is mTLS with the certificate the controller issued for the

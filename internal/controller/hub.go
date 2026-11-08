@@ -85,7 +85,11 @@ func (h *Hub) Start(ctx context.Context) error {
 	}
 	srv := grpc.NewServer(grpc.Creds(creds))
 	builtin.NewHub(h.authorize).Register(srv)
-	go srv.Serve(lis)
+	go func() {
+		if err := srv.Serve(lis); err != nil {
+			logger.Error(err, "signal hub stopped; agents poll instead")
+		}
+	}()
 	logger.Info("signal hub started", "addr", h.Addr)
 
 	if err := h.label(context.WithoutCancel(ctx), true); err != nil {

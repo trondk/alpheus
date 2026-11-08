@@ -621,6 +621,16 @@ func TestReplayAndKeptLogs(t *testing.T) {
 		}
 	}
 
+	// With -o json, stdout is only the JSON; what the component prints
+	// goes to stderr (GO-163).
+	var view replayView
+	if err := json.Unmarshal([]byte(h.mustRun("replay", "rp", "filter", "--replica", "1", "--dir", dir, "-o", "json")), &view); err != nil {
+		t.Fatalf("replay -o json: %v\n%s", err, h.stdout.String())
+	}
+	if view.ExitCode == nil || *view.ExitCode != 1 || view.Failure.Attempt != 2 || len(view.Command) == 0 || !strings.Contains(h.stderr.String(), "component output") {
+		t.Errorf("replay -o json: %+v, stderr %q", view, h.stderr.String())
+	}
+
 	// A chunk that changed is refused.
 	h.mem.Put(ctx, prefix+"input/read-filter-0-000003.csv", strings.NewReader("changed"), 7)
 	if code := h.run("replay", "rp", "filter", "--replica", "1", "--dir", dir, "--with", "none"); code != 1 || !strings.Contains(h.stderr.String(), "SHA-256") {

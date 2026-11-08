@@ -113,10 +113,9 @@ func storage(t *testing.T) storageTarget {
 
 // env is a test's cluster, namespace and storage.
 type env struct {
-	t     *testing.T
-	c     client.Client
-	ns    string
-	store store.Store
+	t  *testing.T
+	c  client.Client
+	ns string
 }
 
 func setup(t *testing.T) *env {

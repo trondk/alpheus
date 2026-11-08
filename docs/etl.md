@@ -25,7 +25,9 @@ export ──> split ──> clean (4 replicas) ──> aggregate ──> totals
    `meter_id,region,timestamp,kwh`, made from a seed. Five rows in every
    thousand are bad: a missing reading, an impossible timestamp, a negative
    reading or a missing column. In real use, this step would read the
-   night's exports.
+   night's exports: a fixed list of files, named in its settings, since a
+   source must give the same chunks when it is restarted
+   ([Components](/docs/components/#3-the-source-writes-chunks)).
 2. `split` decompresses each file and cuts it at line ends into gzipped
    chunks of about 16 MiB uncompressed, so many chunks can be cleaned at
    once.

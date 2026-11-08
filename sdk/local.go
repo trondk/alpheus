@@ -47,8 +47,10 @@ type LocalConfig struct {
 	// Inputs maps each port to a folder of input chunks. Every file in a
 	// folder is a chunk, except manifest.json and its segments, so another
 	// step's output folder can be an input; they are read in name order,
-	// and the n-th file is chunk n. No inputs means the component is a
-	// source.
+	// and the n-th file is chunk n. A _chunks.json, as alpheus replay
+	// writes, is not a chunk either: it gives each file the step, replica
+	// and number it had in the run (GO-141). No inputs means the component
+	// is a source.
 	Inputs map[string]string
 
 	// OutputDir gets one folder per output, with the output's chunks as
@@ -460,7 +462,10 @@ func (l *local) appendLog(lines [][]byte) error {
 		return fmt.Errorf("error log: %w", err)
 	}
 	for _, line := range lines {
-		f.Write(append(line, '\n'))
+		if _, err := f.Write(append(line, '\n')); err != nil {
+			f.Close()
+			return fmt.Errorf("error log: %w", err)
+		}
 	}
 	return f.Close()
 }
@@ -487,6 +492,7 @@ type File struct {
 	sha256  string
 }
 
+// Write writes p to the chunk.
 func (f *File) Write(p []byte) (int, error) { return f.f.Write(p) }
 
 // Path is the file's local path, for tools that write by name.

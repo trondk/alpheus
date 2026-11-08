@@ -780,7 +780,3 @@ type StreamRunList struct {
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []StreamRun `json:"items"`
 }
-
-func init() {
-	SchemeBuilder.Register(&StreamRun{}, &StreamRunList{})
-}

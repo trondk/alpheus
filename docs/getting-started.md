@@ -19,9 +19,12 @@ an S3 store (Garage) and a registry (Zot). Once `v0.1.0` is out, one
 ## What you need
 
 - A Kubernetes cluster, version 1.29 or newer, since the agent runs as a
-  native sidecar. The test cluster is one VM; see
+  native sidecar. The test cluster is two VMs; see
   [Development](/development/) to set it up.
-- An S3-compatible bucket and keys that can read and write it.
+- An S3-compatible bucket and keys that can read and write it. The store
+  must have strong read-after-write consistency for new objects,
+  overwrites and listings: Alpheus is tested with AWS S3, Garage and
+  MinIO. With any other store, the agent warns in its log when it starts.
 - A container registry the cluster can pull from.
 - Go, Helm and podman on your machine, and a clone of the repository.
 

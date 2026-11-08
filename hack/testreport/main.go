@@ -345,7 +345,7 @@ func serve(args []string) error {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		if r.URL.Path == "/healthz" {
-			io.WriteString(w, "ok\n")
+			_, _ = io.WriteString(w, "ok\n")
 			return
 		}
 		files.ServeHTTP(w, r)

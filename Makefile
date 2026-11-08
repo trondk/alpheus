@@ -1,4 +1,4 @@
-.PHONY: all clean spec-status generate proto check-generated check-deps test test-crd test-chart test-templates cli test-s3 test-agent-s3 vet images e2e e2e-minio test-upgrade fuzz bench bench-etl release verify-release vulndb vuln deploy
+.PHONY: all clean spec-status lint ci generate proto check-generated check-deps test test-crd test-chart test-templates cli test-s3 test-agent-s3 vet images e2e e2e-minio test-upgrade fuzz bench bench-etl release verify-release vulndb vuln deploy
 
 all: generate vet check-deps test
 
@@ -28,6 +28,16 @@ check-generated: generate
 
 vet:
 	go vet ./...
+
+# golangci-lint with .golangci.yml, at the version pinned in
+# hack/golangci-lint.mod, kept apart from go.mod so its dependencies do not
+# change the binaries' (GO-59). It checks gofmt too.
+lint:
+	go tool -modfile=hack/golangci-lint.mod golangci-lint run ./...
+
+# What CI runs, and fails on any finding: vet, lint, generated code that
+# is up to date, the dependency rule and the tests (GO-59, GO-63).
+ci: vet lint check-generated check-deps test
 
 # Deletes what the build leaves in _out/: binaries, image digests, the
 # example's files, measurements, test reports, releases and the

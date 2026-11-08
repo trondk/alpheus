@@ -39,12 +39,12 @@ func TestAcks(t *testing.T) {
 		t.Errorf("Has(11) %v, Has(12) %v, Last %d", a.Has(11), a.Has(12), a.Last())
 	}
 
-	data, err := a.Marshal()
-	if err != nil {
+	if _, err := a.Marshal(); err != nil {
 		t.Fatal(err)
 	}
 	a.Epoch = 2
-	if data, _ = a.Marshal(); string(data) != `{"version":1,"acked":[1,11,21],"epoch":2}` {
+	data, _ := a.Marshal()
+	if string(data) != `{"version":1,"acked":[1,11,21],"epoch":2}` {
 		t.Errorf("format: %s", data)
 	}
 	got, err := ParseAcks(data)

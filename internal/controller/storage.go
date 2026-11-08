@@ -411,7 +411,9 @@ func (rc *Reconciler) closeStreams(ctx context.Context, r *v1alpha1.StreamRun, g
 			acks := chunk.NewAcks()
 			for n := int64(1); n <= done; n++ {
 				if assigned(e, n, p, replicas(s), replica) {
-					acks.Ack(n)
+					if err := acks.Ack(n); err != nil {
+						return 0, err
+					}
 				}
 			}
 			acks.Epoch, acks.Closed = epoch, true

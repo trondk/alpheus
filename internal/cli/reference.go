@@ -44,6 +44,31 @@ var details = map[string]string{
 	"version": "Shows the CLI's version, and the controller's and the CRD's when the cluster can be read.",
 }
 
+// shapes say what each command prints with -o json (GO-163). The same
+// shape is printed as YAML with -o yaml.
+var shapes = map[string]string{
+	"run": "The `StreamRun` as created, with `apiVersion` and `kind`, as `kubectl get -o json` prints it.",
+	"get": "Without a run, a `StreamRunList` with the runs in `items`; with one, the `StreamRun`. " +
+		"Its `status` is described in [Using Alpheus from a program](/docs/api/).",
+	"watch": "One `StreamRun` per line, compact, each time its status changes. With `-o yaml`, one YAML document per change, each after a `---` line.",
+	"logs": "One object per log line, compact, one per line: `pod`, `step`, `replica`, `container` and `line`. " +
+		"With `--kept`, `pod` is `attempt-<n>`, the attempt the log was kept from.",
+	"cancel": "The `StreamRun`, as for `get`.",
+	"chunks": "A list with one object per producer replica: `stream` (the edge or result), `prefix` in the bucket, `replica`, " +
+		"`found` (false while it has no manifest yet), `epoch`, `eos`, `last` (the number of the last chunk, set with `eos`), " +
+		"`observed` (counts, `errors`, `warnings` and `errorsDropped` so far), `consumed` (per input stream of the producer, the highest input chunk whose output to this stream is committed) " +
+		"and `chunks`, each with `n`, `ext`, `bytes`, `sha256`, `counts` and `src` (`edge`, `replica` and `n` of the input chunk it was made from).",
+	"replay": "One object when the replay has run: `failure`, the attempt's `failure.json` as described in [Using Alpheus from a program](/docs/api/#the-failed-attempt); " +
+		"`dir`, where the inputs were fetched; `pod`, with `--with cluster`; `command`, the podman or docker command line; " +
+		"`exitCode`, the component's; and `failedImage`, when `--image` ran another version than the one that failed. " +
+		"What the component prints goes to stderr, so stdout has only the JSON.",
+	"validate": "`file`, `valid`, `server` (true when the API server checked it too) and `warnings`, a list.",
+	"results": "A list with one object per run in the bucket: `prefix`, `run`, `namespace`, `uid`, `finishedAt`, " +
+		"`reason` (why it is deleted or kept) and `action`: `delete`, `deleted` or `keep`.",
+	"version": "`cli`; `controllers`, each with `namespace`, `version` and `image`; `crd`, the versions the cluster serves; " +
+		"and `errors`, when the cluster could not be read.",
+}
+
 // common are the flags every command has; the reference lists them once.
 var common = map[string]bool{"kubeconfig": true, "context": true, "namespace": true, "n": true, "output": true, "o": true}
 
@@ -70,6 +95,11 @@ func Reference(w io.Writer) error {
 	fmt.Fprintln(w, "| `--context` | The kubeconfig context (default: the current one) |")
 	fmt.Fprintln(w, "| `-n`, `--namespace` | The namespace (default: the context's) |")
 	fmt.Fprintln(w, "| `-o`, `--output` | `json` or `yaml`, for scripts (default: text) |")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "With `-o json` each command prints the shape its section describes, and nothing else, on stdout.")
+	fmt.Fprintln(w, "Errors, and what a replayed component prints, go to stderr.")
+	fmt.Fprintln(w, "The shapes are an interface for programs: fields may be added, but a field keeps its name and meaning.")
+	fmt.Fprintln(w, "A field that is empty may be left out.")
 	for _, c := range commands() {
 		args := []string{c.name, "-h"}
 		if c.name == "results" {
@@ -81,6 +111,9 @@ func Reference(w io.Writer) error {
 		fmt.Fprintf(w, "\n## alpheus %s\n\n%s.\n\n```\n%s\n```\n", c.name, c.summary, usage)
 		if d := details[c.name]; d != "" {
 			fmt.Fprintf(w, "\n%s\n", d)
+		}
+		if sh := shapes[c.name]; sh != "" {
+			fmt.Fprintf(w, "\nWith `-o json`: %s\n", sh)
 		}
 		if len(flags) > 0 {
 			fmt.Fprintln(w, "\n| Flag | What it does |")

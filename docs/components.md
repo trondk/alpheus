@@ -154,6 +154,14 @@ A source must write the same chunks every time it runs with the same
 settings. A restarted source starts from the beginning, and its agent
 discards the chunks it already committed.
 
+So a source that reads something outside the run, such as an S3 prefix,
+a share or a database, is not supported in this version: if what it reads
+changes between two attempts, the restarted source writes other chunks
+than the first, and the run's output no longer matches its input. A later
+version will let a source save where it got to through the SDK. Until
+then, read a fixed set, such as a list of files given in the settings,
+that does not change while the run goes on.
+
 ### 4. The chunks are shared between replicas
 
 Chunk *n* from producer replica *p* goes to consumer replica

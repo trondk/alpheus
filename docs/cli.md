@@ -19,6 +19,11 @@ Every command takes these flags:
 | `-n`, `--namespace` | The namespace (default: the context's) |
 | `-o`, `--output` | `json` or `yaml`, for scripts (default: text) |
 
+With `-o json` each command prints the shape its section describes, and nothing else, on stdout.
+Errors, and what a replayed component prints, go to stderr.
+The shapes are an interface for programs: fields may be added, but a field keeps its name and meaning.
+A field that is empty may be left out.
+
 ## alpheus run
 
 Create a StreamRun from a file.
@@ -28,6 +33,8 @@ alpheus run -f flow.yaml
 ```
 
 Reads the file strictly, so a misspelt field is an error, and runs the controller's checks of the steps and edges first. An image without a digest gives a warning, since the controller refuses it unless it runs with `-allow-tags`.
+
+With `-o json`: The `StreamRun` as created, with `apiVersion` and `kind`, as `kubectl get -o json` prints it.
 
 | Flag | What it does |
 |---|---|
@@ -46,6 +53,8 @@ alpheus get [run]
 
 Without a run, lists the runs in the namespace, or in all namespaces with `-A`. With one, shows its steps, replicas, edges with their lag, results and where to fetch them, and error logs.
 
+With `-o json`: Without a run, a `StreamRunList` with the runs in `items`; with one, the `StreamRun`. Its `status` is described in [Using Alpheus from a program](/docs/api/).
+
 | Flag | What it does |
 |---|---|
 | `-A` | runs in all namespaces |
@@ -60,6 +69,8 @@ alpheus watch <run>
 
 Prints the whole status at each change, as text or, with `-o json`, one object per line. It ends when the run finishes, with exit code 0 only when it succeeded, so a script can wait for a run with it.
 
+With `-o json`: One `StreamRun` per line, compact, each time its status changes. With `-o yaml`, one YAML document per change, each after a `---` line.
+
 ## alpheus logs
 
 Show the logs of a run's containers.
@@ -69,6 +80,8 @@ alpheus logs <run> [step]
 ```
 
 Shows the component's log, or the agent's with `-c agent`, of every step or one.
+
+With `-o json`: One object per log line, compact, one per line: `pod`, `step`, `replica`, `container` and `line`. With `--kept`, `pod` is `attempt-<n>`, the attempt the log was kept from.
 
 | Flag | What it does |
 |---|---|
@@ -90,6 +103,8 @@ alpheus cancel <run>
 
 Sets `spec.cancel`. The controller stops the pods; chunks and results are cleaned up as for a finished run.
 
+With `-o json`: The `StreamRun`, as for `get`.
+
 ## alpheus chunks
 
 Show the manifest of an edge or a result.
@@ -99,6 +114,8 @@ alpheus chunks <run> <edge>
 ```
 
 Reads the manifests of an edge, such as `filter-sum`, or of a result, `<step>.<output>`, with the keys in the run's storage Secret. When `spec.storage.endpoint` is only reachable inside the cluster, pass the address you reach it by with `--endpoint`.
+
+With `-o json`: A list with one object per producer replica: `stream` (the edge or result), `prefix` in the bucket, `replica`, `found` (false while it has no manifest yet), `epoch`, `eos`, `last` (the number of the last chunk, set with `eos`), `observed` (counts, `errors`, `warnings` and `errorsDropped` so far), `consumed` (per input stream of the producer, the highest input chunk whose output to this stream is committed) and `chunks`, each with `n`, `ext`, `bytes`, `sha256`, `counts` and `src` (`edge`, `replica` and `n` of the input chunk it was made from).
 
 | Flag | What it does |
 |---|---|
@@ -112,6 +129,8 @@ Run a failed attempt again on its own, on its inputs, at debug level.
 ```
 alpheus replay <run> <step>
 ```
+
+With `-o json`: One object when the replay has run: `failure`, the attempt's `failure.json` as described in [Using Alpheus from a program](/docs/api/#the-failed-attempt); `dir`, where the inputs were fetched; `pod`, with `--with cluster`; `command`, the podman or docker command line; `exitCode`, the component's; and `failedImage`, when `--image` ran another version than the one that failed. What the component prints goes to stderr, so stdout has only the JSON.
 
 | Flag | What it does |
 |---|---|
@@ -156,6 +175,8 @@ alpheus validate -f flow.yaml
 
 Runs the same checks as `run` and has the API server check the fields and rules with a dry run, without creating anything. `--local` needs no cluster and skips the server's checks.
 
+With `-o json`: `file`, `valid`, `server` (true when the API server checked it too) and `warnings`, a list.
+
 | Flag | What it does |
 |---|---|
 | `-f string` | the flow file, or - for stdin |
@@ -170,6 +191,8 @@ alpheus results gc
 ```
 
 Lists the results in a bucket and deletes those whose `resultsTTL` has run out since the run finished. Results whose StreamRun is gone are kept until their TTL runs out, unless you pass `--orphans`; results with `resultsTTL` 0 are never deleted. It asks before deleting, unless you pass `--yes`.
+
+With `-o json`: A list with one object per run in the bucket: `prefix`, `run`, `namespace`, `uid`, `finishedAt`, `reason` (why it is deleted or kept) and `action`: `delete`, `deleted` or `keep`.
 
 | Flag | What it does |
 |---|---|
@@ -191,3 +214,5 @@ alpheus version
 ```
 
 Shows the CLI's version, and the controller's and the CRD's when the cluster can be read.
+
+With `-o json`: `cli`; `controllers`, each with `namespace`, `version` and `image`; `crd`, the versions the cluster serves; and `errors`, when the cluster could not be read.

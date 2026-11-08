@@ -676,7 +676,10 @@ func (a *Agent) publish(ctx context.Context, sig signal.Signal) {
 	}
 	sig.Run = signal.RunKey(a.cfg.Run, a.cfg.UID)
 	sig.Epoch = a.cfg.Attempt
-	a.sig.Publish(ctx, sig)
+	// Signals only make consumers look sooner; they poll without them.
+	if err := a.sig.Publish(ctx, sig); err != nil {
+		a.log.Debug("signal not sent", "error", err.Error())
+	}
 }
 
 // subscribe listens for signals on the step's incoming and outgoing edges.

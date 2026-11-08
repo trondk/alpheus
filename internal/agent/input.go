@@ -93,10 +93,6 @@ func (s *inStream) drained() bool {
 	return s.eos && len(s.ready) == 0 && s.nextAssigned(s.fetched) > s.last
 }
 
-// done reports whether every chunk assigned from the stream is done. Call
-// with Agent.mu held.
-func (s *inStream) done() bool { return s.drained() && len(s.open) == 0 }
-
 func (a *Agent) loadAcks(ctx context.Context, s *inStream) error {
 	data, err := store.ReadAll(ctx, a.store, s.ackKey)
 	switch {

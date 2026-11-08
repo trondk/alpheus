@@ -226,6 +226,10 @@ annotations; with the Prometheus Operator, set
 `metrics.serviceMonitor.enabled` in the chart for a ServiceMonitor and a
 PodMonitor. A component must not listen on port 9090.
 
+The agent also answers `/healthz` on that port while it runs, and
+`/readyz` once it serves the component's socket; until then `/readyz`
+answers 503.
+
 | Metric | From | What it is |
 |---|---|---|
 | `alpheus_chunks_total{direction}` | agent | Chunks downloaded (`in`) and uploaded (`out`) |
