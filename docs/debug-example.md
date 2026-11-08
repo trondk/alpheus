@@ -16,7 +16,7 @@ and amount. Its merge step has a bug on purpose.
 |---|---|---|
 | `orders` | Writes the orders, one chunk per day: `order_id,customer_id,date,amount,status` | 4,000,000 orders, 152 MiB in 20 chunks |
 | `customers` | Writes the customers: `customer_id,name,region` | 50,000 customers, 1.4 MiB |
-| `filter` | Drops cancelled orders, in three replicas | |
+| `filter` | Drops cancelled orders and the `status` column, in three replicas | |
 | `merge` | Joins each order with its customer and adds the name, region and region code | |
 | `sort` | Sorts everything by region, then amount, in its `TMPDIR` | |
 
@@ -154,10 +154,10 @@ $ podman run --rm --network=none --read-only --tmpfs /tmp --userns=keep-id:uid=6
 The component exited with code 1, as in the run. Its output is in alpheus-replay/shop-report-merge-0-3/out.
 ```
 
-The failure comes back, on your machine, on the same chunk: replica 0 of
-`filter`, its chunk 3, as in the run. A replay gives each chunk its
-producer and number, from the `_chunks.json` it writes next to the
-inputs. And the debug line that merge writes when it has loaded the
+The failure comes back, on your machine, on the first chunk of orders:
+chunk 3 of `filter`'s replica 0. A replay gives each chunk the producer
+and number it had in the run, from the `_chunks.json` it writes in each
+port's folder. And the debug line that merge writes when it has loaded the
 customers gives it away: `"":20`, twenty customers with an empty region.
 
 ## 5. Look at the data
@@ -168,10 +168,10 @@ The inputs are plain files:
 $ cd alpheus-replay/shop-report-merge-0-3
 $ ls in/*
 in/customers:
-customers-merge-0-000001.csv
+_chunks.json  customers-merge-0-000001.csv
 
 in/orders:
-filter-merge-0-000003.csv  filter-merge-0-000004.csv  …  filter-merge-2-000006.csv
+_chunks.json  filter-merge-0-000003.csv  filter-merge-0-000004.csv  …  filter-merge-2-000006.csv
 
 $ grep ",$" in/customers/*.csv | head -3
 C046001,Customer 46001,
@@ -344,7 +344,7 @@ Two things are needed on the test cluster, until the CLI can be told the
 storage's address from outside once (planned):
 
 - Add `--endpoint https://$(vagrant/talos.sh ip):30900 --ca-file
-  vagrant/_out/ca.crt` to `logs --kept`, `replay` and `chunks`: the run's
+  vagrant/_out/ca.crt` to `logs --kept` and `replay`: the run's
   storage address only works inside the cluster.
 - For a replay with podman, pull the image from the VM's address first
   and pass that with `--image`: `registry.alpheus.test` is the cluster's
