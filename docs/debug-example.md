@@ -254,7 +254,7 @@ $ cat alpheus-replay-v2/out/_summary.json
 868 warnings here, and 1,014 in the whole run in step 9: the failed
 attempt had twelve chunks of orders, days 7 to 18. Days 1 to 6 were done
 and acked, and days 19 and 20 were not yet written. The flow has
-`chunks: {maxUnacked: 4}`: a `filter` replica waits while four of its
+`chunks: {maxUnacked: 4}` ([backpressure](/docs/components/#5-a-step-reads-a-chunk-and-writes-its-output)): a `filter` replica waits while four of its
 chunks are not acked by merge, and merge acked none after day 6.
 Replicas 1 and 2 of `filter` had written four more each and waited with
 days 19 and 20; replica 0 had written all of its six.
@@ -270,8 +270,7 @@ replay as a pod in the run's namespace, under the run's NetworkPolicy:
 the agent's image fetches and checks the inputs there, and only the log
 comes to your terminal. The output stays in the pod and is deleted with
 it when the replay ends; to read the output, replay with podman as in
-step 7. Keeping a cluster replay's output in the bucket is planned
-(GO-159).
+step 7. Keeping a cluster replay's output in the bucket is planned.
 
 ```console
 $ alpheus replay shop-report merge -n flows --with cluster --image $MERGE_V2_IMAGE
@@ -371,7 +370,8 @@ $ podman pull --cert-dir _out/certs $ip:30500/debug-session/merge@sha256:1081930
 $ alpheus replay shop-report merge -n flows --image $ip:30500/debug-session/merge@sha256:1081930a… \
     --endpoint https://$ip:30900 --ca-file vagrant/_out/ca.crt
 
-$ v2=${MERGE_V2_IMAGE/registry.alpheus.test/$ip}
+$ . _out/debug-session.env      # MERGE_V2_IMAGE=registry.alpheus.test:30500/debug-session/merge@sha256:…
+$ v2=${MERGE_V2_IMAGE/registry.alpheus.test/$ip}   # the port stays: $ip:30500/…
 $ podman pull --cert-dir _out/certs $v2
 $ alpheus replay shop-report merge -n flows --image $v2 --dir alpheus-replay-v2 \
     --endpoint https://$ip:30900 --ca-file vagrant/_out/ca.crt
