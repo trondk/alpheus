@@ -52,8 +52,8 @@ A run has one of these phases:
 | Cancelled | ■ grey | Someone cancelled it, with `alpheus cancel` or `spec.cancel` |
 
 Steps and replicas are Pending, Running, Succeeded or Failed, with the
-same marks and colours. The page adds one more, **Stopped** (■ grey): a
-step or replica that had not finished when its run ended, for example
+same marks and colours, or **Stopped** (■ grey): a step or replica that
+had not finished when its run failed or was cancelled, for example
 because another step failed. Its pods were deleted with the run.
 
 ## A run

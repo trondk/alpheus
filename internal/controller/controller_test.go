@@ -896,6 +896,17 @@ func TestCancel(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitPhase(t, r, v1alpha1.RunCancelled)
+	// What had not finished is Stopped, not left Running or Pending.
+	for _, s := range get(t, r).Status.Steps {
+		if s.Phase != v1alpha1.StepStopped && s.Phase != v1alpha1.StepSucceeded {
+			t.Errorf("step %s: %s, want Stopped", s.Name, s.Phase)
+		}
+		for _, rs := range s.Replicas {
+			if rs.Phase != v1alpha1.StepStopped && rs.Phase != v1alpha1.StepSucceeded {
+				t.Errorf("step %s replica %d: %s, want Stopped", s.Name, rs.Index, rs.Phase)
+			}
+		}
+	}
 	eventually(t, "pods deleted", func() string {
 		if n := len(pods(t, ns)); n > 0 {
 			return fmt.Sprintf("%d pods left", n)

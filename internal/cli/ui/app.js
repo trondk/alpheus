@@ -54,7 +54,8 @@ function phase(p) {
 const finished = p => ["Succeeded", "PartiallySucceeded", "Failed", "Cancelled"].includes(p);
 
 // shown is a step's or replica's phase as the page shows it: one that had
-// not finished when its run ended was stopped with the run.
+// not finished when its run ended was stopped with the run. The controller
+// sets Stopped itself; this covers runs that finished before it did.
 function shown(p, run) {
   return finished(run.status?.phase) && (!p || p === "Running" || p === "Pending") ? "Stopped" : (p || "Pending");
 }

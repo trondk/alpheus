@@ -480,9 +480,9 @@ const (
 	RunCancelled          RunPhase = "Cancelled"
 )
 
-// StepPhase is the phase of a step.
+// StepPhase is the phase of a step or a replica.
 //
-// +kubebuilder:validation:Enum=Pending;Running;Succeeded;Failed
+// +kubebuilder:validation:Enum=Pending;Running;Succeeded;Failed;Stopped
 type StepPhase string
 
 const (
@@ -490,6 +490,9 @@ const (
 	StepRunning   StepPhase = "Running"
 	StepSucceeded StepPhase = "Succeeded"
 	StepFailed    StepPhase = "Failed"
+	// StepStopped is a step or replica that had not finished when its run
+	// failed or was cancelled; its pods are deleted with the run.
+	StepStopped StepPhase = "Stopped"
 )
 
 // Condition types of a StreamRun.

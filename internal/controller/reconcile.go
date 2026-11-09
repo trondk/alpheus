@@ -556,6 +556,22 @@ func stepPhase(rs []v1alpha1.ReplicaStatus) v1alpha1.StepPhase {
 	return v1alpha1.StepPending
 }
 
+// stopUnfinished marks the steps and replicas that had not finished when
+// the run ended as Stopped, so the status does not say they still run.
+func stopUnfinished(st *v1alpha1.StreamRunStatus) {
+	stop := func(p *v1alpha1.StepPhase) {
+		if *p == "" || *p == v1alpha1.StepPending || *p == v1alpha1.StepRunning {
+			*p = v1alpha1.StepStopped
+		}
+	}
+	for i := range st.Steps {
+		stop(&st.Steps[i].Phase)
+		for j := range st.Steps[i].Replicas {
+			stop(&st.Steps[i].Replicas[j].Phase)
+		}
+	}
+}
+
 // pods lists the run's pods by name.
 func (rc *Reconciler) pods(ctx context.Context, r *v1alpha1.StreamRun) (map[string]*corev1.Pod, error) {
 	var list corev1.PodList
@@ -589,6 +605,7 @@ func (rc *Reconciler) fail(ctx context.Context, r *v1alpha1.StreamRun, reason v1
 // (GO-123) and finishedAt in run.json (GO-98).
 func (rc *Reconciler) finish(ctx context.Context, r *v1alpha1.StreamRun, g *graph) {
 	r.Status.FinishedAt = ptrNow()
+	stopUnfinished(&r.Status)
 	status := metav1.ConditionTrue
 	if r.Status.Phase != v1alpha1.RunSucceeded {
 		status = metav1.ConditionFalse

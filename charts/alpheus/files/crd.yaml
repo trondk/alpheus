@@ -1749,6 +1749,7 @@ spec:
                       - Running
                       - Succeeded
                       - Failed
+                      - Stopped
                       type: string
                     replicas:
                       description: Replicas has one entry per replica.
@@ -1786,6 +1787,7 @@ spec:
                             - Running
                             - Succeeded
                             - Failed
+                            - Stopped
                             type: string
                           pod:
                             description: Pod is the name of the current attempt's
