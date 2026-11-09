@@ -150,8 +150,21 @@ func TestTestcase19(t *testing.T) {
 	if code := cli.Main(t.Context(), args, env); code != 0 {
 		t.Fatalf("alpheus %s: exit %d\n%s", strings.Join(args, " "), code, out.String())
 	}
+	// The port's folder has the chunks and the index of them, which local
+	// mode reads to see each chunk's producer and number.
 	files, err := os.ReadDir(filepath.Join(dir, "in", "default"))
-	if err != nil || len(files) != len(sk.Inputs) {
-		t.Errorf("fetched %d skipped chunks (%v), want %d\n%s", len(files), err, len(sk.Inputs), out.String())
+	n, index := 0, false
+	for _, f := range files {
+		if f.Name() == chunk.LocalIndex {
+			index = true
+		} else {
+			n++
+		}
+	}
+	if err != nil || n != len(sk.Inputs) {
+		t.Errorf("fetched %d skipped chunks (%v), want %d\n%s", n, err, len(sk.Inputs), out.String())
+	}
+	if !index {
+		t.Errorf("the replay wrote no %s next to the chunks", chunk.LocalIndex)
 	}
 }
