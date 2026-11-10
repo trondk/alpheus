@@ -17,13 +17,21 @@ limitations under the License.
 package e2e
 
 import (
+	"bytes"
 	"encoding/json"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
 	"alpheus-dev.org/alpheus/api/v1alpha1"
 	"alpheus-dev.org/alpheus/internal/chunk"
+	"alpheus-dev.org/alpheus/internal/cli"
 	"alpheus-dev.org/alpheus/internal/replay"
 	"alpheus-dev.org/alpheus/internal/store"
 )
@@ -107,4 +115,79 @@ func TestTestcase21(t *testing.T) {
 		t.Errorf("merge: %d warnings, %d blank regions, %d errors", merge.Warnings, merge.Counts["blank_region"], merge.Errors)
 	}
 	t.Logf("version 2 joined %d orders, %d of them with a blank region", filtered, merge.Warnings)
+
+	// Getting the data out with the CLI (SPEC 9.1). It finds the storage
+	// from here by the annotations on the run's storage Secret, as the one
+	// who runs the cluster sets them, without flags (GO-156).
+	var secret corev1.Secret
+	if err := e.c.Get(t.Context(), client.ObjectKey{Namespace: e.ns, Name: "alpheus-s3"}, &secret); err != nil {
+		t.Fatal(err)
+	}
+	secret.Annotations = map[string]string{cli.AnnotationExternalEndpoint: need(t, "ALPHEUS_E2E_S3_ENDPOINT")}
+	if ca := os.Getenv("ALPHEUS_E2E_S3_CA_FILE"); ca != "" {
+		pem, err := os.ReadFile(ca)
+		if err != nil {
+			t.Fatal(err)
+		}
+		secret.Annotations[cli.AnnotationExternalCA] = string(pem)
+	}
+	if err := e.c.Update(t.Context(), &secret); err != nil {
+		t.Fatal(err)
+	}
+	alpheus := func(args ...string) (string, string, int) {
+		args = append(args, "-n", e.ns)
+		var stdout, stderr bytes.Buffer
+		env := cli.DefaultEnv()
+		env.Stdout, env.Stderr = &stdout, &stderr
+		env.Getenv = func(string) string { return "" }
+		code := cli.Main(t.Context(), args, env)
+		return stdout.String(), stderr.String(), code
+	}
+	// The failed run's result is fetched and said to be incomplete
+	// (GO-152).
+	failedDir := t.TempDir()
+	if _, stderr, code := alpheus("results", "get", r.Name, "-d", failedDir, "--complete"); code != 1 || !strings.Contains(stderr, "incomplete") {
+		t.Errorf("results get --complete of the failed run: exit %d\n%s", code, stderr)
+	}
+
+	dir := t.TempDir()
+	if _, stderr, code := alpheus("results", "get", fixed.Name, "-d", dir, "--complete", "--errors"); code != 0 {
+		t.Fatalf("results get: exit %d\n%s", code, stderr)
+	}
+	var ix cli.Index
+	if data, err := os.ReadFile(filepath.Join(dir, cli.IndexFile)); err != nil || json.Unmarshal(data, &ix) != nil {
+		t.Fatalf("%s: %v", cli.IndexFile, err)
+	}
+	var want int64
+	for _, res := range fixed.Status.Results {
+		want += res.Chunks
+	}
+	if int64(len(ix.Chunks)) != want || want == 0 {
+		t.Errorf("results get fetched %d chunks, status.results has %d", len(ix.Chunks), want)
+	}
+	for _, c := range ix.Chunks {
+		if fi, err := os.Stat(filepath.Join(dir, filepath.FromSlash(c.File))); err != nil || fi.Size() != c.Bytes {
+			t.Errorf("%s: %v", c.File, err)
+		}
+	}
+	out, stderr, code := alpheus("results", "ls", fixed.Name, "-o", "json")
+	var listed cli.Index
+	if code != 0 || json.Unmarshal([]byte(out), &listed) != nil || len(listed.Chunks) != len(ix.Chunks) ||
+		!strings.HasPrefix(listed.Chunks[0].URL, "s3://") {
+		t.Errorf("results ls: exit %d, %d chunks\n%s", code, len(listed.Chunks), stderr)
+	}
+	first := ix.Chunks[0]
+	out, stderr, code = alpheus("results", "cat", fixed.Name, first.Result, "--replica", strconv.Itoa(first.Replica), "--chunks", "1")
+	if code != 0 || int64(len(out)) != first.Bytes {
+		t.Errorf("results cat --chunks 1: exit %d, %d bytes, want %d\n%s", code, len(out), first.Bytes, stderr)
+	}
+
+	// The error log has merge's warnings, one per line with -o json.
+	out, stderr, code = alpheus("errors", fixed.Name, "merge", "-o", "json")
+	if lines := strings.Count(out, "\n"); code != 0 || int64(lines) != merge.Warnings {
+		t.Errorf("errors merge -o json: exit %d, %d entries, status has %d warnings\n%s", code, lines, merge.Warnings, stderr)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "_errors", "merge", "0", "manifest.json")); err != nil {
+		t.Errorf("results get --errors: %v", err)
+	}
 }

@@ -267,11 +267,12 @@ en strøm med manifest, ligesom en kant, men under
 
 Endpointet i `status.results` er lagerets adresse inde i klyngen. Uden for
 klyngen giver man CLI'en en anden adresse med `--endpoint` og `--ca-file`.
-Planlagt (GO-156): den, der driver klyngen, kan sætte adressen udefra som
-annotationen `alpheus-dev.org/external-endpoint` på storage-Secret'en, og
-en CA til den som `alpheus-dev.org/external-ca` (PEM), så CLI'en når
-lageret uden flag. Controller og agenter bruger dem ikke, og testklyngens
-`vagrant/talos.sh` skal sætte dem, når Garage installeres.
+Den, der driver klyngen, kan sætte adressen udefra som annotationen
+`alpheus-dev.org/external-endpoint` på storage-Secret'en, og en CA til den
+som `alpheus-dev.org/external-ca` (PEM), så CLI'en når lageret uden flag
+(GO-156). Controller og agenter bruger dem ikke. Testklyngens
+`vagrant/services.sh` sætter dem på `default/alpheus-s3`, når Garage
+installeres.
 
 Uden `resultsBucket` er Secret'en i `status.results` den samme som
 agenternes, med adgang til hele bucketen. En læser, der kun skal kunne
@@ -566,11 +567,11 @@ API'et. De bruges ikke til andet.
 | `alpheus replay <run> <trin>` | Kør et fejlet forsøg igen for sig selv på dets input (GO-141, GO-161) |
 | `alpheus ui` | En side i browseren, der viser runs live (GO-142, GO-143) |
 | `alpheus validate -f flow.yaml` | Valider en flow-fil uden at oprette den |
-| `alpheus results get <run> [resultat …]` | Hent resultater til en mappe (9.1, planlagt) |
-| `alpheus results cat <run> <resultat>` | Skriv ét resultat til stdout (9.1, planlagt) |
-| `alpheus results ls <run> [resultat …]` | List de committede chunks som S3-stier (9.1, planlagt) |
+| `alpheus results get <run> [resultat …]` | Hent resultater til en mappe (9.1) |
+| `alpheus results cat <run> <resultat>` | Skriv ét resultat til stdout (9.1) |
+| `alpheus results ls <run> [resultat …]` | List de committede chunks som S3-stier (9.1) |
 | `alpheus results copy <run> <resultat> --to …` | Kopiér et resultat til et andet lager uden om maskinen (9.1, planlagt, anden omgang) |
-| `alpheus errors <run> [trin]` | Vis eller hent fejlloggen (9.1, planlagt) |
+| `alpheus errors <run> [trin]` | Vis eller hent fejlloggen (9.1) |
 | `alpheus results gc [--dry-run]` | Find og slet resultater med udløbet TTL eller uden StreamRun (GO-99) |
 | `alpheus version` | Vis CLI-, controller- og CRD-version |
 
@@ -592,6 +593,10 @@ stå før og efter argumenterne. Alle kommandoer har `--kubeconfig`,
 - `chunks` læser manifesterne for en kant eller et resultat
   (`<trin>.<udgang>`) med nøglerne i runnets storage-Secret. Er
   endpointet kun nåeligt i klyngen, angives et andet med `--endpoint`.
+- `results get`, `cat` og `ls` læser kun de chunks, manifesterne lister,
+  med nøglerne i `status.results` (GO-129), og `errors` kun de segmenter,
+  fejlloggens `manifest.json` lister (9.1). De, `chunks`, `logs --kept` og
+  `replay` finder lageret som i GO-156.
 - `results gc` får lageret med flag (`--endpoint`, `--bucket`,
   `--secret` m.fl.), da StreamRun-objektet kan være væk.
 - `version` viser CLI'ens version, som Go stempler i binæren, og
@@ -603,7 +608,7 @@ stå før og efter argumenterne. Alle kommandoer har `--kubeconfig`,
 | GO-44 | SKAL | done, logic checked | Alle kommandoer understøtter `-o json` og `-o yaml`, så de kan bruges i scripts. |
 | GO-45 | SKAL | done, logic checked | Fejl giver en exit-kode ≠ 0 og en besked, der siger, hvad der gik galt, og hvad man kan gøre. |
 
-### 9.1 At få data ud (planlagt)
+### 9.1 At få data ud
 
 Et run er ikke færdigt for brugeren, før data, fejllog og logs er ude.
 CLI'en skal føre brugeren derhen uden at kende S3, nøgler eller stier, og
@@ -656,17 +661,17 @@ det.
 
 | ID | Niveau | Status | Krav |
 |---|---|---|---|
-| GO-146 | SKAL | done (delvis), logic checked: `watch` og `get` viser `logs --kept` og `replay` for et fejlet trin; resten af listen mangler | Når `watch` slutter i tekst-output, udskriver den efter status en liste af kommandoer til at få resultater, fejllog og logs ud og rydde op, med runnets navn og `-n`. Listen har kun linjer, der passer til runnet: fejllog kun med fejl, `results cat` kun for resultater under 1 MiB, `replay --skipped` ved overspringede chunks. Ved `Failed` står `logs`, `logs --kept` og `replay` for den replika, der stoppede runnet, først. Er et resultat over grænsen i GO-150, foreslås `results ls` og `results copy` i stedet for `results get`. `get <run>` viser samme liste for et færdigt run. Med `-o json` og `-o yaml` udskrives ingen liste. |
-| GO-147 | SKAL | — | `results get <run> [<trin>.<udgang> …]` henter alle runnets resultater eller de nævnte til `./<run>/` eller `-d <mappe>`, i layoutet ovenfor. Kun chunks, som manifesterne og deres segmenter lister, hentes; filer under prefixet, som ikke står i et manifest, blev aldrig committet og ignoreres (GO-32). Hver chunk tjekkes mod `bytes` og `sha256`, før den regnes for hentet. |
-| GO-148 | SKAL | — | `results get` skriver aldrig oven i noget, den ikke selv har hentet. En mappe, der findes, bruges kun, hvis den er tom, eller hvis dens `alpheus-results.json` har samme run og UID; ellers er det en fejl, der nævner `-d` og `--force`. `--force` overskriver kun runnets egne filer og rører intet andet i mappen. |
-| GO-149 | SKAL | — | `results get` kan afbrydes og fortsættes. En chunk skrives først som `<navn>.partial` og omdøbes, når størrelse og SHA-256 stemmer, så en fil uden `.partial` altid er hel. Næste kørsel springer filer over, der stemmer med `alpheus-results.json`, og fortsætter en `.partial` med en Range-forespørgsel fra, hvor den slap, kun hvis objektets ETag er den samme (GO-136). SHA-256 beregnes undervejs, så en stor chunk ikke læses to gange. Flere chunks hentes ad gangen (`--parallel`, standard 4). En chunk, der ikke stemmer, er en fejl med dens navn, og intet af den bliver liggende. |
-| GO-150 | SKAL | — | Før `results get` henter noget, lægger den størrelsen sammen fra manifesterne og tjekker den ledige plads i målmappen. Er der ikke plads, starter den ikke og foreslår `--replica`, `--chunks`, en anden `-d` eller `results ls`. Over 10 GiB spørger den først, medmindre `--yes` er sat. |
-| GO-151 | SKAL | — | `results get` og `results cat` kan nøjes med en del: `--replica <n>` og `--chunks <fra>-<til>` (chunk-numre pr. replika). `results cat` skriver chunks i rækkefølge, replika 0 først, efter samme tjek som `get`, så `results cat … --chunks 1 \| zcat \| head` viser begyndelsen af et resultat. |
-| GO-152 | SKAL | — | Er runnet `Failed`, eller mangler en replika EOS, henter `results get` de committede chunks og siger tydeligt, at resultatet er ufuldstændigt, pr. resultat og replika. `alpheus-results.json` har `complete: false` for hver replika uden EOS. Exit-koden er 0, når hentningen lykkedes; med `--complete` er den ≠ 0 for et ufuldstændigt resultat. |
-| GO-153 | SKAL | — | `results ls <run> [<trin>.<udgang> …]` lister de committede chunks som `s3://<bucket>/<nøgle>` med størrelse og SHA-256, i tekst og med `-o json`, så værktøjer, der læser S3 selv, får præcis de committede chunks og ikke alt under prefixet. |
-| GO-154 | SKAL | — | `errors <run> [trin]` viser fejlloggen (GO-118) for alle trin eller ét: tid, niveau, kode, besked og chunk, med `--tail <n>` og `-o json` som én post pr. linje. Til sidst kommer en optælling pr. kode. Med `-d <mappe>` gemmes segmenterne under `<mappe>/_errors/<trin>/<replika>/`, og `results get --errors` henter fejlloggen med resultaterne. |
+| GO-146 | SKAL | done (delvis), logic checked: `results copy` foreslås ikke ved store resultater, da den ikke er bygget (GO-155); closed (cli: TestNext) | Når `watch` slutter i tekst-output, udskriver den efter status en liste af kommandoer til at få resultater, fejllog og logs ud og rydde op, med runnets navn og `-n`. Listen har kun linjer, der passer til runnet: fejllog kun med fejl, `results cat` kun for resultater under 1 MiB, `replay --skipped` ved overspringede chunks. Ved `Failed` står `logs`, `logs --kept` og `replay` for den replika, der stoppede runnet, først. Er et resultat over grænsen i GO-150, foreslås `results ls` og `results copy` i stedet for `results get`. `get <run>` viser samme liste for et færdigt run. Med `-o json` og `-o yaml` udskrives ingen liste. |
+| GO-147 | SKAL | done, logic checked, closed (cli: TestResultsGetCatLs; testcase21) | `results get <run> [<trin>.<udgang> …]` henter alle runnets resultater eller de nævnte til `./<run>/` eller `-d <mappe>`, i layoutet ovenfor. Kun chunks, som manifesterne og deres segmenter lister, hentes; filer under prefixet, som ikke står i et manifest, blev aldrig committet og ignoreres (GO-32). Hver chunk tjekkes mod `bytes` og `sha256`, før den regnes for hentet. |
+| GO-148 | SKAL | done, logic checked, closed (cli: TestResultsGetFolder) | `results get` skriver aldrig oven i noget, den ikke selv har hentet. En mappe, der findes, bruges kun, hvis den er tom, eller hvis dens `alpheus-results.json` har samme run og UID; ellers er det en fejl, der nævner `-d` og `--force`. `--force` overskriver kun runnets egne filer og rører intet andet i mappen. |
+| GO-149 | SKAL | done, logic checked, closed (cli: TestResultsGetResume; store: TestMemory, TestS3) | `results get` kan afbrydes og fortsættes. En chunk skrives først som `<navn>.partial` og omdøbes, når størrelse og SHA-256 stemmer, så en fil uden `.partial` altid er hel. Næste kørsel springer filer over, der stemmer med `alpheus-results.json`, og fortsætter en `.partial` med en Range-forespørgsel fra, hvor den slap, kun hvis objektets ETag er den samme (GO-136). SHA-256 beregnes undervejs, så en stor chunk ikke læses to gange. Flere chunks hentes ad gangen (`--parallel`, standard 4). En chunk, der ikke stemmer, er en fejl med dens navn, og intet af den bliver liggende. |
+| GO-150 | SKAL | done, logic checked, closed (cli: TestResultsGetSpace) | Før `results get` henter noget, lægger den størrelsen sammen fra manifesterne og tjekker den ledige plads i målmappen. Er der ikke plads, starter den ikke og foreslår `--replica`, `--chunks`, en anden `-d` eller `results ls`. Over 10 GiB spørger den først, medmindre `--yes` er sat. |
+| GO-151 | SKAL | done, logic checked, closed (cli: TestResultsGetCatLs) | `results get` og `results cat` kan nøjes med en del: `--replica <n>` og `--chunks <fra>-<til>` (chunk-numre pr. replika). `results cat` skriver chunks i rækkefølge, replika 0 først, efter samme tjek som `get`, så `results cat … --chunks 1 \| zcat \| head` viser begyndelsen af et resultat. |
+| GO-152 | SKAL | done, logic checked, closed (cli: TestResultsIncomplete; testcase21) | Er runnet `Failed`, eller mangler en replika EOS, henter `results get` de committede chunks og siger tydeligt, at resultatet er ufuldstændigt, pr. resultat og replika. `alpheus-results.json` har `complete: false` for hver replika uden EOS. Exit-koden er 0, når hentningen lykkedes; med `--complete` er den ≠ 0 for et ufuldstændigt resultat. |
+| GO-153 | SKAL | done, logic checked, closed (cli: TestResultsGetCatLs; testcase21) | `results ls <run> [<trin>.<udgang> …]` lister de committede chunks som `s3://<bucket>/<nøgle>` med størrelse og SHA-256, i tekst og med `-o json`, så værktøjer, der læser S3 selv, får præcis de committede chunks og ikke alt under prefixet. |
+| GO-154 | SKAL | done, logic checked, closed (cli: TestErrors; testcase21) | `errors <run> [trin]` viser fejlloggen (GO-118) for alle trin eller ét: tid, niveau, kode, besked og chunk, med `--tail <n>` og `-o json` som én post pr. linje. Til sidst kommer en optælling pr. kode. Med `-d <mappe>` gemmes segmenterne under `<mappe>/_errors/<trin>/<replika>/`, og `results get --errors` henter fejlloggen med resultaterne. |
 | GO-155 | BØR | — | `results copy <run> <trin>.<udgang> --to s3://<bucket>/<prefix> --to-secret <secret>` kopierer de committede chunks og `alpheus-results.json` til et andet lager. Er målet samme endpoint, bruges server-side copy, så data ikke går gennem maskinen; ellers streames chunk for chunk uden at gemme noget på disken. Den kan fortsættes som `results get` og tjekker SHA-256 på det, den streamer. |
-| GO-156 | SKAL | — | `results`, `errors`, `chunks` og `logs --kept` finder S3-adressen i denne rækkefølge: `--endpoint` og `--ca-file`; miljøvariablerne `ALPHEUS_S3_ENDPOINT` og `ALPHEUS_S3_CA_FILE`; annotationerne `alpheus-dev.org/external-endpoint` og `alpheus-dev.org/external-ca` på runnets storage-Secret (5.2); endpointet i `status.results` eller `spec.storage`. Kan lageret ikke nås, siger fejlen, hvilken adresse der blev prøvet, og hvad man kan sætte. |
+| GO-156 | SKAL | done, logic checked, closed (cli: TestStorageAddress; testcase21) | `results`, `errors`, `chunks` og `logs --kept` finder S3-adressen i denne rækkefølge: `--endpoint` og `--ca-file`; miljøvariablerne `ALPHEUS_S3_ENDPOINT` og `ALPHEUS_S3_CA_FILE`; annotationerne `alpheus-dev.org/external-endpoint` og `alpheus-dev.org/external-ca` på runnets storage-Secret (5.2); endpointet i `status.results` eller `spec.storage`. Kan lageret ikke nås, siger fejlen, hvilken adresse der blev prøvet, og hvad man kan sætte. |
 
 
 ### 9.2 Andre programmer end CLI'en

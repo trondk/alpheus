@@ -48,14 +48,17 @@ type Env struct {
 	Stderr io.Writer
 	// Connect returns clients for the cluster the flags name.
 	Connect func(k Kube) (*Clients, error)
-	// OpenStore opens a run's storage with its storage Secret.
-	OpenStore func(ctx context.Context, c client.Reader, r *v1alpha1.StreamRun, caFile string) (store.Store, error)
+	// OpenStore opens a run's storage with its storage Secret, at the
+	// address the storage is reached by from here.
+	OpenStore func(ctx context.Context, c client.Reader, r *v1alpha1.StreamRun, at store.Address) (store.Store, error)
 	// NewS3 opens storage named by flags, for results gc.
 	NewS3 func(store.S3Config) (store.Store, error)
 	// RunCommand runs a program, such as podman for replay, and returns
 	// its exit code.
 	RunCommand func(ctx context.Context, args []string, stdout, stderr io.Writer) (int, error)
 	Now        func() time.Time
+	// Getenv reads the environment; nil means os.Getenv.
+	Getenv func(string) string
 }
 
 // Clients are the connections to one cluster.
@@ -155,7 +158,8 @@ func commands() []command {
 		{"replay", "<run> <step>", "Run a failed attempt again on its own, on its inputs, at debug level", replayCmd},
 		{"ui", "", "Open a page in the browser that shows the runs live", uiCmd},
 		{"validate", "-f flow.yaml", "Check a flow file without creating it", validateCmd},
-		{"results", "gc [--dry-run]", "Delete results whose TTL has run out", resultsCmd},
+		{"results", "get|cat|ls|gc", "Fetch a run's results, write one to stdout, list them as S3 paths, or delete expired ones", resultsCmd},
+		{"errors", "<run> [step]", "Show the error log the components wrote", errorsCmd},
 		{"version", "", "Show the CLI, controller and CRD versions", versionCmd},
 	}
 }

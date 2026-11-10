@@ -365,11 +365,7 @@ func (u *ui) storeOf(ctx context.Context, run *v1alpha1.StreamRun) (store.Store,
 	if st, ok := u.stores[string(run.UID)]; ok {
 		return st, nil
 	}
-	sr := run.DeepCopy()
-	if u.endpoint != "" {
-		sr.Spec.Storage.Endpoint = u.endpoint
-	}
-	st, err := u.e.OpenStore(ctx, u.c.Client, sr, u.caFile)
+	st, err := u.e.OpenStore(ctx, u.c.Client, run, store.Address{Endpoint: u.endpoint, CAFile: u.caFile})
 	if err != nil {
 		return nil, err
 	}

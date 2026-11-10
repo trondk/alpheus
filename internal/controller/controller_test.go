@@ -1273,11 +1273,18 @@ func TestResultsBucket(t *testing.T) {
 	}
 	res := chunk.NewManifest("sales", uid, "sum.result", 0, 1)
 	res.Append(chunk.Chunk{N: 1, Ext: "txt", Bytes: 7, SHA256: strings.Repeat("0", 64)})
+	res.Observed = &chunk.Observed{Seq: 1, Errors: 1, Segments: 1}
 	put(t, chunk.ResultStream("sales", uid, "sum", "result", 0).ManifestKey(), res)
 	eventually(t, "results status", func() string {
 		st := get(t, r).Status
 		if len(st.Results) != 1 || st.Results[0].Bucket != "alpheus-results" || st.Results[0].SecretRef != "results-reader" {
 			return fmt.Sprintf("%+v", st.Results)
+		}
+		// The error log is under results/ too, so in the results bucket.
+		for _, ss := range st.Steps {
+			if ss.Name == "sum" && !strings.HasPrefix(ss.ErrorLog, "s3://alpheus-results/results/sales/") {
+				return "errorLog " + ss.ErrorLog
+			}
 		}
 		return ""
 	})

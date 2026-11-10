@@ -55,8 +55,8 @@ func logsCmd(ctx context.Context, e *Env, args []string) error {
 	fs.BoolVar(followLogs, "f", false, "short for --follow")
 	tail := fs.Int64("tail", -1, "only the last lines of each container; -1 means all")
 	kept := fs.Bool("kept", false, "show the logs kept from failed attempts in the bucket, also after the pods are gone")
-	caFile := fs.String("ca-file", "", "with --kept: CA bundle for the storage endpoint")
-	endpoint := fs.String("endpoint", "", "with --kept: the S3 endpoint as seen from here, when spec.storage.endpoint is only reachable in the cluster")
+	var s3 s3Flags
+	s3.add(fs)
 	pos, err := parse(fs, args, &o)
 	if err != nil {
 		return err
@@ -80,7 +80,7 @@ func logsCmd(ctx context.Context, e *Env, args []string) error {
 		if len(pos) == 2 {
 			step = pos[1]
 		}
-		return keptLogs(ctx, e, c, &r, step, *container, o.output, *caFile, *endpoint)
+		return keptLogs(ctx, e, c, &r, step, *container, o.output, s3)
 	}
 	labels := client.MatchingLabels{controller.LabelRun: r.Name}
 	var order []string
@@ -176,14 +176,10 @@ func logsCmd(ctx context.Context, e *Env, args []string) error {
 
 // keptLogs prints the logs kept from failed attempts (GO-140), from
 // results/<run>/<uid>/_logs/<step>/<replica>/attempt-<n>/<container>.log.
-func keptLogs(ctx context.Context, e *Env, c *Clients, r *v1alpha1.StreamRun, step, container, output, caFile, endpoint string) error {
-	sr := r.DeepCopy()
-	if endpoint != "" {
-		sr.Spec.Storage.Endpoint = endpoint
-	}
-	st, err := e.OpenStore(ctx, c.Client, sr, caFile)
+func keptLogs(ctx context.Context, e *Env, c *Clients, r *v1alpha1.StreamRun, step, container, output string, s3 s3Flags) error {
+	st, at, err := e.openRun(ctx, c.Client, r, s3)
 	if err != nil {
-		return hint(err, "the kept logs are read with the keys in spec.storage.secretRef, so you need access to that Secret")
+		return err
 	}
 	found := 0
 	for _, s := range r.Spec.Steps {
@@ -193,7 +189,7 @@ func keptLogs(ctx context.Context, e *Env, c *Clients, r *v1alpha1.StreamRun, st
 		prefix := chunk.LogsPrefix(r.Name, string(r.UID), s.Name, -1, 0)
 		for key, err := range st.List(ctx, prefix) {
 			if err != nil {
-				return hint(err, "if "+sr.Spec.Storage.Endpoint+" is only reachable inside the cluster, pass the address you reach it by with --endpoint")
+				return at.explain(err)
 			}
 			// <replica>/attempt-<n>/<container>.log
 			parts := strings.Split(strings.TrimPrefix(key, prefix), "/")

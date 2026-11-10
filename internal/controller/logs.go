@@ -74,7 +74,7 @@ func (rc *Reconciler) keepLogs(ctx context.Context, r *v1alpha1.StreamRun, s *v1
 	if kept {
 		for i := range r.Status.Steps {
 			if r.Status.Steps[i].Name == s.Name {
-				r.Status.Steps[i].Logs = fmt.Sprintf("s3://%s/%s", r.Spec.Storage.Bucket, chunk.LogsPrefix(r.Name, string(r.UID), s.Name, -1, 0))
+				r.Status.Steps[i].Logs = fmt.Sprintf("s3://%s/%s", ResultsBucket(r), chunk.LogsPrefix(r.Name, string(r.UID), s.Name, -1, 0))
 			}
 		}
 	}

@@ -152,7 +152,7 @@ func (rc *Reconciler) readStorage(ctx context.Context, st store.Store, r *v1alph
 			}
 		}
 		if ss.Errors+ss.Warnings+ss.ErrorsDropped > 0 {
-			ss.ErrorLog = fmt.Sprintf("s3://%s/results/%s/%s/_errors/%s/", r.Spec.Storage.Bucket, r.Name, uid, ss.Name)
+			ss.ErrorLog = fmt.Sprintf("s3://%s/results/%s/%s/_errors/%s/", ResultsBucket(r), r.Name, uid, ss.Name)
 		}
 
 		found, err := rc.results(ctx, st, r, s)
@@ -163,6 +163,15 @@ func (rc *Reconciler) readStorage(ctx context.Context, st store.Store, r *v1alph
 	}
 	r.Status.Results = results
 	return nil
+}
+
+// ResultsBucket is the bucket with everything under results/<run>/<uid>/:
+// spec.storage.resultsBucket, or bucket (GO-129).
+func ResultsBucket(r *v1alpha1.StreamRun) string {
+	if b := r.Spec.Storage.ResultsBucket; b != "" {
+		return b
+	}
+	return r.Spec.Storage.Bucket
 }
 
 // results lists a step's results: outputs no edge leaves from, found by

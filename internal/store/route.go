@@ -49,6 +49,10 @@ func (r *routed) Get(ctx context.Context, key string) (io.ReadCloser, error) {
 	return r.of(key).Get(ctx, key)
 }
 
+func (r *routed) GetRange(ctx context.Context, key string, offset int64, etag string) (io.ReadCloser, string, error) {
+	return GetRange(ctx, r.of(key), key, offset, etag)
+}
+
 func (r *routed) Delete(ctx context.Context, key string) error { return r.of(key).Delete(ctx, key) }
 
 // List lists in the store prefix belongs to. A prefix both stores could

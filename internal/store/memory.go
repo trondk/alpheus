@@ -19,6 +19,8 @@ package store
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"iter"
@@ -64,6 +66,29 @@ func (m *Memory) Get(ctx context.Context, key string) (io.ReadCloser, error) {
 		return nil, fmt.Errorf("get %s: %w", key, ErrNotFound)
 	}
 	return io.NopCloser(bytes.NewReader(data)), nil
+}
+
+// GetRange opens key from offset, as long as its ETag, the SHA-256 of its
+// content, is etag.
+func (m *Memory) GetRange(ctx context.Context, key string, offset int64, etag string) (io.ReadCloser, string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, "", fmt.Errorf("get %s: %w", key, err)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	data, ok := m.objects[key]
+	if !ok {
+		return nil, "", fmt.Errorf("get %s: %w", key, ErrNotFound)
+	}
+	sum := sha256.Sum256(data)
+	tag := hex.EncodeToString(sum[:])
+	if etag != "" && etag != tag {
+		return nil, "", fmt.Errorf("get %s: %w", key, ErrChanged)
+	}
+	if offset > int64(len(data)) {
+		return nil, "", fmt.Errorf("get %s: offset %d beyond %d bytes", key, offset, len(data))
+	}
+	return io.NopCloser(bytes.NewReader(data[offset:])), tag, nil
 }
 
 func (m *Memory) Delete(ctx context.Context, key string) error {

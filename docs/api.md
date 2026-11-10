@@ -163,6 +163,15 @@ read only the chunks it lists:
 Any S3 client can read them. Use path-style requests (`endpoint/bucket/key`)
 and the region from the result. The endpoint is the address inside the
 cluster; a program outside it reaches the storage by another address.
+Whoever runs the cluster can put that address on the storage Secret as
+the annotation `alpheus-dev.org/external-endpoint`, and a CA for it, as
+PEM, as `alpheus-dev.org/external-ca`. The CLI uses them; controller and
+agents do not.
+
+`alpheus results ls <run> -o json` lists exactly the committed chunks of a
+run's results as `s3://<bucket>/<key>` with their size and SHA-256, and
+`alpheus results get` fetches them; the
+[CLI reference](/docs/cli/#alpheus-results-ls) has the shape.
 
 ## In Go
 

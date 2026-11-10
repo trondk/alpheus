@@ -777,13 +777,14 @@ func (rc *Reconciler) store(ctx context.Context, r *v1alpha1.StreamRun) (store.S
 	if rc.Options.NewStore != nil {
 		return rc.Options.NewStore(ctx, r)
 	}
-	return OpenStore(ctx, rc.Client, r, rc.Options.StorageCAFile)
+	return OpenStore(ctx, rc.Client, r, store.Address{CAFile: rc.Options.StorageCAFile})
 }
 
 // OpenStore opens a run's storage with the keys in its storage Secret,
 // with results/ in the results bucket when the run has one (GO-129).
-// caFile is a CA bundle for the endpoint, or empty.
-func OpenStore(ctx context.Context, c client.Reader, r *v1alpha1.StreamRun, caFile string) (store.Store, error) {
+// at says where the storage is reached from, when that is not
+// spec.storage.endpoint, and which CAs to trust.
+func OpenStore(ctx context.Context, c client.Reader, r *v1alpha1.StreamRun, at store.Address) (store.Store, error) {
 	var secret corev1.Secret
 	if err := c.Get(ctx, client.ObjectKey{Namespace: r.Namespace, Name: r.Spec.Storage.SecretRef}, &secret); err != nil {
 		return nil, fmt.Errorf("storage secret: %w", err)
@@ -794,7 +795,11 @@ func OpenStore(ctx context.Context, c client.Reader, r *v1alpha1.StreamRun, caFi
 		Region:    r.Spec.Storage.Region,
 		AccessKey: string(secret.Data["AWS_ACCESS_KEY_ID"]),
 		SecretKey: string(secret.Data["AWS_SECRET_ACCESS_KEY"]),
-		CAFile:    caFile,
+		CAFile:    at.CAFile,
+		CAPEM:     at.CAPEM,
+	}
+	if at.Endpoint != "" {
+		cfg.Endpoint = at.Endpoint
 	}
 	main, err := store.NewS3(cfg)
 	if err != nil || r.Spec.Storage.ResultsBucket == "" {

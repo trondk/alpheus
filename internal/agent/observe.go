@@ -62,9 +62,9 @@ type Observations struct {
 	ErrorsDropped int64            `json:"errorsDropped"`
 }
 
-// logEntry is one line of the error log (GO-117). It has the same fields as
-// the SDK's local mode writes.
-type logEntry struct {
+// LogEntry is one line of the error log (GO-117), as docs/api.md shows it.
+// It has the same fields as the SDK's local mode writes.
+type LogEntry struct {
 	Time    time.Time       `json:"time"`
 	Level   string          `json:"level"`
 	Code    string          `json:"code"`
@@ -211,7 +211,7 @@ func (a *Agent) prepareObservations(ctx context.Context, r *report, chunkName st
 		if r.chunks != nil {
 			name = r.chunks[i]
 		}
-		line, err := json.Marshal(logEntry{
+		line, err := json.Marshal(LogEntry{
 			Time:    time.Unix(0, e.Time).UTC(),
 			Level:   e.Level,
 			Code:    e.Code,

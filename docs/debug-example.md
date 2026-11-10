@@ -352,12 +352,13 @@ $ alpheus logs shop-report-v2 merge -n flows
 
 ## On the test cluster
 
-Two things are needed on the test cluster, until the CLI can be told the
-storage's address from outside once (planned):
+Two things are needed on the test cluster:
 
-- Add `--endpoint https://$(vagrant/talos.sh ip):30900 --ca-file
-  vagrant/_out/ca.crt` to `logs --kept` and `replay`: the run's
-  storage address only works inside the cluster.
+- The CLI must reach the storage from your machine: the run's storage
+  address only works inside the cluster. Annotate the Secret once, as in
+  [Getting started](/docs/getting-started/#2-give-a-namespace-the-storage-keys),
+  or add `--endpoint https://$(vagrant/talos.sh ip):30900 --ca-file
+  vagrant/_out/ca.crt` to `logs --kept` and `replay`, as below.
   This goes for `replay --with cluster` too: the CLI reads the failure
   from the bucket before it starts the pod.
 - For a replay with podman, pull each image from the VM's address first

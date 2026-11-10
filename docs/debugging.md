@@ -93,6 +93,16 @@ message, fields and the input chunk. `status.steps[].errors`, `warnings`
 and `errorLog` say how many there are and where. See
 [Writing components](/docs/components/#the-rules-a-component-follows).
 
+```console
+$ alpheus errors meter-etl clean -n flows --tail 3
+```
+
+shows the entries of every step, or one, with the time, step, replica,
+level, code, input chunk and message, and then a count per code. `-o json`
+prints one entry per line, as the log has them, and `-d <dir>` saves the
+log's files under `<dir>/_errors/<step>/<replica>/`.
+`alpheus results get --errors` fetches it with the results.
+
 ## Replaying a failed attempt
 
 When an attempt fails, the controller also keeps what is needed to run it
@@ -147,8 +157,9 @@ $ podman run --rm --network=none --read-only --tmpfs /tmp --userns=keep-id:uid=6
   [A debug session](/docs/debug-example/#7-try-the-fix-on-the-same-data).
 - `-e KEY=VALUE` passes what the step's `envFrom` gives in the cluster,
   which replay does not copy.
-- `--endpoint` and `--ca-file` reach the storage from your machine, as for
-  `alpheus chunks`.
+- `--endpoint` and `--ca-file` reach the storage from your machine, unless
+  the storage Secret has the annotations from
+  [Getting started](/docs/getting-started/#2-give-a-namespace-the-storage-keys).
 - The component runs as replica 0 of 1, since the inputs are already this
   replica's, without network.
 

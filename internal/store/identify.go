@@ -33,7 +33,7 @@ var Tested = []string{"AWS S3", "Garage", "MinIO"}
 // AWS S3 and MinIO name themselves in the Server header, and Garage in
 // the error it gives a request without keys.
 func Identify(ctx context.Context, cfg S3Config) (string, error) {
-	t, err := transport(cfg.CAFile)
+	t, err := transport(cfg.CAFile, cfg.CAPEM)
 	if err != nil {
 		return "", err
 	}

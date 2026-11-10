@@ -55,7 +55,7 @@ func (rc *Reconciler) captureFailure(ctx context.Context, r *v1alpha1.StreamRun,
 		Replica: replica, Replicas: replicas(s), Attempt: int(rs.Attempt),
 		Reason: reason, Message: msg, Time: time.Now().UTC(), Image: s.Image,
 		Source: len(g.in[s.Name]) == 0, Inputs: []replay.Input{},
-		Logs: fmt.Sprintf("s3://%s/%s", r.Spec.Storage.Bucket, chunk.LogsPrefix(r.Name, uid, s.Name, replica, int(rs.Attempt))),
+		Logs: fmt.Sprintf("s3://%s/%s", ResultsBucket(r), chunk.LogsPrefix(r.Name, uid, s.Name, replica, int(rs.Attempt))),
 	}
 	if s.Settings != nil {
 		f.Settings = json.RawMessage(s.Settings.Raw)
@@ -107,7 +107,7 @@ func (rc *Reconciler) captureFailure(ctx context.Context, r *v1alpha1.StreamRun,
 	}
 	for i := range r.Status.Steps {
 		if r.Status.Steps[i].Name == s.Name {
-			r.Status.Steps[i].Failures = fmt.Sprintf("s3://%s/%s", r.Spec.Storage.Bucket, chunk.FailurePrefix(r.Name, uid, s.Name, -1, 0))
+			r.Status.Steps[i].Failures = fmt.Sprintf("s3://%s/%s", ResultsBucket(r), chunk.FailurePrefix(r.Name, uid, s.Name, -1, 0))
 		}
 	}
 }
@@ -186,7 +186,7 @@ func (rc *Reconciler) keepSkipped(ctx context.Context, r *v1alpha1.StreamRun, g 
 				Replica: replica, Replicas: replicas(s), Attempt: int(rs.Attempt),
 				Reason: rs.Reason, Message: rs.Message, Time: time.Now().UTC(), Image: s.Image,
 				Skipped: true, Inputs: []replay.Input{},
-				Logs: fmt.Sprintf("s3://%s/%s", r.Spec.Storage.Bucket, chunk.LogsPrefix(r.Name, uid, s.Name, replica, int(rs.Attempt))),
+				Logs: fmt.Sprintf("s3://%s/%s", ResultsBucket(r), chunk.LogsPrefix(r.Name, uid, s.Name, replica, int(rs.Attempt))),
 			}
 			if s.Settings != nil {
 				f.Settings = json.RawMessage(s.Settings.Raw)
@@ -220,7 +220,7 @@ func (rc *Reconciler) keepSkipped(ctx context.Context, r *v1alpha1.StreamRun, g 
 				log.FromContext(ctx).Error(err, "keep skipped chunks: write failure.json")
 				continue
 			}
-			ss.Failures = fmt.Sprintf("s3://%s/%s", r.Spec.Storage.Bucket, chunk.FailurePrefix(r.Name, uid, s.Name, -1, 0))
+			ss.Failures = fmt.Sprintf("s3://%s/%s", ResultsBucket(r), chunk.FailurePrefix(r.Name, uid, s.Name, -1, 0))
 			emit(ctx, corev1.EventTypeWarning, string(v1alpha1.ReasonFailedReplicas), "KeepSkipped",
 				"step %s replica %d: kept %d chunks it never processed in %s", s.Name, replica, len(f.Inputs), prefix)
 		}

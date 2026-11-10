@@ -158,6 +158,34 @@ func testStore(t *testing.T, s Store, prefix string) {
 			t.Errorf("DeletePrefix removed a neighbour: %q", got)
 		}
 	})
+
+	// A download that stopped goes on from where it stopped, only while
+	// the object is the same version (GO-149).
+	t.Run("range of the same version", func(t *testing.T) {
+		k := key("part-000001.bin")
+		put(t, s, k, "0123456789")
+		body, etag, err := GetRange(ctx, s, k, 0, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		body.Close()
+		if etag == "" {
+			t.Fatal("no ETag")
+		}
+		body, _, err = GetRange(ctx, s, k, 6, etag)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rest, err := io.ReadAll(body)
+		body.Close()
+		if err != nil || string(rest) != "6789" {
+			t.Errorf("from 6: %q %v, want 6789", rest, err)
+		}
+		put(t, s, k, "another version")
+		if _, _, err := GetRange(ctx, s, k, 6, etag); !errors.Is(err, ErrChanged) {
+			t.Errorf("after an overwrite: %v, want ErrChanged", err)
+		}
+	})
 }
 
 func put(t *testing.T, s Store, key, content string) {

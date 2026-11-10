@@ -72,8 +72,8 @@ func replayCmd(ctx context.Context, e *Env, args []string) error {
 	keep := fs.Bool("keep", false, "with --with cluster: keep the replay pod")
 	var env stringList
 	fs.Var(&env, "e", "KEY=VALUE for the component, such as what the step's envFrom gives; can be repeated")
-	caFile := fs.String("ca-file", "", "CA bundle for the storage endpoint")
-	endpoint := fs.String("endpoint", "", "the S3 endpoint as seen from here, when spec.storage.endpoint is only reachable in the cluster")
+	var s3 s3Flags
+	s3.add(fs)
 	pos, err := parse(fs, args, &o)
 	if err != nil {
 		return err
@@ -96,15 +96,10 @@ func replayCmd(ctx context.Context, e *Env, args []string) error {
 	if !slices.ContainsFunc(r.Spec.Steps, func(s v1alpha1.Step) bool { return s.Name == step }) {
 		return fmt.Errorf("run %s has no step %q", r.Name, step)
 	}
-	sr := r.DeepCopy()
-	if *endpoint != "" {
-		sr.Spec.Storage.Endpoint = *endpoint
-	}
-	st, err := e.OpenStore(ctx, c.Client, sr, *caFile)
+	st, at, err := e.openRun(ctx, c.Client, &r, s3)
 	if err != nil {
-		return hint(err, "replay reads the failure with the keys in spec.storage.secretRef, so you need access to that Secret")
+		return err
 	}
-	reachable := "if " + sr.Spec.Storage.Endpoint + " is only reachable inside the cluster, pass the address you reach it by with --endpoint"
 
 	if *skipped && *attempt != 0 {
 		return usagef("--skipped and --attempt: the skipped chunks are the replica's, not an attempt's")
@@ -116,7 +111,7 @@ func replayCmd(ctx context.Context, e *Env, args []string) error {
 	if *skipped {
 		prefix = chunk.SkippedPrefix(r.Name, string(r.UID), step, *replica)
 	} else if prefix, err = replay.Find(ctx, st, r.Name, string(r.UID), step, *replica, *attempt); err != nil {
-		return hint(err, reachable)
+		return at.explain(err)
 	}
 	f, data, err := replay.Read(ctx, st, prefix)
 	if *skipped && errors.Is(err, store.ErrNotFound) {
@@ -124,7 +119,7 @@ func replayCmd(ctx context.Context, e *Env, args []string) error {
 			"they are kept when the run has finished, for a replica that gave up with failurePolicy continue")
 	}
 	if err != nil {
-		return hint(err, reachable)
+		return at.explain(err)
 	}
 	failed := f.Image
 	if *image != "" {

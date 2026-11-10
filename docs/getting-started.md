@@ -77,6 +77,20 @@ $ kubectl -n flows create secret generic alpheus-s3 \
 The pods of a run meet Pod Security level `restricted`, so the label can
 stay.
 
+The Secret names the storage as the cluster reaches it. For the CLI on
+your machine, add the address it reaches the storage by, and the CA for
+it, as annotations. Controller and agents do not use them:
+
+```console
+$ kubectl -n flows annotate secret alpheus-s3 \
+    alpheus-dev.org/external-endpoint=https://$(vagrant/talos.sh ip):30900 \
+    alpheus-dev.org/external-ca="$(cat vagrant/_out/ca.crt)"
+```
+
+Without them, give the CLI `--endpoint` and `--ca-file`, or set
+`ALPHEUS_S3_ENDPOINT` and `ALPHEUS_S3_CA_FILE`, each time it reads the
+bucket.
+
 ## 3. Build the example's images
 
 The example has three steps: `generate` writes chunks of log lines,
@@ -130,15 +144,26 @@ The counters are exact, even when pods restart: every line was read once,
 and 14,286 of the 100,000 were errors.
 
 The result is a file in the bucket, under the prefix shown, in a folder
-per replica: `0/part-000001.csv`. Fetch it with any S3 client and the keys
-in the Secret. `alpheus chunks` lists the chunks of a result or an edge
-with their sizes and checksums. From outside the test cluster, give it
-Garage's address on the VM:
+per replica: `0/part-000001.csv`. Get it with the CLI:
 
 ```console
-$ alpheus chunks log-report count -n flows \
-    --endpoint https://$(vagrant/talos.sh ip):30900 --ca-file vagrant/_out/ca.crt
+$ alpheus results get log-report -n flows
+Fetched 1 chunk (24 B) to log-report/
+$ cat log-report/count.default/0/part-000001.csv
 ```
+
+`results get` fetches every result of the run to `./<run>/`, or to the
+folder `-d` names, checks each chunk against its size and SHA-256, and
+writes `alpheus-results.json` with what it fetched. A fetch that is
+stopped goes on where it stopped when you run it again.
+`alpheus results cat log-report count -n flows` writes the result to
+stdout instead, and `alpheus results ls` lists its chunks as S3 paths for
+tools that read S3 themselves. Any S3 client can read them too, with the
+keys in the Secret. `alpheus chunks log-report count -n flows` shows the
+result's manifest.
+
+When a run ends, `alpheus watch` and `alpheus get` list the commands that
+fit it, with the run's name and namespace filled in.
 
 `alpheus logs log-report grep -n flows` shows the `grep` components' logs,
 and `-c agent` the agents'.

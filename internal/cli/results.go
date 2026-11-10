@@ -53,9 +53,24 @@ type resultSet struct {
 }
 
 func resultsCmd(ctx context.Context, e *Env, args []string) error {
-	if len(args) == 0 || args[0] != "gc" {
-		return usagef("results has one subcommand: gc")
+	sub := ""
+	if len(args) > 0 {
+		sub = args[0]
 	}
+	switch sub {
+	case "get":
+		return resultsGet(ctx, e, args[1:])
+	case "cat":
+		return resultsCat(ctx, e, args[1:])
+	case "ls":
+		return resultsLs(ctx, e, args[1:])
+	case "gc":
+		return resultsGC(ctx, e, args[1:])
+	}
+	return usagef("results takes a subcommand: get, cat, ls or gc")
+}
+
+func resultsGC(ctx context.Context, e *Env, args []string) error {
 	var o opts
 	fs := newFlags(e, "results gc", "", &o)
 	endpoint := fs.String("endpoint", "", "the S3 endpoint, as in spec.storage.endpoint")
@@ -66,7 +81,7 @@ func resultsCmd(ctx context.Context, e *Env, args []string) error {
 	dryRun := fs.Bool("dry-run", false, "only show what would be deleted")
 	yes := fs.Bool("yes", false, "delete without asking")
 	orphans := fs.Bool("orphans", false, "also delete results whose StreamRun is gone, before their TTL runs out")
-	pos, err := parse(fs, args[1:], &o)
+	pos, err := parse(fs, args, &o)
 	if err != nil {
 		return err
 	}

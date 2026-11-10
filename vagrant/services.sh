@@ -96,13 +96,18 @@ install_storage() {
   garage bucket info "$DATA_BUCKET" | grep -E '^(Bucket|Global alias)' || die "bucket $DATA_BUCKET is missing"
 
   # The same key for test runs, as the Secret their StreamRuns name in
-  # spec.storage.secretRef (namespace default).
+  # spec.storage.secretRef (namespace default), with Garage's address
+  # from outside the cluster and the CA for it, which the CLI uses
+  # (GO-156).
   # shellcheck disable=SC1091
   source "$OUT/secrets.env"
   apply_secret "$(kubectl -n default create secret generic alpheus-s3 \
     --from-literal=AWS_ACCESS_KEY_ID="$GARAGE_DEFAULT_ACCESS_KEY" \
     --from-literal=AWS_SECRET_ACCESS_KEY="$GARAGE_DEFAULT_SECRET_KEY" \
-    --dry-run=client -o yaml)" alpheus-s3
+    --dry-run=client -o yaml |
+    kubectl annotate --local -f - -o yaml \
+      alpheus-dev.org/external-endpoint="https://$("$HERE/talos.sh" ip):30900" \
+      alpheus-dev.org/external-ca="$(cat "$OUT/ca.crt")")" alpheus-s3
 
   # A bucket for results, which the agents' key writes and a key of its
   # own can only read (GO-129). hack/e2e.sh reads that key from Garage.

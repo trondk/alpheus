@@ -50,8 +50,8 @@ type streamView struct {
 func chunksCmd(ctx context.Context, e *Env, args []string) error {
 	var o opts
 	fs := newFlags(e, "chunks", "<run> <edge>", &o)
-	caFile := fs.String("ca-file", "", "CA bundle for the storage endpoint")
-	endpoint := fs.String("endpoint", "", "the S3 endpoint as seen from here, when spec.storage.endpoint is only reachable in the cluster")
+	var s3 s3Flags
+	s3.add(fs)
 	pos, err := parse(fs, args, &o)
 	if err != nil {
 		return err
@@ -71,19 +71,15 @@ func chunksCmd(ctx context.Context, e *Env, args []string) error {
 	if err != nil {
 		return err
 	}
-	sr := r.DeepCopy()
-	if *endpoint != "" {
-		sr.Spec.Storage.Endpoint = *endpoint
-	}
-	st, err := e.OpenStore(ctx, c.Client, sr, *caFile)
+	st, at, err := e.openRun(ctx, c.Client, &r, s3)
 	if err != nil {
-		return hint(err, "chunks reads the manifests with the keys in spec.storage.secretRef, so you need access to that Secret")
+		return err
 	}
 	var views []streamView
 	for i, s := range streams {
 		v, err := readStream(ctx, st, s, i)
 		if err != nil {
-			return hint(err, "if "+sr.Spec.Storage.Endpoint+" is only reachable inside the cluster, pass the address you reach it by with --endpoint")
+			return at.explain(err)
 		}
 		views = append(views, v)
 	}

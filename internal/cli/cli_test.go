@@ -108,6 +108,10 @@ type harness struct {
 	// what it answers.
 	commands [][]string
 	exitCode int
+	// opened are the addresses the storage was opened at, and environ
+	// the environment the commands see.
+	opened  []store.Address
+	environ map[string]string
 }
 
 func newHarness(t *testing.T) *harness {
@@ -127,11 +131,16 @@ func (h *harness) env() *Env {
 		Connect: func(Kube) (*Clients, error) {
 			return &Clients{Client: k8s, Kube: h.kube, Namespace: h.ns}, nil
 		},
-		OpenStore: func(context.Context, client.Reader, *v1alpha1.StreamRun, string) (store.Store, error) {
+		OpenStore: func(_ context.Context, _ client.Reader, _ *v1alpha1.StreamRun, at store.Address) (store.Store, error) {
+			h.opened = append(h.opened, at)
 			return h.mem, nil
 		},
-		NewS3: func(store.S3Config) (store.Store, error) { return h.mem, nil },
-		Now:   func() time.Time { return h.now },
+		NewS3: func(cfg store.S3Config) (store.Store, error) {
+			h.opened = append(h.opened, store.Address{Endpoint: cfg.Endpoint, CAFile: cfg.CAFile, CAPEM: cfg.CAPEM})
+			return h.mem, nil
+		},
+		Now:    func() time.Time { return h.now },
+		Getenv: func(k string) string { return h.environ[k] },
 		RunCommand: func(_ context.Context, args []string, stdout, _ io.Writer) (int, error) {
 			h.commands = append(h.commands, args)
 			fmt.Fprintln(stdout, "component output")
@@ -561,12 +570,15 @@ func TestReference(t *testing.T) {
 		t.Fatal(err)
 	}
 	ref := b.String()
-	for _, c := range commands() {
+	for _, c := range sections() {
 		if !strings.Contains(ref, "\n## alpheus "+c.name+"\n") {
 			t.Errorf("no section for %s", c.name)
 		}
+		if shapes[c.name] == "" && c.name != "ui" {
+			t.Errorf("no -o json shape for %s (GO-163)", c.name)
+		}
 	}
-	for _, want := range []string{"| `-A` | runs in all namespaces |", "| `--orphans` |", "alpheus results gc\n"} {
+	for _, want := range []string{"| `-A` | runs in all namespaces |", "| `--orphans` |", "alpheus results gc\n", "| `--parallel int` |", "| `--tail int` |"} {
 		if !strings.Contains(ref, want) {
 			t.Errorf("no %q", want)
 		}

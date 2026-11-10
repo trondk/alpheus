@@ -86,8 +86,8 @@ With `-o json`: One object per log line, compact, one per line: `pod`, `step`, `
 | Flag | What it does |
 |---|---|
 | `-c string` | the container: component or agent (default "component") |
-| `--ca-file string` | with --kept: CA bundle for the storage endpoint |
-| `--endpoint string` | with --kept: the S3 endpoint as seen from here, when spec.storage.endpoint is only reachable in the cluster |
+| `--ca-file string` | CA bundle for the S3 endpoint (default: ALPHEUS_S3_CA_FILE, or the storage Secret's alpheus-dev.org/external-ca annotation) |
+| `--endpoint string` | the S3 endpoint as seen from here (default: ALPHEUS_S3_ENDPOINT, the storage Secret's alpheus-dev.org/external-endpoint annotation, or spec.storage.endpoint) |
 | `-f` | short for --follow |
 | `--follow` | keep printing new lines until the pods end |
 | `--kept` | show the logs kept from failed attempts in the bucket, also after the pods are gone |
@@ -119,8 +119,8 @@ With `-o json`: A list with one object per producer replica: `stream` (the edge 
 
 | Flag | What it does |
 |---|---|
-| `--ca-file string` | CA bundle for the storage endpoint |
-| `--endpoint string` | the S3 endpoint as seen from here, when spec.storage.endpoint is only reachable in the cluster |
+| `--ca-file string` | CA bundle for the S3 endpoint (default: ALPHEUS_S3_CA_FILE, or the storage Secret's alpheus-dev.org/external-ca annotation) |
+| `--endpoint string` | the S3 endpoint as seen from here (default: ALPHEUS_S3_ENDPOINT, the storage Secret's alpheus-dev.org/external-endpoint annotation, or spec.storage.endpoint) |
 
 ## alpheus replay
 
@@ -136,10 +136,10 @@ With `-o json`: One object when the replay has run: `failure`, the attempt's `fa
 |---|---|
 | `--agent-image string` | with --with cluster: the agent's image, which fetches the inputs; default: the controller's |
 | `--attempt int` | the failed attempt; default: the last one kept |
-| `--ca-file string` | CA bundle for the storage endpoint |
+| `--ca-file string` | CA bundle for the S3 endpoint (default: ALPHEUS_S3_CA_FILE, or the storage Secret's alpheus-dev.org/external-ca annotation) |
 | `--dir string` | where the inputs go; default: ./alpheus-replay/RUN-STEP-REPLICA-ATTEMPT |
 | `-e value` | KEY=VALUE for the component, such as what the step's envFrom gives; can be repeated |
-| `--endpoint string` | the S3 endpoint as seen from here, when spec.storage.endpoint is only reachable in the cluster |
+| `--endpoint string` | the S3 endpoint as seen from here (default: ALPHEUS_S3_ENDPOINT, the storage Secret's alpheus-dev.org/external-endpoint annotation, or spec.storage.endpoint) |
 | `--image string` | run this image instead: the same digest from a mirror, or a new version to try a fix on the same inputs |
 | `--keep` | with --with cluster: keep the replay pod |
 | `--replica int` | the replica; default: the one that stopped the run, else one that gave up or failed, else 0 (default -1) |
@@ -182,9 +182,73 @@ With `-o json`: `file`, `valid`, `server` (true when the API server checked it t
 | `-f string` | the flow file, or - for stdin |
 | `--local` | only the checks that need no cluster; skips the CRD's schema and rules |
 
-## alpheus results
+## alpheus results get
 
-Delete results whose TTL has run out.
+Fetch a run's results to a folder.
+
+```
+alpheus results get <run> [<step>.<output> …]
+```
+
+Fetches the committed chunks of every result of the run, or of the ones named, to `./<run>/` or the folder `-d` names, with a folder per result and one per replica, and `alpheus-results.json` with the run, its UID and each chunk's file, size and SHA-256. Only chunks the manifests list are fetched; other objects under the prefix were never committed. Each chunk is written as `<file>.partial` and renamed when its size and SHA-256 match, so a file without `.partial` is whole. A fetch that is stopped goes on where it stopped when run again, if the objects have not changed. It writes only into an empty folder or one with the same run's `alpheus-results.json`; `--force` uses another folder, and still only writes the run's own files. It checks the free space first, and asks before more than 10 GiB unless you pass `--yes`. When the run did not succeed, or a replica has not ended its stream, the committed chunks are fetched and the results said to be incomplete, with `complete: false` in the index and for each such replica; `--complete` makes that an error. A result larger than the disk is better read where it is: list it with `results ls`.
+
+With `-o json`: The index it wrote to `alpheus-results.json`, as for `results ls`, with `file` set on each chunk and `errors`, the error log's files with `--errors`. With `-d -` the chunks themselves.
+
+| Flag | What it does |
+|---|---|
+| `--ca-file string` | CA bundle for the S3 endpoint (default: ALPHEUS_S3_CA_FILE, or the storage Secret's alpheus-dev.org/external-ca annotation) |
+| `--chunks value` | only these chunks of each replica: &lt;n&gt; or &lt;from&gt;-&lt;to&gt;, numbered from 1 |
+| `--complete` | exit with an error when a result is incomplete |
+| `-d string` | the folder to fetch to, made with its parents; - writes one result to stdout (default: ./&lt;run&gt;/) |
+| `--endpoint string` | the S3 endpoint as seen from here (default: ALPHEUS_S3_ENDPOINT, the storage Secret's alpheus-dev.org/external-endpoint annotation, or spec.storage.endpoint) |
+| `--errors` | also fetch the error log, to _errors/&lt;step&gt;/&lt;replica&gt;/ |
+| `--flat` | put all chunks of a result in one folder, as &lt;replica&gt;-part-&lt;n&gt;.&lt;ext&gt; |
+| `--force` | fetch into a folder with other files; only the run's own files are overwritten |
+| `--parallel int` | how many chunks to fetch at a time (default 4) |
+| `--replica int` | only this producer replica (default -1) |
+| `--yes` | fetch more than 10 GiB without asking |
+
+## alpheus results cat
+
+Write one result to stdout.
+
+```
+alpheus results cat <run> <step>.<output>
+```
+
+Writes the chunks of one result to stdout in order, replica 0 first, checking each against its size and SHA-256, so `alpheus results cat <run> <step>.<output> --chunks 1 | zcat | head` shows the start of a result.
+
+With `-o json`: Does not apply: the chunks are written as they are.
+
+| Flag | What it does |
+|---|---|
+| `--ca-file string` | CA bundle for the S3 endpoint (default: ALPHEUS_S3_CA_FILE, or the storage Secret's alpheus-dev.org/external-ca annotation) |
+| `--chunks value` | only these chunks of each replica: &lt;n&gt; or &lt;from&gt;-&lt;to&gt;, numbered from 1 |
+| `--endpoint string` | the S3 endpoint as seen from here (default: ALPHEUS_S3_ENDPOINT, the storage Secret's alpheus-dev.org/external-endpoint annotation, or spec.storage.endpoint) |
+| `--replica int` | only this producer replica (default -1) |
+
+## alpheus results ls
+
+List the committed chunks of a run's results as S3 paths.
+
+```
+alpheus results ls <run> [<step>.<output> …]
+```
+
+Lists the committed chunks as `s3://<bucket>/<key>` with their size and SHA-256, for tools that read S3 themselves, so they get exactly the committed chunks and not everything under the prefix.
+
+With `-o json`: An index: `version`, `run`, `namespace`, `uid`, `phase`, `bucket`; `complete`, true when the run succeeded and every replica ended its stream; `replicas`, each with `result`, `replica`, `complete` (it ended its stream) and `chunks` (how many it has committed); and `chunks`, each with `result`, `replica`, `n`, `key`, `url`, `bytes` and `sha256`.
+
+| Flag | What it does |
+|---|---|
+| `--ca-file string` | CA bundle for the S3 endpoint (default: ALPHEUS_S3_CA_FILE, or the storage Secret's alpheus-dev.org/external-ca annotation) |
+| `--chunks value` | only these chunks of each replica: &lt;n&gt; or &lt;from&gt;-&lt;to&gt;, numbered from 1 |
+| `--endpoint string` | the S3 endpoint as seen from here (default: ALPHEUS_S3_ENDPOINT, the storage Secret's alpheus-dev.org/external-endpoint annotation, or spec.storage.endpoint) |
+| `--replica int` | only this producer replica (default -1) |
+
+## alpheus results gc
+
+Delete results whose TTL has run out, or whose StreamRun is gone.
 
 ```
 alpheus results gc
@@ -204,6 +268,25 @@ With `-o json`: A list with one object per run in the bucket: `prefix`, `run`, `
 | `--region string` | the bucket's region, as in spec.storage.region |
 | `--secret string` | the Secret in -n with keys that can delete in the bucket (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY) |
 | `--yes` | delete without asking |
+
+## alpheus errors
+
+Show the error log the components wrote.
+
+```
+alpheus errors <run> [step]
+```
+
+Shows the error log the components wrote with the chunks they committed: time, step, replica, level, code, input chunk and message, and then a count per code. With `-d` it saves the log's files under `<dir>/_errors/<step>/<replica>/` instead.
+
+With `-o json`: One entry per line, compact, as in the error log: `time`, `level`, `code`, `message`, `fields`, `step`, `replica` and `chunk`. The count per code is only in the text.
+
+| Flag | What it does |
+|---|---|
+| `--ca-file string` | CA bundle for the S3 endpoint (default: ALPHEUS_S3_CA_FILE, or the storage Secret's alpheus-dev.org/external-ca annotation) |
+| `-d string` | save the error log to &lt;dir&gt;/_errors/&lt;step&gt;/&lt;replica&gt;/ instead of showing it |
+| `--endpoint string` | the S3 endpoint as seen from here (default: ALPHEUS_S3_ENDPOINT, the storage Secret's alpheus-dev.org/external-endpoint annotation, or spec.storage.endpoint) |
+| `--tail int` | only the last entries; -1 means all (default -1) |
 
 ## alpheus version
 

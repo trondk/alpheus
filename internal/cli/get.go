@@ -154,14 +154,9 @@ func describe(w io.Writer, r *v1alpha1.StreamRun, now time.Time) {
 			fmt.Fprintf(w, "  %s.%s\t%s/%s/%s\tregion %s\tsecret %s\n", res.Step, res.Output, res.Endpoint, res.Bucket, res.Prefix, dash(res.Region), res.SecretRef)
 		}
 	}
-	if st.FinishedAt != nil {
-		for _, s := range st.Steps {
-			for _, rep := range s.Replicas {
-				if rep.FailedChunks > 0 {
-					fmt.Fprintf(w, "\nSkipped chunks of %s replica %d: alpheus replay %s %s --replica %d --skipped\n", s.Name, rep.Index, r.Name, s.Name, rep.Index)
-				}
-			}
-		}
+	if controller.Terminal(st.Phase) {
+		next(w, r)
+		return
 	}
 	for _, s := range st.Steps {
 		if s.Errors+s.Warnings+s.ErrorsDropped > 0 {
@@ -174,6 +169,105 @@ func describe(w io.Writer, r *v1alpha1.StreamRun, now time.Time) {
 			fmt.Fprintf(w, "Replay %s's last failed attempt on its inputs: alpheus replay %s %s\n", s.Name, r.Name, s.Name)
 		}
 	}
+}
+
+// catBelow is the size of a result below which the list after a run
+// suggests results cat (GO-146).
+const catBelow = 1 << 20
+
+// next prints, for a finished run, the commands that get its results,
+// error log and logs out and clean up, with its name and -n filled in, so
+// they can be copied (GO-146). It has only the lines that fit the run.
+func next(w io.Writer, r *v1alpha1.StreamRun) {
+	st := &r.Status
+	ns := " -n " + r.Namespace
+	took := ""
+	if st.StartedAt != nil && st.FinishedAt != nil {
+		took = " in " + st.FinishedAt.Sub(st.StartedAt.Time).Round(time.Second).String()
+	}
+	fmt.Fprintf(w, "\n%s%s. Next:\n\n", st.Phase, took)
+	// Every line has three cells, so the notes line up.
+	line := func(label, cmd, note string) { fmt.Fprintf(w, "  %s\t%s\t%s\n", label, cmd, note) }
+
+	// The replica that stopped the run first, then the rest.
+	if st.Phase == v1alpha1.RunFailed && st.FailedStep != "" {
+		rep := ""
+		if st.FailedReplica != nil {
+			rep = fmt.Sprintf(" --replica %d", *st.FailedReplica)
+		}
+		line("Failed", "alpheus logs "+r.Name+" "+st.FailedStep+ns, "(its pods, while they are there)")
+		for _, s := range st.Steps {
+			if s.Name == st.FailedStep && s.Logs != "" {
+				line("", "alpheus logs --kept "+r.Name+" "+st.FailedStep+ns, "(the logs of its failed attempts)")
+			}
+			if s.Name == st.FailedStep && s.Failures != "" {
+				line("", "alpheus replay "+r.Name+" "+st.FailedStep+rep+ns, "(run the failed attempt again on its inputs)")
+			}
+		}
+	}
+
+	if len(st.Results) > 0 {
+		var total int64
+		for _, res := range st.Results {
+			total += res.Bytes
+		}
+		label := "Results"
+		if total > askAbove {
+			line(label, "alpheus results ls "+r.Name+ns, fmt.Sprintf("(%s: the chunks as S3 paths, to read where they are)", bytesString(total)))
+			label = ""
+		} else {
+			line(label, "alpheus results get "+r.Name+ns, fmt.Sprintf("→ ./%s/  (%s)", r.Name, bytesString(total)))
+			line("", "add -d <dir> to put them somewhere else", "")
+			label = ""
+		}
+		for _, res := range st.Results {
+			if res.Bytes < catBelow {
+				line(label, "alpheus results cat "+r.Name+" "+res.Step+"."+res.Output+ns, fmt.Sprintf("(%s, to stdout)", bytesString(res.Bytes)))
+			}
+		}
+	}
+	label := "Error log"
+	for _, s := range st.Steps {
+		if s.Errors+s.Warnings+s.ErrorsDropped == 0 {
+			continue
+		}
+		note := fmt.Sprintf("(%d errors, %d warnings", s.Errors, s.Warnings)
+		if s.ErrorsDropped > 0 {
+			note += fmt.Sprintf(", %d dropped", s.ErrorsDropped)
+		}
+		line(label, "alpheus errors "+r.Name+" "+s.Name+ns, note+")")
+		label = ""
+	}
+	label = "Skipped"
+	for _, s := range st.Steps {
+		for _, rep := range s.Replicas {
+			if rep.FailedChunks > 0 {
+				line(label, fmt.Sprintf("alpheus replay %s %s --replica %d --skipped%s", r.Name, s.Name, rep.Index, ns),
+					fmt.Sprintf("(%d chunks it never processed)", rep.FailedChunks))
+				label = ""
+			}
+		}
+	}
+	label = "Logs"
+	if st.Phase != v1alpha1.RunFailed {
+		line(label, "alpheus logs "+r.Name+ns, "")
+		label = ""
+	}
+	for _, s := range st.Steps {
+		if s.Logs != "" && !(st.Phase == v1alpha1.RunFailed && s.Name == st.FailedStep) {
+			line(label, "alpheus logs --kept "+r.Name+" "+s.Name+ns, "(the logs of its failed attempts)")
+			label = ""
+		}
+	}
+
+	stay := "results stay " + age(defaultResultsTTL)
+	if ttl := r.Spec.ResultsTTL; ttl != nil {
+		stay = "results stay " + age(ttl.Duration)
+		if ttl.Duration == 0 {
+			stay = "results stay until you delete them"
+		}
+	}
+	line("Clean up", "kubectl -n "+r.Namespace+" delete streamrun "+r.Name, "("+stay+")")
 }
 
 func when(t *metav1.Time, now time.Time) string {
