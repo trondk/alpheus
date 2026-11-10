@@ -4,3 +4,4 @@
 cosign.key
 *.key
 __pycache__/
+/alpheus-agent
