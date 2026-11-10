@@ -68,7 +68,7 @@ func replayCmd(ctx context.Context, e *Env, args []string) error {
 	dir := fs.String("dir", "", "where the inputs go; default: ./alpheus-replay/RUN-STEP-REPLICA-ATTEMPT")
 	with := fs.String("with", "podman", "run the component with podman or docker here, as a pod in the cluster (cluster), or not at all (none: only fetch the inputs)")
 	image := fs.String("image", "", "run this image instead: the same digest from a mirror, or a new version to try a fix on the same inputs")
-	agentImage := fs.String("agent-image", "", "with --with cluster: the agent's image, which fetches the inputs; default: the controller's")
+	agentImage := fs.String("agent-image", "", "with --with cluster: the agent's image, which fetches the inputs; default: the run's status.agentImage, the one its steps ran")
 	keep := fs.Bool("keep", false, "with --with cluster: keep the replay pod")
 	var env stringList
 	fs.Var(&env, "e", "KEY=VALUE for the component, such as what the step's envFrom gives; can be repeated")
@@ -161,7 +161,15 @@ func replayCmd(ctx context.Context, e *Env, args []string) error {
 
 	var code int
 	if *with == "cluster" {
-		if *agentImage == "" {
+		// The agent the run's steps ran (GO-164); a run from before
+		// status.agentImage was started with the controller's.
+		switch {
+		case *agentImage != "":
+		case r.Status.AgentImage != "":
+			*agentImage = r.Status.AgentImage
+		case e.AgentImage != "":
+			*agentImage = e.AgentImage
+		default:
 			if *agentImage, err = controllerAgentImage(ctx, c.Client); err != nil {
 				return hint(err, "pass the agent's image with --agent-image")
 			}

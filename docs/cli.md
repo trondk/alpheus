@@ -134,7 +134,7 @@ With `-o json`: One object when the replay has run: `failure`, the attempt's `fa
 
 | Flag | What it does |
 |---|---|
-| `--agent-image string` | with --with cluster: the agent's image, which fetches the inputs; default: the controller's |
+| `--agent-image string` | with --with cluster: the agent's image, which fetches the inputs; default: the run's status.agentImage, the one its steps ran |
 | `--attempt int` | the failed attempt; default: the last one kept |
 | `--ca-file string` | CA bundle for the S3 endpoint (default: ALPHEUS_S3_CA_FILE, or the storage Secret's alpheus-dev.org/external-ca annotation) |
 | `--dir string` | where the inputs go; default: ./alpheus-replay/RUN-STEP-REPLICA-ATTEMPT |
@@ -156,7 +156,7 @@ alpheus ui
 
 | Flag | What it does |
 |---|---|
-| `--agent-image string` | with --in-cluster: the agent's image, for replay pods |
+| `--agent-image string` | with --in-cluster: the agent's image, for replay pods of runs without status.agentImage |
 | `--ca-file string` | CA bundle for the storage endpoint |
 | `--endpoint string` | the S3 endpoint as seen from here, when spec.storage.endpoint is only reachable in the cluster |
 | `--host value` | a host name the page may be reached by besides localhost, such as an Ingress's; can be repeated |

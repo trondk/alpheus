@@ -147,7 +147,8 @@ $ podman run --rm --network=none --read-only --tmpfs /tmp --userns=keep-id:uid=6
   prints the command, so you can run the component yourself, for example
   in a debugger.
 - `--with cluster` runs it as a pod in the run's namespace instead: the
-  agent's image fetches and checks the chunks, then the step's image runs
+  run's agent, from `status.agentImage`, fetches and checks the chunks,
+  then the step's image runs
   on them with the step's resources, `envFrom` and scratch size, and the
   logs come to your terminal. The data stays in the cluster, and a failure
   that depends on the node's resources can show again. The pod is deleted

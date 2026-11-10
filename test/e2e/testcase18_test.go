@@ -42,9 +42,10 @@ import (
 // and AGENT_IMAGE is this commit's agent. The run starts under the old
 // controller and agent. When the sink has read a quarter of its first
 // stream, the chart is upgraded; then a pass replica and, later, the
-// stateful sink are deleted, so their new attempts run this commit's agent
-// next to the old component and read what the old agent committed. The
-// run must succeed with every chunk once and exact counts.
+// stateful sink are deleted. Their new attempts are made by this commit's
+// controller and still run the old agent, which the run started with
+// (GO-24, GO-164). The run must succeed with every chunk once and exact
+// counts, and a run started after the upgrade gets this commit's agent.
 func TestTestcase18(t *testing.T) {
 	upgrade := os.Getenv("ALPHEUS_E2E_UPGRADE")
 	if upgrade == "" {
@@ -85,7 +86,7 @@ func TestTestcase18(t *testing.T) {
 		t.Fatalf("the controller is still %s after the upgrade", after)
 	}
 
-	// New attempts get the new agent, next to the old component.
+	// New attempts keep the run's agent (GO-164).
 	b.Kills = append(b.Kills, e.killReplica(r, "pass", 0))
 	e.until(r, "sink has acked three quarters of pass's first stream", 10*time.Minute, func() bool {
 		return b.acked("pass", "sink") >= perReplica*3/4
@@ -106,15 +107,33 @@ func TestTestcase18(t *testing.T) {
 		var p corev1.Pod
 		if err := e.c.Get(t.Context(), client.ObjectKey{Namespace: e.ns, Name: rs.Pod}, &p); err != nil {
 			t.Errorf("%s's last pod: %v", step, err)
-		} else if got := agentImage(p); got != newAgent {
-			t.Errorf("%s's new attempt runs agent %s, want %s", step, got, newAgent)
+		} else if got := agentImage(p); got != oldAgent {
+			t.Errorf("%s's new attempt runs agent %s, want the run's %s", step, got, oldAgent)
 		}
+	}
+	if got := b.run.Status.AgentImage; got != oldAgent {
+		t.Errorf("status.agentImage %q, want %s", got, oldAgent)
 	}
 	b.acks("source", "pass")
 	b.consumed("pass")
 	b.noOrphans()
 	for _, p := range watch.problems() {
 		t.Error(p)
+	}
+
+	// A run started after the upgrade gets the new agent.
+	next := e.load(b.Testcase)
+	next.Name += "-after"
+	if err := e.c.Create(t.Context(), next); err != nil {
+		t.Fatal(err)
+	}
+	e.until(next, "a pod of a run started after the upgrade", 2*time.Minute, func() bool {
+		return len(e.pods(next, client.MatchingLabels{})) > 0
+	})
+	for _, p := range e.pods(next, client.MatchingLabels{}) {
+		if got := agentImage(p); got != newAgent {
+			t.Errorf("%s, started after the upgrade, runs agent %s, want %s", p.Name, got, newAgent)
+		}
 	}
 }
 

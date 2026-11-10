@@ -420,7 +420,7 @@ func TestNext(t *testing.T) {
 	end := metav1.NewTime(start.Add(49 * time.Second))
 	one := int32(1)
 	r := &v1alpha1.StreamRun{ObjectMeta: metav1.ObjectMeta{Name: "meter-etl", Namespace: "flows"}}
-	r.Status = v1alpha1.StreamRunStatus{Phase: v1alpha1.RunSucceeded, StartedAt: &start, FinishedAt: &end,
+	r.Status = v1alpha1.StreamRunStatus{Phase: v1alpha1.RunSucceeded, StartedAt: &start, FinishedAt: &end, AgentImage: "registry.example/agent" + pin,
 		Steps: []v1alpha1.StepStatus{
 			{Name: "clean", Errors: 160070, Replicas: []v1alpha1.ReplicaStatus{{Index: 0}, {Index: 1, FailedChunks: 3}}},
 			{Name: "aggregate"},
@@ -440,6 +440,7 @@ func TestNext(t *testing.T) {
 	out := text()
 	for _, want := range []string{
 		"Succeeded in 49s. Next:",
+		"registry.example/agent" + pin,
 		"alpheus results get meter-etl -n flows",
 		"→ ./meter-etl/  (359.0 MiB)",
 		"alpheus results cat meter-etl aggregate.default -n flows",

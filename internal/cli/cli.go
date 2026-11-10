@@ -59,6 +59,9 @@ type Env struct {
 	Now        func() time.Time
 	// Getenv reads the environment; nil means os.Getenv.
 	Getenv func(string) string
+	// AgentImage is the agent's image for a replay in the cluster of a run
+	// without status.agentImage; empty reads the controller's Deployment.
+	AgentImage string
 }
 
 // Clients are the connections to one cluster.

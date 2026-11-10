@@ -265,6 +265,9 @@ func (rc *Reconciler) reconcile(ctx context.Context, r *v1alpha1.StreamRun) (ctr
 	if err != nil {
 		return ctrl.Result{}, err
 	}
+	if st.AgentImage == "" {
+		st.AgentImage = runAgent(pods, rc.Options.AgentImage)
+	}
 	var stop *stopped
 	for i := range r.Spec.Steps {
 		s := &r.Spec.Steps[i]
@@ -571,6 +574,27 @@ func stopUnfinished(st *v1alpha1.StreamRunStatus) {
 			stop(&st.Steps[i].Replicas[j].Phase)
 		}
 	}
+}
+
+// runAgent is the agent a run without status.agentImage uses from now on
+// (GO-164): the one its oldest pod runs, so a run that started under an
+// older controller keeps its agent, or else the controller's.
+func runAgent(pods map[string]*corev1.Pod, controllers string) string {
+	var oldest *corev1.Pod
+	for _, p := range pods {
+		if oldest == nil || p.CreationTimestamp.Before(&oldest.CreationTimestamp) ||
+			p.CreationTimestamp.Equal(&oldest.CreationTimestamp) && p.Name < oldest.Name {
+			oldest = p
+		}
+	}
+	if oldest != nil {
+		for _, c := range oldest.Spec.InitContainers {
+			if c.Name == AgentContainer && c.Image != "" {
+				return c.Image
+			}
+		}
+	}
+	return controllers
 }
 
 // pods lists the run's pods by name.

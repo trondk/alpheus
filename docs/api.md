@@ -390,9 +390,8 @@ makes:
 The component's log is the replay's result, and its exit code says
 whether the failure came back.
 
-{{% planned %}}The agent's image will be in `status.agentImage`. Until
-then, it is the `-agent-image` argument of the Deployment
-`alpheus-system/alpheus-controller`.{{% /planned %}}
+The agent's image is in `status.agentImage`, pinned by digest: the one
+every step of the run runs.
 
 A program that does this needs more than the Role at the top of this
 page: `get` on `pods/log`, and `create`, `get` and `delete` on `pods` for a

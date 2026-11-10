@@ -818,8 +818,15 @@ func TestReplayInCluster(t *testing.T) {
 		Inputs: []replay.Input{{Port: "default", N: 1, SHA256: strings.Repeat("0", 64), File: "read-filter-0-000001.csv"}}}
 	data, _ := json.Marshal(f)
 	h.mem.Put(ctx, prefix+"failure.json", bytes.NewReader(data), int64(len(data)))
+	// The inputs are fetched with the agent the run's steps ran (GO-164),
+	// without reading the controller's Deployment.
+	r.Status.AgentImage = "registry.example/agent" + pin
+	if err := k8s.Status().Update(ctx, r); err != nil {
+		t.Fatal(err)
+	}
 
 	// No kubelet: the test plays it, failing the component with code 1.
+	var fetchedWith string
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -828,6 +835,7 @@ func TestReplayInCluster(t *testing.T) {
 			k8s.List(ctx, &pods, client.InNamespace(h.ns), client.MatchingLabels{controller.LabelReplay: "rc"})
 			if len(pods.Items) == 1 {
 				p := pods.Items[0]
+				fetchedWith = p.Spec.InitContainers[0].Image
 				p.Status.Phase = corev1.PodFailed
 				p.Status.InitContainerStatuses = []corev1.ContainerStatus{{Name: controller.ReplayContainer,
 					State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 0}}}}
@@ -842,8 +850,11 @@ func TestReplayInCluster(t *testing.T) {
 		}
 		t.Error("no replay pod")
 	}()
-	out := h.mustRun("replay", "rc", "filter", "--with", "cluster", "--agent-image", "registry.example/agent"+pin, "-e", "TOKEN=x")
+	out := h.mustRun("replay", "rc", "filter", "--with", "cluster", "-e", "TOKEN=x")
 	<-done
+	if fetchedWith != r.Status.AgentImage {
+		t.Errorf("the inputs were fetched with %q, want the run's agent %s", fetchedWith, r.Status.AgentImage)
+	}
 	if !strings.Contains(out, "Replaying in pod "+h.ns+"/rc-filter-0-replay-1-") || !strings.Contains(out, "exited with code 1, as in the run") {
 		t.Errorf("replay: %s", out)
 	}

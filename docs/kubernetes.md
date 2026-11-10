@@ -66,7 +66,10 @@ running; the logs of failed attempts are kept in S3 (below). The labels
 - **Two containers.** The component is the pod's only ordinary
   container. The agent is a native sidecar, an init container with
   `restartPolicy: Always`: it starts before the component and stops after
-  it, which needs Kubernetes 1.29 or newer.
+  it, which needs Kubernetes 1.29 or newer. Every pod of a run has the
+  agent the run started with, `status.agentImage`. When the chart is
+  upgraded, running runs keep their agent, and new runs get the new one,
+  so keep the old agent's image in the registry until those runs are done.
 - **Files, not network.** Component and agent share an `emptyDir` with
   the agent's Unix socket and the scratch files the component reads and
   writes. `spec.steps[].scratch` limits its size.

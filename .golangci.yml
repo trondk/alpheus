@@ -4,7 +4,14 @@ version: "2"
 
 linters:
   default: standard
+  enable:
+    - gocognit
   settings:
+    gocognit:
+      # How hard a function is to follow. The limit is the worst function
+      # today, replayCmd, so nothing gets harder than that; it goes down as
+      # the large command and commit functions are split into steps.
+      min-complexity: 85
     errcheck:
       # A bufio or csv Writer keeps its first error and returns it from
       # Flush or Error, which the code checks.

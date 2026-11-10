@@ -113,6 +113,9 @@ func describe(w io.Writer, r *v1alpha1.StreamRun, now time.Time) {
 	fmt.Fprintf(w, "Steps finished:\t%s\n", dash(st.StepsFinished))
 	fmt.Fprintf(w, "Started:\t%s\n", when(st.StartedAt, now))
 	fmt.Fprintf(w, "Finished:\t%s\n", when(st.FinishedAt, now))
+	if st.AgentImage != "" {
+		fmt.Fprintf(w, "Agent:\t%s\n", st.AgentImage)
+	}
 
 	if len(st.Steps) > 0 {
 		fmt.Fprintln(w, "\nSTEP\tPHASE\tREPLICAS\tRESTARTS\tERRORS\tWARNINGS\tCOUNTS")

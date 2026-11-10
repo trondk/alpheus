@@ -688,7 +688,7 @@ program).
 |---|---|---|---|
 | GO-162 | SKAL | done, logic checked | Debug-data er en del af API'et og dokumenteret i `docs/api.md`: statusfelterne (`reason`, `message`, `failedStep`, `failedReplica`, `steps[].replicas[]`, `steps[].logs`, `errorLog`, `failures`), og S3-layoutet og JSON-formaterne for `failure.json` og `input/` (GO-141), de gemte logs (GO-140), fejlloggen med `manifest.json` og segmenterne (GO-118) og, når de er bygget, replays (GO-159). Hvert JSON-format har feltet `version`; et format ændres kun bagudkompatibelt, ellers med et nyt versionsnummer, og læsere afviser en version, de ikke kender. |
 | GO-163 | SKAL | done, logic checked | `-o json` er en stabil grænseflade for programmer, der kalder CLI'en: formen for `get`, `watch`, `chunks`, `logs`, `replay` og de kommende `results`- og `errors`-kommandoer er dokumenteret i CLI-referencen og ændres efter samme regel som GO-162. Fejl skrives til stderr, aldrig blandet med JSON på stdout. |
-| GO-164 | SKAL | — | Controlleren skriver agentens image, låst med digest, i `status.agentImage`, når runnet starter. Alle trin i et run bruger det (GO-24), og en replay i klyngen bruger det til at hente input, så hverken CLI'en eller andre programmer skal læse controllerens Deployment. Indtil det findes, læser CLI'en `-agent-image` fra `alpheus-system/alpheus-controller`. |
+| GO-164 | SKAL | done, logic checked, closed (controller: TestAgentImagePinned, TestRunAgent; cli: TestReplayInCluster; testcase18) | Controlleren skriver agentens image, låst med digest, i `status.agentImage`, når runnet starter. Alle trin i et run bruger det (GO-24), også efter en opgradering af controlleren, og en replay i klyngen bruger det til at hente input, så hverken CLI'en eller andre programmer skal læse controllerens Deployment. Et run fra før feltet fandtes får agenten fra sin ældste pod, så det beholder den agent, det startede med. CLI'en læser kun `-agent-image` fra `alpheus-system/alpheus-controller` for et run uden feltet og uden pods. |
 | GO-165 | SKAL | done, logic checked | Replay-pod'en er dokumenteret, så et program kan oprette den uden CLI'en: navn og labels, ejer (runnet), ServiceAccount og NetworkPolicy (6.1), init-containeren med agentens image og `-fetch-failure <prefix> -dest /replay`, komponent-containeren med trinnets image eller et andet (GO-161), miljøet for lokal mode, `/tmp`, trinnets ressourcer, `envFrom` og scratch, og `restartPolicy: Never`. Komponentens log er replayens resultat, og pod'ens exit-kode siger, om fejlen kom igen. |
 
 ## 10. Komponent-SDK (`sdk/`)
@@ -1135,10 +1135,11 @@ det ældre commits testkomponent, som en brugers komponenter ikke bygges om,
 når Alpheus opgraderes. `pass` med to replikaer er langsom, og når `sink`
 har læst en fjerdedel, opgraderer testen til dette commits chart, CRD,
 controller og agent. Derefter slettes en `pass`-replika og senere det
-tilstandsfulde `sink`, så deres nye forsøg kører den nye agent ved siden af
-den gamle komponent og læser det, den gamle agent committede. Runnet skal
-lykkes med hver chunk én gang og præcise tællere, og status må aldrig gå
-baglæns. Bagefter har klyngen dette commits chart, også hvis testen
+tilstandsfulde `sink`. Deres nye forsøg laves af den nye controller og
+kører stadig den gamle agent, som runnet startede med (GO-164), ved siden
+af den gamle komponent. Runnet skal lykkes med hver chunk én gang og
+præcise tællere, og status må aldrig gå baglæns. Et run, der startes efter
+opgraderingen, får den nye agent. Bagefter har klyngen dette commits chart, også hvis testen
 fejler. Testen springes over i `make e2e`.
 
 **testcase19: en dårlig chunk lægges til side (GO-97).** testcase14's

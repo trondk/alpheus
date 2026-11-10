@@ -1487,6 +1487,13 @@ spec:
           status:
             description: StreamRunStatus is written by the controller only.
             properties:
+              agentImage:
+                description: |-
+                  AgentImage is the agent's image, pinned by digest, that every step of
+                  the run uses. The controller sets it when the run starts, so a run
+                  keeps its agent when the controller is upgraded, and a replay
+                  fetches its inputs with the same one (GO-24, GO-164).
+                type: string
               conditions:
                 description: Conditions are Ready, Progressing and Degraded.
                 items:

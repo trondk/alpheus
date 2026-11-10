@@ -1290,6 +1290,59 @@ func TestResultsBucket(t *testing.T) {
 	})
 }
 
+// A run keeps the agent it started with: a new attempt after the
+// controller has another agent still gets the run's (GO-24, GO-164).
+func TestAgentImagePinned(t *testing.T) {
+	ns := namespace(t)
+	r := testcase03(ns, 1)
+	create(t, r)
+	if p := waitPod(t, ns, "sales-filter-0-1"); p.Spec.InitContainers[0].Image != agentImage {
+		t.Fatalf("first attempt runs agent %s", p.Spec.InitContainers[0].Image)
+	}
+	eventually(t, "status.agentImage", func() string {
+		if got := get(t, r).Status.AgentImage; got != agentImage {
+			return got
+		}
+		return ""
+	})
+
+	// As if the run started under an older controller with another agent.
+	old := "registry.alpheus.test:30500/alpheus/agent@sha256:" + strings.Repeat("2", 64)
+	eventually(t, "status.agentImage set", func() string {
+		now := get(t, r)
+		now.Status.AgentImage = old
+		if err := k8s.Status().Update(t.Context(), now); err != nil {
+			return err.Error()
+		}
+		return ""
+	})
+	exit(t, waitPod(t, ns, "sales-filter-0-1"), 1)
+	if p := waitPod(t, ns, "sales-filter-0-2"); p.Spec.InitContainers[0].Image != old {
+		t.Errorf("second attempt runs agent %s, want the run's %s", p.Spec.InitContainers[0].Image, old)
+	}
+	if got := get(t, r).Status.AgentImage; got != old {
+		t.Errorf("status.agentImage changed to %q", got)
+	}
+}
+
+// A run from before status.agentImage keeps the agent its oldest pod
+// runs; one without pods gets the controller's (GO-164).
+func TestRunAgent(t *testing.T) {
+	pod := func(name string, age time.Duration, image string) *corev1.Pod {
+		return &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: name, CreationTimestamp: metav1.NewTime(time.Now().Add(-age).Truncate(time.Second))},
+			Spec:       corev1.PodSpec{InitContainers: []corev1.Container{{Name: AgentContainer, Image: image}}},
+		}
+	}
+	if got := runAgent(nil, "new"); got != "new" {
+		t.Errorf("no pods: %q", got)
+	}
+	pods := map[string]*corev1.Pod{"a": pod("a", time.Minute, "newer"), "b": pod("b", time.Hour, "old")}
+	if got := runAgent(pods, "new"); got != "old" {
+		t.Errorf("the oldest pod's agent: %q", got)
+	}
+}
+
 // A result's bytes and counters include the chunks in sealed segments,
 // not only those still in manifest.json (GO-32).
 func TestSealedTotals(t *testing.T) {

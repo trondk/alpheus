@@ -218,7 +218,7 @@ func (rc *Reconciler) pod(r *v1alpha1.StreamRun, g *graph, s *v1alpha1.Step, rep
 			},
 			InitContainers: []corev1.Container{{
 				Name:            AgentContainer,
-				Image:           rc.Options.AgentImage,
+				Image:           r.Status.AgentImage,
 				RestartPolicy:   ptr.To(corev1.ContainerRestartPolicyAlways),
 				Env:             agentEnv,
 				Ports:           []corev1.ContainerPort{{Name: "metrics", ContainerPort: AgentMetricsPort}},

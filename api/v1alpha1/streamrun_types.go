@@ -541,6 +541,14 @@ type StreamRunStatus struct {
 	// +optional
 	StepsFinished string `json:"stepsFinished,omitempty"`
 
+	// AgentImage is the agent's image, pinned by digest, that every step of
+	// the run uses. The controller sets it when the run starts, so a run
+	// keeps its agent when the controller is upgraded, and a replay
+	// fetches its inputs with the same one (GO-24, GO-164).
+	//
+	// +optional
+	AgentImage string `json:"agentImage,omitempty"`
+
 	// StartedAt is when the first pod of the run started.
 	//
 	// +optional

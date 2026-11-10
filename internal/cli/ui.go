@@ -67,7 +67,7 @@ func uiCmd(ctx context.Context, e *Env, args []string) error {
 	inCluster := fs.Bool("in-cluster", false, "run as a Deployment in the cluster: runs of every namespace, replays as pods")
 	var hosts stringList
 	fs.Var(&hosts, "host", "a host name the page may be reached by besides localhost, such as an Ingress's; can be repeated")
-	agentImage := fs.String("agent-image", "", "with --in-cluster: the agent's image, for replay pods")
+	agentImage := fs.String("agent-image", "", "with --in-cluster: the agent's image, for replay pods of runs without status.agentImage")
 	replayMode := fs.String("replay", "", "how the replay button runs: podman, docker, cluster or off; default podman, or cluster with --in-cluster")
 	caFile := fs.String("ca-file", "", "CA bundle for the storage endpoint")
 	endpoint := fs.String("endpoint", "", "the S3 endpoint as seen from here, when spec.storage.endpoint is only reachable in the cluster")
@@ -586,9 +586,6 @@ func (u *ui) replay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	args = append(args, "--with", u.replayMode)
-	if u.agentImage != "" {
-		args = append(args, "--agent-image", u.agentImage)
-	}
 	if u.endpoint != "" {
 		args = append(args, "--endpoint", u.endpoint)
 	}
@@ -601,6 +598,7 @@ func (u *ui) replay(w http.ResponseWriter, r *http.Request) {
 	env := *u.e
 	env.Stdout, env.Stderr = out, out
 	env.Connect = func(Kube) (*Clients, error) { return u.c, nil }
+	env.AgentImage = u.agentImage
 	if code := Main(r.Context(), args, &env); code != 0 {
 		fmt.Fprintf(out, "\nalpheus replay exited with code %d\n", code)
 	}
