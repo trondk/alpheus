@@ -36,12 +36,20 @@ const (
 	controllerName      = "alpheus-controller"
 )
 
-// TestTestcase10 runs testcase02's fan-out and fan-in and deletes the
-// controller's pod twice: when the sink has read a quarter of its input,
-// and again at three quarters. The signal hub runs in the controller, so
-// it goes too. The agents need neither: they poll the manifests (GO-40).
-// The run must succeed with every chunk once, exact counters and no
-// restarts, and its status must never go backwards.
+// TestTestcase10 deletes the controller's pod twice in the middle of a run.
+//
+// Flow: as testcase02: source → left (3) and right (2) → sink.
+//
+// What it tests: that a running run needs neither the controller nor its
+// signal hub: the agents poll the manifests (GO-40), and the new controller
+// takes over the run.
+//
+// Done to the run: the controller's pod, with the signal hub in it, is
+// deleted when sink has read a quarter of its input, and again at three
+// quarters.
+//
+// Passes when: the run is Succeeded with every chunk once, exact counts and
+// no restarts, and its status never went backwards.
 func TestTestcase10(t *testing.T) {
 	b := newBench(t, "testcase10", map[string]int{"left": 3, "right": 2})
 	e := setup(t)

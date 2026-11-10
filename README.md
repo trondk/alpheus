@@ -283,6 +283,12 @@ welcome as issues on Forgejo. How to build and test is on
 [Development](https://alpheus-dev.org/development/). See
 `CONTRIBUTING.md` when it is added.
 
+A change that users, operators or component authors notice gets a line
+under `## [Unreleased]` in [`CHANGELOG.md`](CHANGELOG.md), in the same
+pull request, under Changes, Upgrade notes or CRD changes. A release
+moves those lines to a section of its own, which becomes its release
+notes; `hack/release.sh` refuses a version without one.
+
 
 ## Security
 

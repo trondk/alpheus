@@ -37,11 +37,22 @@ import (
 )
 
 // TestTestcase15 looks at a failed run through alpheus ui in the cluster,
-// as hack/e2e.sh installs it with the chart, reached the way the chart's
-// notes say, through a port-forward (GO-143): the runs of every namespace,
-// the replica's kept logs and failure, and a replay of the last attempt as
-// a pod in the run's namespace, which fails the same way at debug level
-// and is deleted afterwards (GO-141).
+// installed by the chart and reached through a port-forward, as the chart's
+// notes say (GO-143).
+//
+// Flow: source → pass → sink, where pass fails as in testcase14.
+//
+// What it tests: that the page in the cluster shows the runs of every
+// namespace, a failed replica's attempts, kept logs and failure, and that
+// its replay button runs the attempt as a pod in the run's namespace
+// (GO-141).
+//
+// Done to the run: nothing; the bug fails the run.
+//
+// Passes when: the run is Failed with ComponentFailed; the page lists it
+// among the runs of every namespace; it shows the attempts and the kept log;
+// and the replay runs in the cluster, fails the same way at debug level, and
+// its pod is deleted afterwards.
 func TestTestcase15(t *testing.T) {
 	b := newBench(t, "testcase15", nil)
 	if b.Chunks < 8 {

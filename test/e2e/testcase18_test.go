@@ -31,21 +31,35 @@ import (
 )
 
 // TestTestcase18 upgrades the chart in the middle of a run (GO-66).
-// hack/test-upgrade.sh has installed an older commit's chart and images
-// and sets:
+//
+// Flow: source → pass (2 replicas) → sink, with an older commit's test
+// component, since a user's components are not rebuilt when Alpheus is
+// upgraded.
+//
+// What it tests: that a run started under an older controller and agent
+// finishes under this commit's controller; that new attempts keep the agent
+// the run started with (GO-24, GO-164); and that a run started after the
+// upgrade gets this commit's agent.
+//
+// Done to the run: when sink has read a quarter of its first stream, the
+// chart, CRD, controller and agent are upgraded; then a pass replica, and
+// later the stateful sink, are deleted.
+//
+// Passes when: every pod ran the old agent before the upgrade; the run is
+// Succeeded with every chunk once and exact counts; pass and sink restarted
+// once, their new attempts with the old agent; status.agentImage is the old
+// agent; the status never went backwards; and a run started afterwards runs
+// this commit's agent.
+//
+// It runs only with make test-upgrade (hack/test-upgrade.sh), which installs
+// the older commit first and sets:
 //
 //	ALPHEUS_E2E_UPGRADE             the command that upgrades to this
 //	                                commit's chart and images
 //	ALPHEUS_E2E_UPGRADE_BENCH_IMAGE the older commit's test component
 //	ALPHEUS_E2E_UPGRADE_AGENT_IMAGE the older commit's agent
 //
-// and AGENT_IMAGE is this commit's agent. The run starts under the old
-// controller and agent. When the sink has read a quarter of its first
-// stream, the chart is upgraded; then a pass replica and, later, the
-// stateful sink are deleted. Their new attempts are made by this commit's
-// controller and still run the old agent, which the run started with
-// (GO-24, GO-164). The run must succeed with every chunk once and exact
-// counts, and a run started after the upgrade gets this commit's agent.
+// and AGENT_IMAGE is this commit's agent. make e2e skips it.
 func TestTestcase18(t *testing.T) {
 	upgrade := os.Getenv("ALPHEUS_E2E_UPGRADE")
 	if upgrade == "" {

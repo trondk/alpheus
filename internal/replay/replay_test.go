@@ -37,6 +37,9 @@ func validFailure() Failure {
 	}}}
 }
 
+// TestParse checks that a failure.json is read, and that one whose ports or
+// files could climb out of the replay folder, or with impossible chunks,
+// sizes or checksums, is refused.
 func TestParse(t *testing.T) {
 	data, _ := json.Marshal(validFailure())
 	if _, err := Parse(data); err != nil {

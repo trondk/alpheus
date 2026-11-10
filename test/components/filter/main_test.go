@@ -99,6 +99,8 @@ func run(t *testing.T, cfg sdk.LocalConfig) error {
 	return sdk.RunLocal(context.Background(), cfg, handle)
 }
 
+// TestFilterKeepsOnlyDK runs the test filter in local mode: it keeps only
+// the DK rows and counts the rows in and out.
 func TestFilterKeepsOnlyDK(t *testing.T) {
 	out := t.TempDir()
 	cfg := sdk.LocalConfig{Inputs: map[string]string{sdk.DefaultPort: parts(t)}, OutputDir: out, Settings: dk}
@@ -136,6 +138,8 @@ func TestFilterReplicaWithoutMatches(t *testing.T) {
 	}
 }
 
+// TestFilterLogsBadRows checks that the test filter logs a bad row as an
+// error and goes on.
 func TestFilterLogsBadRows(t *testing.T) {
 	in, out := t.TempDir(), t.TempDir()
 	write(t, filepath.Join(in, "part-000001.csv"), "order_id,country,amount\n1,DK,1\n2,DK\n3,DK,3\n")
@@ -162,6 +166,8 @@ func TestFilterLogsBadRows(t *testing.T) {
 	}
 }
 
+// TestFilterBadSettings checks that the test filter refuses bad settings
+// with ErrUsage.
 func TestFilterBadSettings(t *testing.T) {
 	for name, settings := range map[string]string{
 		"no field":      `{"in": ["DK"]}`,

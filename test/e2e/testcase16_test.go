@@ -32,8 +32,20 @@ const (
 	workerNode       = "alpheus-talos-worker"
 )
 
-// TestTestcase16 runs source -> pass -> sink across two nodes, with pass's
-// two replicas on the worker and the others on the control plane (GO-144).
+// TestTestcase16 runs a flow across two nodes, with the steps placed by
+// nodeSelector (GO-144).
+//
+// Flow: source → pass (2 replicas) → sink, with pass on the worker and the
+// others on the control plane.
+//
+// What it tests: that a step's nodeSelector places its pods, and that chunks
+// go between nodes through the storage.
+//
+// Done to the run: nothing.
+//
+// Passes when: both nodes are Ready; the run is Succeeded with every chunk
+// once, unchanged and exact counts; and each pod ran on the node its step
+// asks for.
 func TestTestcase16(t *testing.T) {
 	b := newBench(t, "testcase16", nil)
 	e := setup(t)

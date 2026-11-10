@@ -38,6 +38,9 @@ func fastBackoff(t *testing.T) {
 	t.Cleanup(func() { minWait, maxWait = oldMin, oldMax })
 }
 
+// TestTransient checks which storage errors are waited out: a refused or
+// reset connection, a cut-off body and 5xx and 429 answers, but not refused
+// keys, a missing object, a changed object or a cancel (GO-136).
 func TestTransient(t *testing.T) {
 	refused := &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED}
 	for _, c := range []struct {
@@ -65,6 +68,8 @@ func TestTransient(t *testing.T) {
 	}
 }
 
+// TestRefused checks which storage errors mean the keys or the bucket are
+// refused, so the run fails at once (GO-137).
 func TestRefused(t *testing.T) {
 	for _, c := range []struct {
 		name string
@@ -86,6 +91,8 @@ func TestRefused(t *testing.T) {
 	}
 }
 
+// TestRetryUntilBack checks that a call is retried until the storage
+// answers.
 func TestRetryUntilBack(t *testing.T) {
 	fastBackoff(t)
 	calls, retries := 0, 0
@@ -101,6 +108,8 @@ func TestRetryUntilBack(t *testing.T) {
 	}
 }
 
+// TestRetryGivesUp checks that retrying stops after the timeout with
+// ErrUnreachable and the last error.
 func TestRetryGivesUp(t *testing.T) {
 	fastBackoff(t)
 	r := retrier{timeout: 20 * time.Millisecond}
@@ -114,6 +123,8 @@ func TestRetryGivesUp(t *testing.T) {
 	}
 }
 
+// TestRetryNotPermanentErrors checks that a refused request is not retried,
+// and that timeout 0 tries once.
 func TestRetryNotPermanentErrors(t *testing.T) {
 	fastBackoff(t)
 	calls := 0
@@ -129,6 +140,8 @@ func TestRetryNotPermanentErrors(t *testing.T) {
 	}
 }
 
+// TestRetryStopsOnCancel checks that retrying stops when the context is
+// cancelled.
 func TestRetryStopsOnCancel(t *testing.T) {
 	fastBackoff(t)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -179,6 +192,8 @@ func (o *object) open(_ context.Context, offset int64, etag string) (io.ReadClos
 	return &breaking{r: bytes.NewReader([]byte(o.data[offset:])), n: 7}, o.etag, nil
 }
 
+// TestResumingReader checks that a download broken off goes on where it
+// stopped, with the same version of the object.
 func TestResumingReader(t *testing.T) {
 	fastBackoff(t)
 	o := &object{data: "the river runs under the limestone", etag: "v1"}
@@ -193,6 +208,9 @@ func TestResumingReader(t *testing.T) {
 	}
 }
 
+// TestResumingReaderSameVersionOnly checks that a download is not continued
+// from an object that was overwritten in between, so two versions are never
+// mixed.
 func TestResumingReaderSameVersionOnly(t *testing.T) {
 	fastBackoff(t)
 	o := &object{data: "first version of the manifest", etag: "v1"}
@@ -208,6 +226,8 @@ func TestResumingReaderSameVersionOnly(t *testing.T) {
 	}
 }
 
+// TestResumingReaderWithoutTimeout checks that without a timeout a broken
+// download fails with its own error.
 func TestResumingReaderWithoutTimeout(t *testing.T) {
 	o := &object{data: "no retries at all", etag: "v1"}
 	body, etag, _ := o.open(context.Background(), 0, "")

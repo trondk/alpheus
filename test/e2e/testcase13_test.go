@@ -24,9 +24,21 @@ import (
 	"alpheus-dev.org/alpheus/api/v1alpha1"
 )
 
-// TestTestcase13 gives sink 1 MiB of scratch and chunks of 4 MiB. Its agent
-// must refuse the first chunk with an error that names the scratch folder,
-// before the folder fills up and Kubernetes evicts the pod (GO-106).
+// TestTestcase13 gives sink chunks larger than its scratch space: 1 MiB of
+// scratch and chunks of 4 MiB.
+//
+// Flow: source → sink.
+//
+// What it tests: that the agent refuses a chunk that does not fit, with an
+// error that names the scratch folder, before the folder fills up and
+// Kubernetes evicts the pod (GO-106, GO-138).
+//
+// Done to the run: nothing; the step's scratch size is too small.
+//
+// Passes when: the run is Failed because a chunk does not fit in the scratch
+// folder, with the reason in sink; sink failed after its one restart; and no
+// pod was evicted. The run is expected to fail: the test passes when it
+// fails this way.
 func TestTestcase13(t *testing.T) {
 	b := newBench(t, "testcase13", nil)
 	if b.ChunkBytes <= 1<<20 {

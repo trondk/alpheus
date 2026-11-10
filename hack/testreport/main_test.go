@@ -40,6 +40,9 @@ not json, passed through
 {"Action":"fail","Elapsed":3}
 `
 
+// TestParse checks that the test report reads go test -json output right:
+// passed, failed, skipped and unfinished tests, their time, and the
+// package's own output.
 func TestParse(t *testing.T) {
 	r, err := parse(strings.NewReader(events))
 	if err != nil {
@@ -59,6 +62,9 @@ func TestParse(t *testing.T) {
 	}
 }
 
+// TestRender checks that the report page shows a failed run with its
+// subtests, escaped output and metadata, and that a report ID that could
+// leave the folder is refused.
 func TestRender(t *testing.T) {
 	root := t.TempDir()
 	in := filepath.Join(t.TempDir(), "events.json")
@@ -83,6 +89,8 @@ func TestRender(t *testing.T) {
 	}
 }
 
+// TestDocs checks that the report takes each test's description from its doc
+// comment and splits it into paragraphs and code blocks.
 func TestDocs(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "a_test.go"), []byte(`package a

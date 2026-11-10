@@ -1,0 +1,33 @@
+# Rebuilds alpheus-dev.org when the documentation or the changelog changes
+# on main (WWW-22, WWW-23 and WWW-54 in the website's SPEC). Runs on the project's own
+# Forgejo runners; GitHub ignores .forgejo/, so the mirror runs nothing.
+#
+# Starts the site's workflow through Forgejo's API (Forgejo 8 or newer).
+# Needs in the repository settings:
+#   secret   SITE_DISPATCH_TOKEN  a token of a user that may only write to
+#                                 the site's repository
+#   variable SITE_REPO            the site's repository; default
+#                                 alpheus-dev/alpheus-dev.org
+name: Website
+
+on:
+  push:
+    branches: [main]
+    paths: ["docs/**", "CHANGELOG.md"]
+
+jobs:
+  rebuild:
+    runs-on: docker
+    container:
+      image: node:22-bookworm
+    steps:
+      - name: Start the site's build
+        run: |
+          curl -fsS -X POST \
+            -H "Authorization: token $TOKEN" -H "Content-Type: application/json" \
+            -d '{"ref":"main","inputs":{"ref":"main"}}' \
+            "$SERVER/api/v1/repos/${SITE_REPO:-alpheus-dev/alpheus-dev.org}/actions/workflows/site.yml/dispatches"
+        env:
+          TOKEN: ${{ secrets.SITE_DISPATCH_TOKEN }}
+          SITE_REPO: ${{ vars.SITE_REPO }}
+          SERVER: ${{ github.server_url }}

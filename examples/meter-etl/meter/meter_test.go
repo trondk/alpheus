@@ -31,6 +31,9 @@ import (
 	"alpheus-dev.org/alpheus/sdk"
 )
 
+// TestParse checks that a meter reading is parsed, and that each kind of bad
+// row is rejected with its own error: too few columns, a bad meter ID, no
+// region, a bad timestamp, a missing, negative or too precise value.
 func TestParse(t *testing.T) {
 	for line, want := range map[string]error{
 		"M0012345,coast,2026-10-30T13:45:00Z,1.234":  nil,

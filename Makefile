@@ -1,12 +1,13 @@
-.PHONY: all clean spec-status lint ci generate proto check-generated check-deps test test-crd test-chart test-templates cli test-s3 test-agent-s3 vet images e2e e2e-minio test-upgrade fuzz bench bench-etl release verify-release vulndb vuln deploy
+.PHONY: all clean spec-status lint ci check-changelog generate proto check-generated check-deps test test-crd test-chart test-templates cli test-s3 test-agent-s3 vet images e2e e2e-minio test-upgrade fuzz bench bench-etl release verify-release vulndb vuln deploy
 
 all: generate vet check-deps test
 
 # Deepcopy functions and the CRD from the kubebuilder markers in api/, and
 # the controller's RBAC role from those in internal/controller. The Helm
 # chart gets a copy of both, the Python template one of the component
-# contract, the website the CLI reference (WWW-4), and alpheus ui its help
-# page, which is docs/ui.md.
+# contract, the website the CLI reference (WWW-4), the list of tests from
+# their doc comments and the changes from CHANGELOG.md, and alpheus ui its
+# help page, which is docs/ui.md.
 generate:
 	go tool controller-gen object:headerFile=hack/boilerplate.go.txt paths=./api/...
 	go tool controller-gen crd paths=./api/... output:crd:artifacts:config=config/crd/bases
@@ -15,6 +16,8 @@ generate:
 	cp config/rbac/role.yaml charts/alpheus/files/role.yaml
 	cp proto/component.proto templates/component-python/alpheus/component.proto
 	go run ./hack/clireference > docs/cli.md
+	go run ./hack/testlist > docs/tests.md
+	go run ./hack/changelog docs > docs/changes.md
 	cp docs/ui.md internal/cli/ui/help.md
 	$(MAKE) proto
 
@@ -24,7 +27,7 @@ proto:
 
 # Fails when generated code is not up to date (GO-63).
 check-generated: generate
-	git diff --exit-code -- api config internal/pb charts/alpheus/files templates/component-python/alpheus/component.proto docs/cli.md internal/cli/ui/help.md
+	git diff --exit-code -- api config internal/pb charts/alpheus/files templates/component-python/alpheus/component.proto docs/cli.md docs/tests.md docs/changes.md internal/cli/ui/help.md
 
 vet:
 	go vet ./...
@@ -37,7 +40,12 @@ lint:
 
 # What CI runs, and fails on any finding: vet, lint, generated code that
 # is up to date, the dependency rule and the tests (GO-59, GO-63).
-ci: vet lint check-generated check-deps test
+ci: vet lint check-generated check-deps check-changelog test
+
+# Fails unless CHANGELOG.md has an Unreleased section and every release
+# section has its three parts (GO-65).
+check-changelog:
+	go run ./hack/changelog check
 
 # Deletes what the build leaves in _out/: binaries, image digests, the
 # example's files, measurements, test reports, releases and the

@@ -30,11 +30,22 @@ import (
 	"alpheus-dev.org/alpheus/internal/controller"
 )
 
-// TestTestcase11 gives a run a key the storage refuses: the right key ID
-// with a wrong secret. The run must fail within two minutes, saying that
-// the storage refused the keys, without a single restart and with no pods
-// left, and deleting it must not hang on cleaning up data the keys cannot
-// delete (GO-137).
+// TestTestcase11 gives a run keys the storage refuses: the right key ID with
+// a wrong secret.
+//
+// Flow: source → sink.
+//
+// What it tests: that refused keys fail the run at once instead of being
+// retried as an outage (GO-137), with a reason a program can rely on
+// (GO-138).
+//
+// Done to the run: nothing; the run's storage Secret has the wrong secret.
+//
+// Passes when: the run is Failed within two minutes, with a message that the
+// storage refused the keys and the reason for it; no step restarted; no pods
+// are left; and deleting the run does not hang on data the keys cannot
+// delete. The run is expected to fail: the test passes when it fails this
+// way.
 func TestTestcase11(t *testing.T) {
 	newBench(t, "testcase11", nil) // the sizes the flow needs
 	e := setup(t)

@@ -21,6 +21,10 @@ import (
 	"testing"
 )
 
+// TestNetworkOptions checks that the controller's network flags become its
+// options: the signal hub's port, the storage's ports and the policy's
+// egress rules, no NetworkPolicy when it is off, and an error for a bad port
+// or bad JSON.
 func TestNetworkOptions(t *testing.T) {
 	o, err := networkOptions(true, ":7070", "3900, 9000", `[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"storage"}}}]`)
 	if err != nil {

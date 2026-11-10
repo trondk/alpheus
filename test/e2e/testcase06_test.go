@@ -26,15 +26,23 @@ import (
 	"alpheus-dev.org/alpheus/api/v1alpha1"
 )
 
-// TestTestcase06 runs testcase02's fan-out and fan-in, and kills a random
-// pod of the run about every three seconds, BENCH_CHAOS_KILLS times
-// (default 12), or until the run finishes (GO-56). The kills stop, so the
-// run can finish: a stateful sink killed every few seconds would start
-// over for ever. The
-// result must still be correct: every chunk once on each of sink's ports,
-// unchanged, with exact counters, the same checks of acks and streams as
-// testcase02, and no chunks left that were never committed. BENCH_CHAOS_SEED picks the
-// pods, so a failure can be run again.
+// TestTestcase06 kills random pods of a run with fan-out and fan-in until it
+// is done (GO-56).
+//
+// Flow: as testcase02: source → left (3) and right (2) → sink.
+//
+// What it tests: that a run survives repeated crashes of any of its pods,
+// wherever they happen.
+//
+// Done to the run: a random pod is killed about every three seconds,
+// BENCH_CHAOS_KILLS times (default 12) or until the run finishes.
+// BENCH_CHAOS_SEED picks the pods, so a failure can be run again. The kills
+// stop, so the run can finish: a stateful sink killed every few seconds
+// would start over for ever.
+//
+// Passes when: the run is Succeeded with every chunk once on each of sink's
+// ports, unchanged; exact counts; the same checks of acks and streams as
+// testcase02; and no chunk objects left that were never committed.
 func TestTestcase06(t *testing.T) {
 	b := newBench(t, "testcase06", map[string]int{"left": 3, "right": 2})
 	seed := setting(t, "BENCH_CHAOS_SEED", int(time.Now().UnixNano()%1_000_000+1))

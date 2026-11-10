@@ -32,15 +32,26 @@ import (
 	"alpheus-dev.org/alpheus/internal/store"
 )
 
-// TestTestcase19 runs testcase14's component with a bug in two replicas
-// with failurePolicy continue (GO-97), as docs/dead-letters.md describes.
-// pass fails on source's chunk 5, which is replica 1's, on both of its
-// attempts; replica 1 then gives up, and replica 0 goes on with its own
-// chunks. The run must end PartiallySucceeded with the reason
-// FailedReplicas, and every chunk of source must be in the result once or
-// counted in failedChunks, chunk 5 not in the result. The chunk it failed
-// on is kept for a replay, and when the run has finished, every chunk the
-// replica did not process is kept too, for alpheus replay --skipped.
+// TestTestcase19 sets a bad chunk aside instead of failing the run, with
+// failurePolicy continue (GO-97), as docs/dead-letters.md describes.
+//
+// Flow: source → pass (2 replicas, failurePolicy continue), where pass has
+// testcase14's bug and fails on source's chunk 5, which is replica 1's.
+// pass's output is the result.
+//
+// What it tests: that a replica that gives up stops alone while the others
+// go on; that the run ends PartiallySucceeded; that the chunk it failed on
+// and every chunk it did not process are kept for alpheus replay --skipped.
+//
+// Done to the run: nothing; the bug fails replica 1 on both of its attempts.
+//
+// Passes when: the run is PartiallySucceeded with the reason FailedReplicas;
+// replica 0 succeeded and replica 1 failed with ComponentFailed after one
+// restart; every chunk of source is in the result once or counted in
+// failedChunks, and chunk 5 is not in the result; both results have ended;
+// and alpheus replay --skipped fetches exactly replica 1's unprocessed
+// chunks, starting with chunk 5. The run is expected to succeed only partly:
+// the test passes when it ends this way.
 func TestTestcase19(t *testing.T) {
 	b := newBench(t, "testcase19", nil)
 	if b.Chunks < 8 {

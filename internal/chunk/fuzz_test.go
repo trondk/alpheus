@@ -33,6 +33,9 @@ func seedChunk(n int64) Chunk {
 		Counts: map[string]int64{"rows": 3}, Src: &Source{Edge: "a-default-b", Replica: 1, N: n}}
 }
 
+// FuzzParseManifest feeds the manifest parser cut-off, foreign and
+// hand-changed files (GO-58): it never panics, and a manifest it accepts
+// marshals to the same bytes again and can be appended to and ended.
 func FuzzParseManifest(f *testing.F) {
 	m := NewManifest("run", "uid", "a-default-b", 0, 1)
 	add := func() {
@@ -107,6 +110,8 @@ func FuzzParseManifest(f *testing.F) {
 	})
 }
 
+// FuzzParseSegment does the same for sealed segments: one that is accepted
+// has exactly 1,000 chunks in order and marshals to the same bytes again.
 func FuzzParseSegment(f *testing.F) {
 	seg := Segment{Version: ManifestVersion}
 	for n := int64(1); n <= SegmentSize; n++ {
@@ -145,6 +150,9 @@ func FuzzParseSegment(f *testing.F) {
 	})
 }
 
+// FuzzParseAcks does the same for ack files: one that is accepted marshals
+// to the same bytes again, knows every chunk it acked, and takes the next
+// ack.
 func FuzzParseAcks(f *testing.F) {
 	a := NewAcks()
 	data, _ := a.Marshal()

@@ -31,6 +31,10 @@ import (
 	"alpheus-dev.org/alpheus/internal/chunk"
 )
 
+// TestMemory runs the store checks against the in-memory store the other
+// tests use: a missing object, put, overwrite and get, unknown size, a chunk
+// with its checksum, list and delete a prefix, size, and a ranged read of
+// the same version.
 func TestMemory(t *testing.T) {
 	testStore(t, NewMemory(), "test/")
 }
@@ -67,6 +71,8 @@ func TestS3(t *testing.T) {
 	testStore(t, s, prefix)
 }
 
+// TestNewS3RejectsBadEndpoints checks that an endpoint without http:// or
+// https://, with another scheme or with a path is refused.
 func TestNewS3RejectsBadEndpoints(t *testing.T) {
 	for _, endpoint := range []string{"s3.example:3900", "ftp://s3.example", "https://s3.example/path", ""} {
 		if _, err := NewS3(S3Config{Endpoint: endpoint, Bucket: "b"}); err == nil {

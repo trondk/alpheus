@@ -31,12 +31,20 @@ import (
 	"alpheus-dev.org/alpheus/sdk"
 )
 
-// TestTestcase09 runs source -> pass -> sink and takes the storage away in
-// the middle of the stream, by scaling the storage (Garage, or MinIO with
-// ALPHEUS_E2E_STORAGE=minio) to 0, once for 20 seconds and
-// once for 3 minutes. The agents must wait for it with backoff instead of
-// failing (GO-136): the run must succeed with every chunk once and
-// unchanged, exact counters and no restarts at all.
+// TestTestcase09 takes the storage away in the middle of a run, once for 20
+// seconds and once for 3 minutes.
+//
+// Flow: source → pass → sink, run twice.
+//
+// What it tests: that the agents wait for the storage with backoff instead
+// of failing (GO-136).
+//
+// Done to the run: the storage (Garage, or MinIO with
+// ALPHEUS_E2E_STORAGE=minio) is scaled to 0 in the middle of the stream and
+// back up after 20 seconds, and in the second run after 3 minutes.
+//
+// Passes when: each run is Succeeded with every chunk once and unchanged,
+// exact counts and no restarts at all.
 func TestTestcase09(t *testing.T) {
 	for _, outage := range []time.Duration{20 * time.Second, 3 * time.Minute} {
 		t.Run(outage.String(), func(t *testing.T) {

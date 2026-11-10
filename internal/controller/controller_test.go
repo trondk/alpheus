@@ -328,6 +328,11 @@ func env(c corev1.Container, name string) string {
 	return ""
 }
 
+// TestPodsAndSuccess runs a flow through the controller and checks each
+// step's pod: the agent as a native sidecar with the configured image, the
+// agent's and the component's settings, no secrets for the component, the
+// log level, a writable /tmp on a read-only root, a certificate per attempt
+// (GO-41), and the run Succeeded when every pod has.
 func TestPodsAndSuccess(t *testing.T) {
 	ns := namespace(t)
 	r := create(t, testcase03(ns, 2))
@@ -815,6 +820,9 @@ func TestLogLevel(t *testing.T) {
 	}
 }
 
+// TestInvalidRuns checks that a run with a cycle or an image without a
+// digest fails with a message and no pods, and that the API server rejects a
+// step that reads its own output (GO-23).
 func TestInvalidRuns(t *testing.T) {
 	ns := namespace(t)
 	cycle := testcase03(ns, 1)
@@ -882,6 +890,9 @@ func TestStorageTimeout(t *testing.T) {
 	}
 }
 
+// TestCancel checks that spec.cancel stops a run: it is Cancelled, its pods
+// go, and steps and replicas that had not finished are Stopped, not left
+// Running or Pending.
 func TestCancel(t *testing.T) {
 	ns := namespace(t)
 	r := create(t, testcase03(ns, 1))

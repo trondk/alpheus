@@ -38,13 +38,30 @@ import (
 	"alpheus-dev.org/alpheus/internal/store"
 )
 
-// TestTestcase21 runs the debug example (docs/debug-example.md). Version 1
-// of merge must fail in every attempt with the same panic, which shows that
-// each new attempt got the side input again (GO-167): without it, an
-// attempt after the first would start without customers and reject every
-// order instead. The failed attempt is kept with all of the side input.
-// Version 2, run with its log level at debug (GO-166), must join every
-// order that passed filter and warn about each blank region.
+// TestTestcase21 runs the debug example of docs/debug-example.md, and gets
+// its results and error log out with the CLI.
+//
+// Flow: orders → filter (3 replicas) → merge → sort, with customers as a
+// side input to merge.
+//
+// What it tests: that each new attempt gets the side input again (GO-167);
+// that a failed attempt is kept with all of its side input (GO-140); that a
+// step's log level can be set (GO-166); and alpheus results get, ls, cat and
+// copy and alpheus errors, which find the storage by the annotations on its
+// Secret (GO-147 to GO-156).
+//
+// Done to the run: nothing; version 1 of merge has a bug. Then the run is
+// created again with version 2 of merge at debug level.
+//
+// Passes when: with version 1 the run is Failed in merge, after three
+// attempts that all panic the same way, without logging a single error, and
+// the failure is kept with the side input; with version 2 the run is
+// Succeeded, merge joined every order filter passed and warned about each
+// blank region; results get of the failed run with --complete exits 1,
+// saying the results are incomplete; results get of version 2 fetches every
+// chunk with its size; results ls and cat agree with it; results copy is
+// done by the storage and finds every copy there when run again; and alpheus
+// errors lists one entry per warning.
 func TestTestcase21(t *testing.T) {
 	e := setup(t)
 	step := func(r *v1alpha1.StreamRun, name string) v1alpha1.StepStatus {

@@ -1,0 +1,28 @@
+# Rebuilds alpheus-dev.org for every vX.Y.Z tag, so /releases/ lists the
+# version (WWW-53 and WWW-54 in the website's SPEC). The site takes the release's
+# notes from RELEASE-NOTES.md among its files on the web server; a tag is
+# pushed before hack/release.sh runs, so the upload of a release's files
+# must start the same build again (see the website's ci/fetch-releases.sh).
+# The settings are those of site-docs.yml.
+name: Website release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+jobs:
+  rebuild:
+    runs-on: docker
+    container:
+      image: node:22-bookworm
+    steps:
+      - name: Start the site's build
+        run: |
+          curl -fsS -X POST \
+            -H "Authorization: token $TOKEN" -H "Content-Type: application/json" \
+            -d '{"ref":"main","inputs":{"ref":"main"}}' \
+            "$SERVER/api/v1/repos/${SITE_REPO:-alpheus-dev/alpheus-dev.org}/actions/workflows/site.yml/dispatches"
+        env:
+          TOKEN: ${{ secrets.SITE_DISPATCH_TOKEN }}
+          SITE_REPO: ${{ vars.SITE_REPO }}
+          SERVER: ${{ github.server_url }}

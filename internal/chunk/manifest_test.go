@@ -27,6 +27,8 @@ const sum0 = "0000000000000000000000000000000000000000000000000000000000000000"
 
 func chunkN(n int64) Chunk { return Chunk{N: n, Ext: "csv", Bytes: 100, SHA256: sum0} }
 
+// TestManifestAppend checks that chunks are added to a manifest in order
+// from 1, and that a gap or a chunk added twice is refused.
 func TestManifestAppend(t *testing.T) {
 	m := NewManifest("sales-dk", "uid", "read-filter", 0, 1)
 	for n := int64(1); n <= 3; n++ {
@@ -45,6 +47,9 @@ func TestManifestAppend(t *testing.T) {
 	}
 }
 
+// TestManifestSealsSegments checks that every 1,000 chunks are sealed into a
+// segment with the right name and numbers, and that the count includes them
+// (GO-32).
 func TestManifestSealsSegments(t *testing.T) {
 	m := NewManifest("r", "uid", "a-b", 0, 1)
 	var segs []*Segment
@@ -105,6 +110,8 @@ func TestManifestEndsEmpty(t *testing.T) {
 	}
 }
 
+// TestManifestConsumedNeverMovesBack checks that how far an input stream is
+// consumed never goes back (SPEC 7.4).
 func TestManifestConsumedNeverMovesBack(t *testing.T) {
 	m := NewManifest("r", "uid", "a-b", 0, 1)
 	m.SetConsumed("x-a/0", 7)
@@ -114,6 +121,8 @@ func TestManifestConsumedNeverMovesBack(t *testing.T) {
 	}
 }
 
+// TestManifestCheckEpoch checks that a manifest from an older attempt and
+// one from a newer attempt are told apart from the reader's own (GO-68).
 func TestManifestCheckEpoch(t *testing.T) {
 	m := NewManifest("r", "uid", "a-b", 0, 2)
 	if err := m.CheckEpoch(2); err != nil {
@@ -127,6 +136,8 @@ func TestManifestCheckEpoch(t *testing.T) {
 	}
 }
 
+// TestManifestRoundTrip checks that a manifest with counters, a source chunk
+// and a consumed stream is written and read back unchanged.
 func TestManifestRoundTrip(t *testing.T) {
 	m := NewManifest("sales-dk-0042", "3f0c9a6e", "read-filter", 1, 2)
 	c := chunkN(1)
@@ -145,6 +156,10 @@ func TestManifestRoundTrip(t *testing.T) {
 	}
 }
 
+// TestParseManifestRejects checks that a manifest from a newer version, with
+// unknown fields or trailing data, epoch 0, EOS without its last chunk, a
+// gap, a short checksum or a bad extension is refused, so a file is never
+// half understood.
 func TestParseManifestRejects(t *testing.T) {
 	valid := `{"version":1,"run":"r","uid":"u","edge":"a-b","replica":0,"epoch":1,"segments":[],"chunks":[],"consumed":{},"eos":false,"last":null}`
 	if _, err := ParseManifest([]byte(valid)); err != nil {

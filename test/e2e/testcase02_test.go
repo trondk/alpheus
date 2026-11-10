@@ -25,9 +25,22 @@ import (
 	"alpheus-dev.org/alpheus/internal/store"
 )
 
-// TestTestcase02 runs source -> left and right -> sink: fan-out from one
-// output to two steps, and fan-in to two ports of one step. The sink
-// checks every byte and expects every chunk once on each port.
+// TestTestcase02 runs fan-out from one output to two steps, and fan-in to
+// two ports of one step.
+//
+// Flow: source → left (3 replicas) and right (2 replicas) → sink, with left
+// and right on sink's two ports.
+//
+// What it tests: that every consumer of an output gets every chunk (GO-36),
+// that chunks are spread over the replicas by number (GO-76), and that a
+// step with two inputs ends only when both have ended (GO-80, GO-95).
+//
+// Done to the run: nothing.
+//
+// Passes when: the run is Succeeded; sink has every chunk once on each port,
+// unchanged; left's and right's replicas acked each chunk once, at replica n
+// mod replicas; every stream has EOS and was consumed to its last chunk; and
+// the counts are exact.
 func TestTestcase02(t *testing.T) {
 	b := newBench(t, "testcase02", map[string]int{"left": 3, "right": 2})
 	b.start(setup(t), b.Chunks, "left", "right")

@@ -42,6 +42,10 @@ func step(t *testing.T, h sdk.Handler, settings string, inputs map[string]string
 	return filepath.Join(out, sdk.DefaultOutput), err
 }
 
+// TestSources checks the debug example's generated data: the customers'
+// header and count, the 20 customers without a region from C000921, and
+// that their first orders come on day 7, the seventh chunk, where merge
+// version 1 fails.
 func TestSources(t *testing.T) {
 	customers, err := step(t, shop.Customers, SmallCustomers, nil)
 	if err != nil {
@@ -87,6 +91,9 @@ func TestSources(t *testing.T) {
 	}
 }
 
+// TestFilterAndSort runs the debug example's filter and sort on their own:
+// filter drops cancelled orders and keeps the header, and sort orders merged
+// rows across two chunks.
 func TestFilterAndSort(t *testing.T) {
 	orders, err := step(t, shop.Orders, SmallOrders, nil)
 	if err != nil {

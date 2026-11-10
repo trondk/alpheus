@@ -371,6 +371,9 @@ func checkPipeline(t *testing.T, st store.Store, parts, filters int) {
 	}
 }
 
+// TestPipelineWithHub runs generate → filter (10 replicas) → sum through the
+// agents, with the signal hub, on 30 chunks: every chunk arrives once,
+// unchanged, and the sum is right.
 func TestPipelineWithHub(t *testing.T) {
 	st := store.NewMemory()
 	if err := run(t, st, hub(t), pipeline(30, 10)...); err != nil {
@@ -461,6 +464,10 @@ func checkFanOut(t *testing.T, st store.Store, parts int) {
 	}
 }
 
+// TestFanOutFanIn runs generate → left (3 replicas) and right (2 replicas) →
+// sum, with right on a port of its own: every chunk reaches each consuming
+// step once through its own ack files (GO-36), and sum gets EOS only when
+// both inputs have ended.
 func TestFanOutFanIn(t *testing.T) {
 	const parts = 12
 	st := store.NewMemory()
@@ -572,6 +579,9 @@ func restart(t *testing.T, parts, filters, i, after int) {
 	checkPipeline(t, st, parts, filters)
 }
 
+// TestRestartFilter crashes a filter replica after three chunks and runs
+// every replica again as a new attempt: the result must be as if nothing
+// happened (GO-37, GO-70, GO-74).
 func TestRestartFilter(t *testing.T) { restart(t, 12, 3, 2, 3) }
 
 // sum keeps its state in memory only, so after a crash every chunk is read

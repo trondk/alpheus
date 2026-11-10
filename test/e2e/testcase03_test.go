@@ -23,10 +23,24 @@ import (
 	"alpheus-dev.org/alpheus/sdk"
 )
 
-// TestTestcase03 runs source -> filter (10 replicas) -> sink. filter drops
-// every chunk whose number is a multiple of its replica count, so replica 0
-// gets chunks but outputs none, and must still end its stream with EOS.
-// The sink checks every byte and expects exactly the other chunks.
+// TestTestcase03 runs a step with ten replicas, where one gets chunks but
+// writes none, and keeps the result in a bucket of its own.
+//
+// Flow: source → filter (10 replicas) → sink. filter drops every chunk whose
+// number is a multiple of its replica count, so replica 0 writes nothing.
+//
+// What it tests: that a replica without output still ends its stream with
+// EOS (GO-80); that chunks are spread over the replicas by number (GO-76);
+// and that results go to spec.storage.resultsBucket, read with a Secret of
+// their own (GO-129).
+//
+// Done to the run: nothing.
+//
+// Passes when: the run is Succeeded; sink has exactly the chunks that are
+// not dropped, once and unchanged; replica 0 acked the multiples of 10,
+// wrote none and has last 0; status.results names alpheus-results and
+// alpheus-s3-results; nothing of the result is in the main bucket; and the
+// counts are exact.
 func TestTestcase03(t *testing.T) {
 	b := newBench(t, "testcase03", map[string]int{"filter": 10})
 	replicas := b.Replicas["filter"]

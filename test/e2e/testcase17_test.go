@@ -33,12 +33,21 @@ import (
 	"alpheus-dev.org/alpheus/sdk"
 )
 
-// TestTestcase17 loses a node in the middle of a run (GO-67): the worker,
-// where pass runs, is powered off and its Node deleted, as a cloud
-// provider does with a dead machine. The run must succeed with every chunk
-// once and exact counts, pass's new attempt on the control plane, and the
-// worker is powered on again afterwards. It needs virsh and the worker's
-// VM in ALPHEUS_E2E_WORKER_VM (hack/e2e.sh sets it).
+// TestTestcase17 loses a node in the middle of a run (GO-67).
+//
+// Flow: source → pass → sink, with pass on the worker.
+//
+// What it tests: that a run survives a dead machine: the replica on the lost
+// node gets a new attempt elsewhere, (GO-67).
+//
+// Done to the run: the worker is powered off and its Node deleted, as a
+// cloud provider does with a dead machine, and powered on again afterwards.
+// It needs virsh and the worker's VM in ALPHEUS_E2E_WORKER_VM, which
+// hack/e2e.sh sets.
+//
+// Passes when: the run is Succeeded with every chunk once and exact counts;
+// pass restarted once, with its new attempt on the control plane; and the
+// worker is Ready again within 10 minutes.
 func TestTestcase17(t *testing.T) {
 	vm := os.Getenv("ALPHEUS_E2E_WORKER_VM")
 	if vm == "" {

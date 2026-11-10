@@ -22,6 +22,8 @@ import (
 	"testing"
 )
 
+// TestAcks checks an ack file: acks in order, a repeated ack ignored, an ack
+// out of order refused, and the file's format and round trip.
 func TestAcks(t *testing.T) {
 	a := NewAcks()
 	for _, n := range []int64{1, 11, 21, 21} {
@@ -53,6 +55,9 @@ func TestAcks(t *testing.T) {
 	}
 }
 
+// TestParseAcksRejects checks that an ack file with another version, acks
+// out of order, chunk 0, a repeated ack or impossible observed totals is
+// refused.
 func TestParseAcksRejects(t *testing.T) {
 	for _, data := range []string{
 		`{"version":2,"acked":[]}`,

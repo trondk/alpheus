@@ -24,6 +24,8 @@ import (
 	"testing"
 )
 
+// TestChecksumRoundTrip checks that a chunk written with its size and
+// SHA-256 reads back unchanged through the verifying reader.
 func TestChecksumRoundTrip(t *testing.T) {
 	content := strings.Repeat("order_id,country,amount\n", 1000)
 	var buf bytes.Buffer
@@ -45,6 +47,8 @@ func TestChecksumRoundTrip(t *testing.T) {
 	}
 }
 
+// TestChecksumDetectsCorruption checks that a chunk with a changed byte, a
+// missing byte or an extra byte fails with ErrChecksum.
 func TestChecksumDetectsCorruption(t *testing.T) {
 	content := []byte("some chunk content")
 	var buf bytes.Buffer

@@ -101,6 +101,10 @@ func TestS3Pipeline(t *testing.T) {
 	checkPipeline(t, st, 30, 10)
 }
 
+// TestS3Restart runs the pipeline against a real bucket, crashes the sum
+// after five chunks, and runs it again as a new attempt: the result must be
+// as if nothing happened. It runs with make test-s3, and is skipped without
+// ALPHEUS_TEST_S3_ENDPOINT.
 func TestS3Restart(t *testing.T) {
 	st := s3Store(t)
 	rs := pipeline(12, 3)

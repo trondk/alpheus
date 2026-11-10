@@ -235,6 +235,9 @@ func TestRunOverrides(t *testing.T) {
 	}
 }
 
+// TestRunGetCancel checks run, get and cancel: a run is created once, get
+// lists it as text, JSON and YAML and shows the status the controller
+// writes, and cancel sets spec.cancel.
 func TestRunGetCancel(t *testing.T) {
 	h := newHarness(t)
 	f := h.file("flow.yaml", flow("sales", ""))
@@ -300,6 +303,9 @@ func TestRunGetCancel(t *testing.T) {
 	}
 }
 
+// TestValidate checks that validate accepts a good flow without creating it,
+// rejects bad flows with exit code 1 and a reason, warns about an image
+// without a digest with --local, and wants -f.
 func TestValidate(t *testing.T) {
 	h := newHarness(t)
 
@@ -340,6 +346,9 @@ func TestValidate(t *testing.T) {
 	}
 }
 
+// TestWatch checks that watch prints each change of the status, one JSON
+// object per line, until the run finishes, and exits with 1 when the run
+// failed.
 func TestWatch(t *testing.T) {
 	h := newHarness(t)
 	h.mustRun("run", "-f", h.file("flow.yaml", flow("w", "")))
@@ -386,6 +395,8 @@ func TestWatch(t *testing.T) {
 	}
 }
 
+// TestChunks checks that chunks shows an edge's manifests as text and JSON,
+// and names the run's edges when asked for one it does not have.
 func TestChunks(t *testing.T) {
 	h := newHarness(t)
 	h.mustRun("run", "-f", h.file("flow.yaml", flow("c", "")))
@@ -423,6 +434,10 @@ func TestChunks(t *testing.T) {
 	}
 }
 
+// TestResultsGC checks that results gc lists what it would delete with
+// --dry-run, asks before deleting, deletes only results whose resultsTTL has
+// run out, keeps results whose run is gone unless --orphans, and wants its
+// flags.
 func TestResultsGC(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
@@ -490,6 +505,9 @@ func TestResultsGC(t *testing.T) {
 	}
 }
 
+// TestLogs checks that logs shows every step's log or one step's, as text or
+// JSON, and says so for a run without pods, a missing step or a container
+// that is not there.
 func TestLogs(t *testing.T) {
 	h := newHarness(t)
 	h.mustRun("run", "-f", h.file("flow.yaml", flow("l", "")))
@@ -530,6 +548,8 @@ func TestLogs(t *testing.T) {
 	}
 }
 
+// TestVersion checks that version shows the CLI's, the controller's and the
+// CRD's versions, and the CLI's own when there is no cluster.
 func TestVersion(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()

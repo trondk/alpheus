@@ -24,14 +24,22 @@ import (
 	"alpheus-dev.org/alpheus/sdk"
 )
 
-// TestTestcase07 runs the component templates in agent mode: source ->
-// go -> python -> sink, where go is templates/component-go with two
-// replicas and python is templates/component-python, both with an empty
-// match, so every chunk passes unchanged. It kills go's replica 0 when it
-// has committed a quarter of its chunks, and python when it has committed
-// half of its chunks. The run must succeed with every chunk once and
-// unchanged at sink, exact counters in both templates, one restart each,
-// and no chunks left that were never committed.
+// TestTestcase07 runs the Go and Python component templates in agent mode,
+// the way users run them, and kills both.
+//
+// Flow: source → go (templates/component-go, 2 replicas) → python
+// (templates/component-python) → sink. Both templates have an empty match,
+// so every chunk passes unchanged.
+//
+// What it tests: that the templates work as real steps with the SDKs, and go
+// on correctly after a restart (GO-37, GO-70).
+//
+// Done to the run: go's replica 0 is killed when it has committed a quarter
+// of its chunks, and python when it has committed half.
+//
+// Passes when: the run is Succeeded with every chunk once and unchanged at
+// sink; exact counters in both templates; one restart of each; and no chunk
+// objects left that were never committed.
 func TestTestcase07(t *testing.T) {
 	b := newBench(t, "testcase07", map[string]int{"go": 2})
 	e := setup(t)

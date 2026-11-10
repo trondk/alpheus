@@ -41,12 +41,25 @@ import (
 	"alpheus-dev.org/alpheus/internal/store"
 )
 
-// TestTestcase14 runs a component with a bug and checks everything a
-// person or a tool needs to find it: the reason as a code and in the
-// component's words (GO-138, GO-139), the events (GO-139), the logs of
-// both attempts (GO-140), the agent's live metrics (GO-51), and a replay
-// of the last attempt on its own, on the chunks it had open, which fails
-// the same way and logs at debug level (GO-141).
+// TestTestcase14 runs a component with a bug and checks everything a person
+// or a tool needs to find it.
+//
+// Flow: source → pass → sink, where pass panics on a chunk.
+//
+// What it tests: the reason as a code and in the component's words (GO-138,
+// GO-139); the Kubernetes events and the Ready condition (GO-139); the kept
+// logs of both attempts and the failed attempt's inputs (GO-140); the
+// agent's live metrics (GO-51); and alpheus replay of the last attempt on
+// its own, on the chunks it had open, at debug level (GO-141).
+//
+// Done to the run: nothing; the bug fails pass on both of its attempts.
+//
+// Passes when: the run is Failed with the reason ComponentFailed in pass
+// replica 0, and a message with what the component said; the events and the
+// Ready condition say the same; the logs and the failure of both attempts
+// are kept; sink's agent served its metrics; and the replay exits with code
+// 1 and logs the same panic at debug level. The run is expected to fail: the
+// test passes when it fails this way.
 func TestTestcase14(t *testing.T) {
 	b := newBench(t, "testcase14", nil)
 	if b.Chunks < 8 {

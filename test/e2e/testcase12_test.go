@@ -28,18 +28,27 @@ import (
 	"alpheus-dev.org/alpheus/internal/store"
 )
 
-// TestTestcase12 runs source -> sink in a bucket with a quota of 20 MiB,
-// far less than the run needs, so the storage refuses a write in the
-// middle of the stream. The run must fail, saying so, and not wait for
-// storage that is up: a full bucket is not an outage (GO-136). What was
-// committed must still hold: every chunk the manifest lists exists and is
-// unchanged, and source's counters match the manifest (GO-115). No step
-// restarts, since a restart would find the bucket just as full (GO-77).
+// TestTestcase12 runs out of space in the middle of a run: the bucket has a
+// quota of 20 MiB, far less than the run needs.
 //
-// Garage refuses the first write over the quota, so source fails in the
-// middle of its stream. MinIO counts a bucket's usage now and then, so it
-// lets writes over the quota through until it has counted them, and then
-// refuses one, in whichever step writes next; the rest holds the same.
+// Flow: source → sink.
+//
+// What it tests: that a full bucket fails the run instead of being waited
+// for as an outage (GO-136), that a restart is not tried, since it would
+// find the bucket just as full (GO-77), and that what was committed still
+// holds (GO-115).
+//
+// Done to the run: nothing; the bucket's quota is reached during the stream.
+// Garage refuses the first write over the quota, so source fails. MinIO
+// counts a bucket's usage now and then, so it lets writes through until it
+// has counted them, and then refuses one in whichever step writes next.
+//
+// Passes when: the run is Failed, with a reason that says the bucket is full
+// and not that the storage is unreachable; on Garage it failed in source;
+// the manifest has some but not all of the chunks; no step restarted; every
+// chunk the manifests list exists and is unchanged; and source's counters
+// match its manifest. The run is expected to fail: the test passes when it
+// fails this way.
 func TestTestcase12(t *testing.T) {
 	b := newBench(t, "testcase12", nil)
 	e := setup(t)

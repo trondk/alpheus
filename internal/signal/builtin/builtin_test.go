@@ -71,6 +71,8 @@ func receive(t *testing.T, pub *Client, ch <-chan signal.Signal, sig signal.Sign
 	}
 }
 
+// TestForwardsPerEdge checks that the signal hub forwards a ready signal
+// only to those who subscribed to its edge.
 func TestForwardsPerEdge(t *testing.T) {
 	addr := serve(t)
 	producer, consumer := dial(t, addr), dial(t, addr)

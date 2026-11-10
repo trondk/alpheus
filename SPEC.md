@@ -1295,13 +1295,15 @@ for EU. GitHub er kun et spejl af kildekoden, der læses fra (hjemmesidens
    digest (GO-24). Images har samme stier i alle registries
    (`alpheus-dev/agent`, `alpheus-dev/controller` og `alpheus-dev/ui`), så
    et spejl kun kræver `registry`.
-5. Binærer, checksums, SBOM'er, signaturer og release notes lægges under
+5. Binærer, checksums, SBOM'er, signaturer og release notes
+   (`RELEASE-NOTES.md`, versionens sektion af `CHANGELOG.md`) lægges under
    `https://alpheus-dev.org/releases/vX.Y.Z/`, og hjemmesiden genbygges
    med dokumentationen for den nye version.
 
 | ID | Niveau | Status | Krav |
 |---|---|---|---|
-| GO-65 | SKAL | — | Hver udgivelse har release notes med ændringer, opgraderingsnoter og eventuelle CRD-ændringer. |
+| GO-65 | SKAL | done, logic checked, closed (changelog: TestCheck, TestNotes, TestDocs, TestChangelog) | Hver udgivelse har release notes med ændringer, opgraderingsnoter og eventuelle CRD-ændringer. Kilden er `CHANGELOG.md` i repo'ets rod efter Keep a Changelog: en `## [Unreleased]`-sektion øverst og én `## [X.Y.Z] - ÅÅÅÅ-MM-DD`-sektion pr. udgivelse med delene `### Changes`, `### Upgrade notes` og `### CRD changes`. `make ci` kontrollerer formen (`hack/changelog check`), `hack/release.sh` nægter at udgive en version uden sin sektion og lægger den som `RELEASE-NOTES.md` blandt udgivelsens filer, dækket af `SHA256SUMS`, og `make generate` laver `docs/changes.md` til hjemmesiden med Unreleased markeret som ikke udgivet. |
+| GO-168 | SKAL | done (delvis), logic checked: reglen står i `CHANGELOG.md` og README'en; ingen CI kontrollerer, at en pull request med en ændring også har en linje | En ændring, som en bruger, en operatør eller en komponentforfatter mærker, og dens linje under Unreleased i `CHANGELOG.md` hører til samme pull request, ligesom ændringer og dokumentation gør (WWW-22). |
 | GO-66 | SKAL | done, logic checked, closed (testcase18) | CRD-opgraderinger er bagudkompatible inden for samme API-version. En ny API-version leveres med en conversion webhook. |
 | GO-130 | SKAL | done, logic checked | Ingen udgivelse, intet image, ingen signatur og ingen SBOM hentes fra eller lægges på tjenester uden for projektets egen infrastruktur i EU. Byggeriet kører på egne runners, ikke på GitHub Actions. |
 | GO-131 | SKAL | done (delvis): ingen release-runner endnu | Signeringsnøglen er projektets egen cosign-nøgle. Den private nøgle findes kun i release-runnerens hemmeligheder, og den offentlige nøgle ligger på `https://alpheus-dev.org/cosign.pub` og i repo'et. Signaturer lægges i registryet ved siden af images og chart og filerne er dækket af den signerede `SHA256SUMS` (GO-133). cosign signerer med en signing config uden tjenester, så der bruges ingen transparency log, tidsstempel-tjeneste eller certifikat-udsteder. |

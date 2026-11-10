@@ -1,7 +1,7 @@
 ---
 title: Documentation
 description: How to write components for Alpheus and run flows with them.
-lastmod: 2026-11-06
+lastmod: 2026-11-10
 ---
 
 {{% planned %}}These pages describe the code on `main`. Nothing is released
@@ -15,3 +15,6 @@ out why and try a fix. To drive Alpheus from your
 own program, with no CLI, see [The API](/docs/api/): a run is a Kubernetes
 object and its results and debug data are files in S3, so any language
 can use it.
+
+[Changes](/docs/changes/) lists what changed in each version, and
+[Tests](/docs/tests/) every automated test and what it checks.

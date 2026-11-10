@@ -27,12 +27,22 @@ import (
 	"alpheus-dev.org/alpheus/sdk"
 )
 
-// TestTestcase05 runs source -> slow (2 replicas) -> sink, where slow
-// waits before each chunk. While the run goes, the test samples source's
-// manifest and slow's ack files: no slow replica may ever have more than
-// maxUnacked chunks it has not acked (GO-35). The slowest replica sets
-// the pace (GO-94), so the stream takes at least chunks x delay /
-// replicas.
+// TestTestcase05 runs a slow step and watches backpressure while the run
+// goes.
+//
+// Flow: source → slow (2 replicas) → sink, where slow waits before each
+// chunk.
+//
+// What it tests: that no consumer replica ever has more than maxUnacked
+// chunks waiting that it has not acked (GO-35), and that the slowest replica
+// sets the pace (GO-94).
+//
+// Done to the run: nothing; the test samples source's manifest and slow's
+// ack files while it runs.
+//
+// Passes when: the run is Succeeded with every chunk once and exact counts;
+// no sample shows a slow replica with more than maxUnacked chunks not acked;
+// and the stream took at least chunks × delay / replicas.
 func TestTestcase05(t *testing.T) {
 	b := newBench(t, "testcase05", map[string]int{"slow": 2})
 	delay := setting(t, "BENCH_SLOW_MS", 500)

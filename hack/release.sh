@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Builds a release: the CLI for Linux and macOS with the LICENSE, the agent,
-# controller and UI images for linux/amd64 and linux/arm64, the Helm chart with
-# their digests and the LICENSE in it, an SPDX SBOM for every binary and
-# image, and SHA256SUMS. Signs the images, the chart and SHA256SUMS with the
+# Builds a release: RELEASE-NOTES.md, the version's section of
+# CHANGELOG.md, which must have one; the CLI for Linux and macOS with the
+# LICENSE; the agent, controller and UI images for linux/amd64 and
+# linux/arm64; the Helm chart with their digests and the LICENSE in it; an
+# SPDX SBOM for every binary and image; and SHA256SUMS over all of it. Signs the images, the chart and SHA256SUMS with the
 # project's cosign key, without a transparency log, and attaches each
 # image's SBOM to it (SPEC 14).
 #
@@ -55,6 +56,9 @@ if [[ "${ALLOW_DIRTY:-}" != 1 ]]; then
   # Go stamps the tag into the binaries, so it must be the one released.
   [[ "$(git tag --points-at HEAD)" == *"$VERSION"* ]] || die "HEAD is not tagged $VERSION"
 fi
+# The release's notes are its section of CHANGELOG.md (GO-65): no section,
+# no release.
+NOTES="$(go run ./hack/changelog notes "$VERSION")" || die "no release notes for $VERSION in CHANGELOG.md"
 [[ -f "$VULNDB/index/db.json" ]] || die "no vulnerability database in $VULNDB; run make vulndb"
 VULNDB_DATE="$(sed -n 's/.*"modified":"\([^"]*\)".*/\1/p' "$VULNDB/index/db.json")"
 (( $(date +%s) - $(date -d "$VULNDB_DATE" +%s) <= VULNDB_MAX_AGE * 86400 )) ||
@@ -69,6 +73,7 @@ OUT="$ROOT/_out/release/$VERSION"
 WORK="$ROOT/_out/release/.work-$VERSION"
 rm -rf "$OUT" "$WORK"
 mkdir -p "$OUT/sbom" "$WORK/certs"
+printf '%s\n' "$NOTES" >"$OUT/RELEASE-NOTES.md"
 
 # Everything carries the commit's time, so the same commit gives the same
 # binaries, archives and image digests (GO-4).

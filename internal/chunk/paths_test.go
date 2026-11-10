@@ -21,6 +21,8 @@ import (
 	"testing"
 )
 
+// TestEdgeName checks edge names: <from>-<to>, with the output only when it
+// is not the default one.
 func TestEdgeName(t *testing.T) {
 	for _, tc := range []struct{ from, output, to, want string }{
 		{"read", "", "filter", "read-filter"},
@@ -33,6 +35,8 @@ func TestEdgeName(t *testing.T) {
 	}
 }
 
+// TestStreamKeys checks the object keys of a stream: its prefix, chunks,
+// manifest, segments and ack files, and the prefix of a result.
 func TestStreamKeys(t *testing.T) {
 	s := EdgeStream("3f0c9a6e", "read-filter", 2)
 	for _, tc := range []struct{ got, want string }{
@@ -106,6 +110,8 @@ func TestAssignSpreadsProducers(t *testing.T) {
 	}
 }
 
+// TestAssignOneReplica checks that a step with one replica, or none given,
+// gets every chunk on replica 0.
 func TestAssignOneReplica(t *testing.T) {
 	for _, replicas := range []int{0, 1} {
 		if got := Assign(7, 3, replicas); got != 0 {
@@ -114,6 +120,8 @@ func TestAssignOneReplica(t *testing.T) {
 	}
 }
 
+// TestValidExt checks which file extensions a chunk may have: lower-case
+// letters and digits, one part, at most 16 characters.
 func TestValidExt(t *testing.T) {
 	for ext, want := range map[string]bool{
 		"csv": true, "parquet": true, "jsonl": true, "7z": true,

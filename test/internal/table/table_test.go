@@ -22,6 +22,9 @@ import (
 	"testing"
 )
 
+// TestParseNumber checks that amounts with a decimal comma or point and
+// thousands separators are read as hundredths, and that bad numbers are
+// refused.
 func TestParseNumber(t *testing.T) {
 	for _, tc := range []struct {
 		in   string
@@ -51,6 +54,8 @@ func TestParseNumber(t *testing.T) {
 	}
 }
 
+// TestFormat checks that hundredths are written as amounts with a decimal
+// comma.
 func TestFormat(t *testing.T) {
 	for n, want := range map[Number]string{147000: "1470,00", 19650: "196,50", -50: "-0,50", 0: "0,00"} {
 		if got := n.Format(','); got != want {
@@ -59,6 +64,8 @@ func TestFormat(t *testing.T) {
 	}
 }
 
+// TestReaderSkipsBOMAndBlankLines checks that the CSV reader skips a byte
+// order mark and blank lines.
 func TestReaderSkipsBOMAndBlankLines(t *testing.T) {
 	r := NewReader(strings.NewReader("\uFEFFa;b\n1;2\n\n3;4\n"), ';')
 	recs, err := r.ReadAll()

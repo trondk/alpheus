@@ -24,20 +24,24 @@ import (
 	"alpheus-dev.org/alpheus/sdk"
 )
 
-// TestTestcase04 runs source -> pass -> sink three times, and each time
-// kills one step's pod halfway through its work:
+// TestTestcase04 kills one step's pod halfway through its work, once for
+// each step.
 //
-//   - source when it has committed a quarter of its chunks: a deterministic
-//     source goes on from the next chunk, after checking the chunks it
-//     makes again (GO-92).
-//   - pass when it has committed half its output: it goes on from the
-//     first unprocessed chunk and deletes output it never committed
-//     (GO-37, GO-70).
-//   - sink when it has acked half its input, before EOS: a stateful step
-//     reads all its input again (GO-95, GO-100).
+// Flow: source → pass → sink, run three times.
 //
-// Each time the run must succeed with every chunk once and unchanged, and
-// with exact counters.
+// What it tests: that each kind of step goes on correctly after a restart: a
+// deterministic source goes on from the next chunk after checking the chunks
+// it makes again (GO-92); pass goes on from the first unprocessed chunk and
+// deletes output it never committed (GO-37, GO-70); and a stateful sink
+// reads all its input again (GO-95, GO-100).
+//
+// Done to the run: the first time source is killed when it has committed a
+// quarter of its chunks; the second time pass when it has committed half its
+// output; the third time sink when it has acked half its input, before EOS.
+//
+// Passes when: each run is Succeeded with every chunk once and unchanged at
+// sink, exact counts, one restart of the killed step, and no chunk objects
+// left that were never committed.
 func TestTestcase04(t *testing.T) {
 	for _, tc := range []struct {
 		step string

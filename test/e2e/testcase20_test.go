@@ -32,16 +32,24 @@ import (
 	"alpheus-dev.org/alpheus/internal/controller"
 )
 
-// TestTestcase20 checks the run's NetworkPolicy and ServiceAccount (SPEC
-// 6.1, step 2). source tries the Kubernetes API, Garage's admin port and
-// Zot before it writes; the policy must block all three, and the run must
-// still succeed, so the storage and the signal hub are let through. Then
-// a policy of the test's own lets source reach Zot, as docs/isolation.md
-// shows, and a second run must reach Zot and still not the other two:
-// policies add up, and the first run's blocks were the policy's doing.
+// TestTestcase20 checks what a run's pods can reach: its NetworkPolicy and
+// ServiceAccount (SPEC 6.1, step 2).
 //
-// It needs a network plugin that enforces NetworkPolicies; hack/e2e.sh
-// sets ALPHEUS_E2E_NETWORK_POLICY=0 on a cluster with flannel.
+// Flow: source → sink, run twice. source tries the Kubernetes API, Garage's
+// admin port and Zot before it writes, and counts what it reached.
+//
+// What it tests: that a run's policy blocks everything but the storage and
+// the signal hub, that its ServiceAccount has no token, and that a policy of
+// the user's own adds to it, as docs/isolation.md shows.
+//
+// Done to the run: before the second run, the test adds a policy that lets
+// source reach Zot.
+//
+// Passes when: both runs are Succeeded; in the first, all three were
+// blocked; in the second, Zot was reached and the other two blocked; and the
+// run owns its NetworkPolicy and ServiceAccount, which does not mount a
+// token. It needs a network plugin that enforces NetworkPolicies;
+// hack/e2e.sh sets ALPHEUS_E2E_NETWORK_POLICY=0 on a cluster with flannel.
 func TestTestcase20(t *testing.T) {
 	if os.Getenv("ALPHEUS_E2E_NETWORK_POLICY") == "0" {
 		t.Skip("the cluster's network does not enforce NetworkPolicies")

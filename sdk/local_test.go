@@ -100,6 +100,9 @@ func copyThrough(ctx context.Context, in sdk.Input, out sdk.Output) error {
 	return nil
 }
 
+// TestCopyThrough runs a component that copies its input in local mode:
+// every chunk comes out unchanged, with its extension and source chunk, and
+// the output ends with EOS.
 func TestCopyThrough(t *testing.T) {
 	in, out := inputs(t, "csv", "a\n", "b\n", "c\n"), t.TempDir()
 	cfg := sdk.LocalConfig{Inputs: map[string]string{sdk.DefaultPort: in}, OutputDir: out}
@@ -269,6 +272,9 @@ func TestOnEOS(t *testing.T) {
 	}
 }
 
+// TestErrors checks that local mode fails a component that returns in the
+// middle, gives a bad extension, writes a chunk over maxBytes, uses a bad
+// counter unit or more than 16 units, or reads a port it does not have.
 func TestErrors(t *testing.T) {
 	ctx := context.Background()
 	in := inputs(t, "csv", "a", "b")

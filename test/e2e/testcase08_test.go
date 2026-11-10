@@ -64,13 +64,27 @@ type etl struct {
 	Kills       []string           `json:"kills"`
 }
 
-// TestTestcase08 runs the flagship ETL flow of examples/meter-etl and
-// checks that it is exact: every row generated is read once, the bad ones
-// are rejected and logged, the rest are in the dataset, and the totals per
-// region and hour are the ones the generator says. Unless ETL_KILL=0, it
-// kills clean's replica 0 when clean has read a quarter of the rows. It
-// measures the run, and deletes its results at the end, since the dataset
-// is large.
+// TestTestcase08 runs the flagship ETL flow of examples/meter-etl and checks
+// that it is exact.
+//
+// Flow: export → split → clean (4 replicas) → aggregate, with ETL_FILES
+// files of ETL_ROWS rows (default 4 of 2,000,000), split into
+// ETL_SPLIT_BYTES chunks (default 16 MiB).
+//
+// What it tests: a realistic large-file ETL from end to end: every row
+// generated is read once, bad rows are rejected and logged, and the totals
+// are right (SPEC 13).
+//
+// Done to the run: unless ETL_KILL=0, clean's replica 0 is killed when clean
+// has read a quarter of the rows.
+//
+// Passes when: the run is Succeeded; export, split and clean counted every
+// row; clean rejected exactly the bad rows, kept the rest and logged an
+// error for each, or counted it as dropped; the dataset has one chunk per
+// split chunk; the totals per region and hour are the generator's; clean's
+// replica 0 restarted once if it was killed; and no chunk objects are left
+// that were never committed. The measurements go to the test report, and the
+// results are deleted at the end, since the dataset is large.
 func TestTestcase08(t *testing.T) {
 	m := etl{
 		Testcase:       "testcase08",
