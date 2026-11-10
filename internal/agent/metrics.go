@@ -18,6 +18,7 @@ package agent
 
 import (
 	"strconv"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 
@@ -35,6 +36,7 @@ type Metrics struct {
 	backpressure prometheus.Counter
 	retries      prometheus.Counter
 	entries      *prometheus.CounterVec
+	duration     *prometheus.HistogramVec
 }
 
 // NewMetrics registers the agent's metrics in reg, labelled with the run,
@@ -68,7 +70,13 @@ func NewMetrics(reg prometheus.Registerer, cfg Config) *Metrics {
 			Help: "Errors and warnings the component reported, per level (GO-117).",
 		}, []string{"level"}),
 	}
-	reg.MustRegister(m.counts, m.chunks, m.bytes, m.backpressure, m.retries, m.entries)
+	m.duration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name: "alpheus_chunk_duration_seconds",
+		Help: "Time from Next giving an input chunk to the component until its Done, per input port (GO-121).",
+		// From a few milliseconds to an hour: chunks are files of any size.
+		Buckets: []float64{0.01, 0.05, 0.1, 0.5, 1, 5, 10, 30, 60, 300, 900, 1800, 3600},
+	}, []string{"port"})
+	reg.MustRegister(m.counts, m.chunks, m.bytes, m.backpressure, m.retries, m.entries, m.duration)
 	return m
 }
 
@@ -90,6 +98,14 @@ func (m *Metrics) moved(direction string, bytes int64) {
 func (m *Metrics) waited(seconds float64) {
 	if m != nil {
 		m.backpressure.Add(seconds)
+	}
+}
+
+// processed records how long the component took with an input chunk,
+// from Next to Done (GO-121).
+func (m *Metrics) processed(port string, d time.Duration) {
+	if m != nil {
+		m.duration.WithLabelValues(port).Observe(d.Seconds())
 	}
 }
 

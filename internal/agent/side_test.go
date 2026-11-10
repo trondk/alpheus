@@ -137,7 +137,7 @@ func sideFlow(joins int, h sdk.Handler) []replica {
 	i := base
 	i.Step = "items"
 	i.Outputs = []OutputEdge{{Edge: "items-join", Output: "default", To: "join", Replicas: joins}}
-	rs := []replica{{k, keys}, {i, items}}
+	rs := []replica{{cfg: k, h: keys}, {cfg: i, h: items}}
 	for r := range joins {
 		j := base
 		j.Step, j.Replica, j.Replicas = "join", r, joins
@@ -145,7 +145,7 @@ func sideFlow(joins int, h sdk.Handler) []replica {
 			{Edge: "items-join", From: "items", Replicas: 1, Port: "items"},
 			{Edge: "keys-join", From: "keys", Replicas: 1, Port: "keys", Side: true},
 		}
-		rs = append(rs, replica{j, h})
+		rs = append(rs, replica{cfg: j, h: h})
 	}
 	return rs
 }

@@ -64,6 +64,8 @@ type inChunk struct {
 	meta chunk.Chunk
 	path string
 	seq  int64 // order of arrival, for inputOrder arrival
+	// given is when Next gave the chunk to the component (GO-121).
+	given time.Time
 }
 
 func newInStream(cfg Config, in InputEdge, p int) *inStream {

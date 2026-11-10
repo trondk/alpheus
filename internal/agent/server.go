@@ -23,6 +23,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -107,6 +108,9 @@ func (s *server) Next(ctx context.Context, req *componentpb.NextRequest) (*compo
 		a.mu.Unlock()
 		return &componentpb.NextResponse{Eos: true, Ended: ended}, nil
 	}
+	a.mu.Lock()
+	c.given = time.Now()
+	a.mu.Unlock()
 	return &componentpb.NextResponse{Chunk: &componentpb.InputChunk{
 		Id:      c.id,
 		Port:    c.s.in.Port,
@@ -244,6 +248,7 @@ func (s *server) Done(ctx context.Context, req *componentpb.DoneRequest) (*compo
 	defer cancel()
 	a := s.a
 
+	called := time.Now()
 	a.mu.Lock()
 	c := a.inputs[req.Id]
 	switch {
@@ -282,6 +287,11 @@ func (s *server) Done(ctx context.Context, req *componentpb.DoneRequest) (*compo
 	if err := a.writeObservations(ctx); err != nil {
 		a.fail(err)
 		return nil, s.rpcErr(err)
+	}
+
+	// The component's own time with the chunk, not the commit's (GO-121).
+	if !c.given.IsZero() {
+		a.metrics.processed(c.s.in.Port, called.Sub(c.given))
 	}
 
 	a.mu.Lock()

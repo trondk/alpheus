@@ -285,6 +285,39 @@
           "legendFormat": "{{run}} {{step}} storage retries"
         }
       ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Time per chunk, median and 95th percentile",
+      "description": "How long the component took with an input chunk, from Next to Done (GO-121).",
+      "gridPos": {
+        "x": 0,
+        "y": 32,
+        "w": 24,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.5, sum by (run, step, le) (rate(alpheus_chunk_duration_seconds_bucket{namespace=~\"$namespace\",run=~\"$run\"}[$__rate_interval])))",
+          "legendFormat": "{{run}} {{step}} p50"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum by (run, step, le) (rate(alpheus_chunk_duration_seconds_bucket{namespace=~\"$namespace\",run=~\"$run\"}[$__rate_interval])))",
+          "legendFormat": "{{run}} {{step}} p95"
+        }
+      ]
     }
   ]
 }

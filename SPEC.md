@@ -767,7 +767,7 @@ sdk.Progress(ctx, "4,2 mio. rækker behandlet")
 
 | ID | Niveau | Status | Krav |
 |---|---|---|---|
-| GO-121 | SKAL | — | Agenten måler selv tiden fra `Next` til `Done` for hver input-chunk og eksponerer den som histogrammet `alpheus_chunk_duration_seconds`. Komponenten skal ikke gøre noget. |
+| GO-121 | SKAL | done, logic checked, closed (agent: TestChunkDuration; testcase14) | Agenten måler selv tiden fra `Next` til `Done` for hver input-chunk og eksponerer den som histogrammet `alpheus_chunk_duration_seconds`. Komponenten skal ikke gøre noget. |
 | GO-122 | BØR | done, logic checked | Fremdrift er en kort tekst, der vises i `status.steps[].replicas[].message` og i `alpheus watch`, højst én opdatering i sekundet pr. replika (GO-22). Den er best-effort og committes ikke. |
 | GO-123 | SKAL | done, logic checked, closed (internal/controller/controller_test.go) | Når runnet er afsluttet, skriver controlleren `results/<run>/<uid>/summary.json` med fase, tællere, antal fejl og advarsler pr. trin og replika. Den overlever, at StreamRun-objektet slettes, og har samme TTL som resultater. |
 | GO-124 | SKAL | done, logic checked | `Observe` blokerer aldrig komponenten. Tællere og fejl, der skal committes, holdes af agenten indtil `Done`; kun live-metrics og fremdrift kan smides væk, hvis agenten er travl. |

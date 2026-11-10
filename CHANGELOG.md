@@ -44,6 +44,9 @@ what changed in the `StreamRun` custom resource.
   and optionally the UI, with metrics for Prometheus and a Grafana
   dashboard.
 - Each run gets a NetworkPolicy and a ServiceAccount without a token.
+- The agent measures how long the component takes with each input chunk,
+  from `Next` to `Done`, as the histogram `alpheus_chunk_duration_seconds`,
+  and the dashboard shows its median and 95th percentile per step.
 
 ### Upgrade notes
 

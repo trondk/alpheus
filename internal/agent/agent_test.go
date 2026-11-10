@@ -154,6 +154,8 @@ func expected(parts int) int64 {
 type replica struct {
 	cfg Config
 	h   sdk.Handler
+	// metrics, if set, records the agent's live metrics (GO-51).
+	metrics *Metrics
 }
 
 // pipeline is generate -> filter (filters replicas) -> sum.
@@ -164,20 +166,20 @@ func pipeline(parts, filters int) []replica {
 	gen := base
 	gen.Step = "generate"
 	gen.Outputs = []OutputEdge{{Edge: "generate-filter", Output: "default", To: "filter", Replicas: filters}}
-	rs = append(rs, replica{gen, generate(parts)})
+	rs = append(rs, replica{cfg: gen, h: generate(parts)})
 
 	for r := range filters {
 		f := base
 		f.Step, f.Replica, f.Replicas = "filter", r, filters
 		f.Inputs = []InputEdge{{Edge: "generate-filter", From: "generate", Replicas: 1}}
 		f.Outputs = []OutputEdge{{Edge: "filter-sum", Output: "default", To: "sum", Replicas: 1}}
-		rs = append(rs, replica{f, filter})
+		rs = append(rs, replica{cfg: f, h: filter})
 	}
 
 	s := base
 	s.Step = "sum"
 	s.Inputs = []InputEdge{{Edge: "filter-sum", From: "filter", Replicas: filters}}
-	rs = append(rs, replica{s, sum})
+	rs = append(rs, replica{cfg: s, h: sum})
 	return rs
 }
 
@@ -205,6 +207,7 @@ func run(t *testing.T, st store.Store, driver func() signal.Driver, rs ...replic
 		if err != nil {
 			t.Fatal(err)
 		}
+		a.SetMetrics(r.metrics)
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
@@ -395,14 +398,14 @@ func fanOut(parts int) []replica {
 		{Edge: "generate-left", Output: "default", To: "left", Replicas: 3},
 		{Edge: "generate-right", Output: "default", To: "right", Replicas: 2},
 	}
-	rs := []replica{{gen, generate(parts)}}
+	rs := []replica{{cfg: gen, h: generate(parts)}}
 	for _, side := range sides {
 		for r := range side.replicas {
 			f := base
 			f.Step, f.Replica, f.Replicas = side.name, r, side.replicas
 			f.Inputs = []InputEdge{{Edge: "generate-" + side.name, From: "generate", Replicas: 1}}
 			f.Outputs = []OutputEdge{{Edge: side.name + "-sum", Output: "default", To: "sum", Replicas: 1}}
-			rs = append(rs, replica{f, filter})
+			rs = append(rs, replica{cfg: f, h: filter})
 		}
 	}
 	s := base
@@ -411,7 +414,7 @@ func fanOut(parts int) []replica {
 		{Edge: "left-sum", From: "left", Replicas: 3},
 		{Edge: "right-sum", From: "right", Replicas: 2, Port: "right"},
 	}
-	return append(rs, replica{s, sum})
+	return append(rs, replica{cfg: s, h: sum})
 }
 
 var sides = []struct {

@@ -223,11 +223,11 @@ Runs a component with a bug and checks everything a person or a tool needs to fi
 
 **Flow:** source → pass → sink, where pass panics on a chunk.
 
-**What it tests:** the reason as a code and in the component's words (GO-138, GO-139); the Kubernetes events and the Ready condition (GO-139); the kept logs of both attempts and the failed attempt's inputs (GO-140); the agent's live metrics (GO-51); and alpheus replay of the last attempt on its own, on the chunks it had open, at debug level (GO-141).
+**What it tests:** the reason as a code and in the component's words (GO-138, GO-139); the Kubernetes events and the Ready condition (GO-139); the kept logs of both attempts and the failed attempt's inputs (GO-140); the agent's live metrics, among them how long the component took with each chunk (GO-51, GO-121); and alpheus replay of the last attempt on its own, on the chunks it had open, at debug level (GO-141).
 
 **Done to the run:** nothing; the bug fails pass on both of its attempts.
 
-**Passes when:** the run is Failed with the reason ComponentFailed in pass replica 0, and a message with what the component said; the events and the Ready condition say the same; the logs and the failure of both attempts are kept; sink's agent served its metrics; and the replay exits with code 1 and logs the same panic at debug level. The run is expected to fail: the test passes when it fails this way.
+**Passes when:** the run is Failed with the reason ComponentFailed in pass replica 0, and a message with what the component said; the events and the Ready condition say the same; the logs and the failure of both attempts are kept; sink's agent served its metrics, with the time of a chunk it finished; and the replay exits with code 1 and logs the same panic at debug level. The run is expected to fail: the test passes when it fails this way.
 
 Source: {{< repolink "test/e2e/testcase14_test.go" >}}, flow {{< repolink "test/e2e/testdata/testcase14.yaml" >}}
 
@@ -410,6 +410,7 @@ These run with `make test`, without a cluster. The controller's tests run agains
 | `TestAckFencing` | An agent whose ack file has a newer epoch, or was closed by the controller, stops instead of writing it (GO-68, GO-97). |
 | `TestCrashAtEveryWrite` | Stops the whole pipeline at each write the agents make in turn, then runs every replica again as a new attempt. Whichever commit step it stopped between (SPEC 7.3 and 7.4), the result must have nothing missing and nothing twice (GO-74): the sum is right, every chunk is acked once, and the counters and the error log are exact (GO-115, GO-118). |
 | `TestMetrics` | The agent's metrics carry the run, step and replica, and skip what is not a count (GO-51, GO-116). |
+| `TestChunkDuration` | Runs a pipeline and checks that every agent records one observation of alpheus_chunk_duration_seconds for each input chunk its component finished, from Next to Done, and none for a step without input (GO-121). The component does nothing for it. |
 | `TestReason` | The agent fails with a reason code for each kind of error (GO-138). |
 | `TestS3Pipeline` | Runs testcase03's shape against a real bucket, with signals through the hub and a restart of the stateful step, for example against Garage in the Vagrant cluster: `make test-agent-s3` |
 | `TestS3Restart` | Runs the pipeline against a real bucket, crashes the sum after five chunks, and runs it again as a new attempt: the result must be as if nothing happened. It runs with make test-s3, and is skipped without ALPHEUS_TEST_S3_ENDPOINT. |

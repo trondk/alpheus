@@ -22,6 +22,9 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
+
+	"alpheus-dev.org/alpheus/internal/chunk"
+	"alpheus-dev.org/alpheus/internal/store"
 )
 
 // The agent's metrics carry the run, step and replica, and skip what is
@@ -65,4 +68,63 @@ alpheus_component_log_entries_total{level="other",replica="1",run="sales",step="
 	none.count("rows", 1)
 	none.moved("in", 1)
 	none.Retried()
+}
+
+// TestChunkDuration runs a pipeline and checks that every agent records
+// one observation of alpheus_chunk_duration_seconds for each input chunk
+// its component finished, from Next to Done, and none for a step without
+// input (GO-121). The component does nothing for it.
+func TestChunkDuration(t *testing.T) {
+	const parts, filters = 12, 3
+	reg := prometheus.NewRegistry()
+	rs := pipeline(parts, filters)
+	for i := range rs {
+		rs[i].metrics = NewMetrics(reg, rs[i].cfg)
+	}
+	st := store.NewMemory()
+	if err := run(t, st, nil, rs...); err != nil {
+		t.Fatal(err)
+	}
+	checkPipeline(t, st, parts, filters)
+
+	families, err := reg.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	perStep := map[string]uint64{}
+	for _, f := range families {
+		if f.GetName() != "alpheus_chunk_duration_seconds" {
+			continue
+		}
+		for _, m := range f.GetMetric() {
+			step := ""
+			for _, l := range m.GetLabel() {
+				if l.GetName() == "step" {
+					step = l.GetValue()
+				}
+			}
+			h := m.GetHistogram()
+			if h.GetSampleSum() < 0 {
+				t.Errorf("%s: negative time %v", step, h.GetSampleSum())
+			}
+			perStep[step] += h.GetSampleCount()
+		}
+	}
+	// filter's replicas read every chunk of generate between them; sum
+	// reads every chunk filter's replicas committed.
+	var written uint64
+	for r := range filters {
+		data, err := store.ReadAll(t.Context(), st, chunk.EdgeStream(testUID, "filter-sum", r).ManifestKey())
+		if err != nil {
+			t.Fatal(err)
+		}
+		m, err := chunk.ParseManifest(data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		written += uint64(m.Count())
+	}
+	if perStep["filter"] != parts || perStep["sum"] != written || perStep["generate"] != 0 {
+		t.Errorf("observations per step %v, want filter %d, sum %d and none for generate", perStep, parts, written)
+	}
 }

@@ -250,6 +250,7 @@ answers 503.
 | `alpheus_storage_retries_total` | agent | Storage requests retried during an outage |
 | `alpheus_component_count_total{unit}` | agent | What the component counted, live |
 | `alpheus_component_log_entries_total{level}` | agent | Errors and warnings it reported |
+| `alpheus_chunk_duration_seconds{port}` | agent | How long the component took with each input chunk, from `Next` to `Done`: a histogram from 10 ms to an hour |
 | `alpheus_runs_started_total` | controller | Runs started |
 | `alpheus_runs_finished_total{phase,reason}` | controller | Runs finished |
 | `alpheus_step_restarts_total{step,reason}` | controller | Failed attempts restarted |

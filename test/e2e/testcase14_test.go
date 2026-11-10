@@ -49,17 +49,19 @@ import (
 // What it tests: the reason as a code and in the component's words (GO-138,
 // GO-139); the Kubernetes events and the Ready condition (GO-139); the kept
 // logs of both attempts and the failed attempt's inputs (GO-140); the
-// agent's live metrics (GO-51); and alpheus replay of the last attempt on
-// its own, on the chunks it had open, at debug level (GO-141).
+// agent's live metrics, among them how long the component took with each
+// chunk (GO-51, GO-121); and alpheus replay of the last attempt on its own,
+// on the chunks it had open, at debug level (GO-141).
 //
 // Done to the run: nothing; the bug fails pass on both of its attempts.
 //
 // Passes when: the run is Failed with the reason ComponentFailed in pass
 // replica 0, and a message with what the component said; the events and the
 // Ready condition say the same; the logs and the failure of both attempts
-// are kept; sink's agent served its metrics; and the replay exits with code
-// 1 and logs the same panic at debug level. The run is expected to fail: the
-// test passes when it fails this way.
+// are kept; sink's agent served its metrics, with the time of a chunk it
+// finished; and the replay exits with code 1 and logs the same panic at
+// debug level. The run is expected to fail: the test passes when it fails
+// this way.
 func TestTestcase14(t *testing.T) {
 	b := newBench(t, "testcase14", nil)
 	if b.Chunks < 8 {
@@ -84,7 +86,10 @@ func TestTestcase14(t *testing.T) {
 		if rs, err := replicaStatus(cur, "sink", 0); err == nil && rs.Pod != "" {
 			body, err := kube.CoreV1().RESTClient().Get().Namespace(e.ns).Resource("pods").
 				Name(rs.Pod + ":9090").SubResource("proxy").Suffix("metrics").DoRaw(t.Context())
-			if err == nil && bytes.Contains(body, []byte("alpheus_chunks_total{")) {
+			// The agent has moved a chunk, and timed one the component was
+			// done with (GO-121).
+			if err == nil && bytes.Contains(body, []byte("alpheus_chunks_total{")) &&
+				bytes.Contains(body, []byte("alpheus_chunk_duration_seconds_count{")) {
 				scraped = string(body)
 			}
 		}
@@ -93,7 +98,8 @@ func TestTestcase14(t *testing.T) {
 		}
 		time.Sleep(time.Second)
 	}
-	if !strings.Contains(scraped, `step="sink"`) || !strings.Contains(scraped, `direction="in"`) {
+	if !strings.Contains(scraped, `step="sink"`) || !strings.Contains(scraped, `direction="in"`) ||
+		!strings.Contains(scraped, `alpheus_chunk_duration_seconds_bucket{`) {
 		t.Errorf("sink's agent metrics: %.500s", scraped)
 	}
 
