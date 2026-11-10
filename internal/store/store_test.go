@@ -161,6 +161,17 @@ func testStore(t *testing.T, s Store, prefix string) {
 
 	// A download that stopped goes on from where it stopped, only while
 	// the object is the same version (GO-149).
+	t.Run("size", func(t *testing.T) {
+		k := key("sized.bin")
+		put(t, s, k, "0123456789")
+		if n, err := Size(ctx, s, k); err != nil || n != 10 {
+			t.Fatalf("size %d, %v; want 10", n, err)
+		}
+		if _, err := Size(ctx, s, key("no-such-object")); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("size of a missing object: %v, want ErrNotFound", err)
+		}
+	})
+
 	t.Run("range of the same version", func(t *testing.T) {
 		k := key("part-000001.bin")
 		put(t, s, k, "0123456789")

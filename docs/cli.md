@@ -246,6 +246,33 @@ With `-o json`: An index: `version`, `run`, `namespace`, `uid`, `phase`, `bucket
 | `--endpoint string` | the S3 endpoint as seen from here (default: ALPHEUS_S3_ENDPOINT, the storage Secret's alpheus-dev.org/external-endpoint annotation, or spec.storage.endpoint) |
 | `--replica int` | only this producer replica (default -1) |
 
+## alpheus results copy
+
+Copy a run's results to another bucket or prefix.
+
+```
+alpheus results copy <run> [<step>.<output> …] --to s3://<bucket>/<prefix> --to-secret <secret>
+```
+
+Copies the committed chunks of every result of the run, or of the ones named, to `--to s3://<bucket>/<prefix>` with the keys in the Secret `--to-secret`, laid out as `results get` lays out a folder, with `alpheus-results.json` naming the copies. On the same endpoint the storage copies each chunk, so the data does not pass through here; when the target's keys may not read the results, or the target is on another endpoint (`--to-endpoint`), each chunk is streamed through here without touching the disk, and its SHA-256 checked before the upload completes. Run again, it skips the copies that are already there. It writes only to an empty prefix or one with the same run's `alpheus-results.json`; `--force` uses another prefix, and still only writes the run's own objects. Incomplete results are copied and said to be incomplete, as with `results get`; `--complete` makes that an error.
+
+With `-o json`: The index it wrote to `alpheus-results.json` in the target, as for `results get`, with `bucket` the target's and each chunk's `key` and `url` its copy.
+
+| Flag | What it does |
+|---|---|
+| `--ca-file string` | CA bundle for the S3 endpoint (default: ALPHEUS_S3_CA_FILE, or the storage Secret's alpheus-dev.org/external-ca annotation) |
+| `--chunks value` | only these chunks of each replica: &lt;n&gt; or &lt;from&gt;-&lt;to&gt;, numbered from 1 |
+| `--complete` | exit with an error when a result is incomplete |
+| `--endpoint string` | the S3 endpoint as seen from here (default: ALPHEUS_S3_ENDPOINT, the storage Secret's alpheus-dev.org/external-endpoint annotation, or spec.storage.endpoint) |
+| `--force` | copy to a prefix with other objects; only the run's own are overwritten |
+| `--parallel int` | how many chunks to copy at a time (default 4) |
+| `--replica int` | only this producer replica (default -1) |
+| `--to string` | where to copy to: s3://&lt;bucket&gt;/&lt;prefix&gt; |
+| `--to-ca-file string` | CA bundle for --to-endpoint (default: the run's storage's, when the endpoint is the same) |
+| `--to-endpoint string` | the target's S3 endpoint as seen from here (default: the run's storage) |
+| `--to-region string` | the target bucket's region (default: the run's storage's, when the endpoint is the same) |
+| `--to-secret string` | the Secret in -n with keys that can write there (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY) |
+
 ## alpheus results gc
 
 Delete results whose TTL has run out, or whose StreamRun is gone.

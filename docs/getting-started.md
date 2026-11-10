@@ -158,8 +158,11 @@ writes `alpheus-results.json` with what it fetched. A fetch that is
 stopped goes on where it stopped when you run it again.
 `alpheus results cat log-report count -n flows` writes the result to
 stdout instead, and `alpheus results ls` lists its chunks as S3 paths for
-tools that read S3 themselves. Any S3 client can read them too, with the
-keys in the Secret. `alpheus chunks log-report count -n flows` shows the
+tools that read S3 themselves. `alpheus results copy log-report -n flows
+--to s3://<bucket>/<prefix> --to-secret <secret>` copies the result to
+another bucket; on the same endpoint the storage copies it, so the data
+does not pass through your machine. Any S3 client can read them too, with
+the keys in the Secret. `alpheus chunks log-report count -n flows` shows the
 result's manifest.
 
 When a run ends, `alpheus watch` and `alpheus get` list the commands that

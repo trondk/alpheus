@@ -214,6 +214,7 @@ func next(w io.Writer, r *v1alpha1.StreamRun) {
 		label := "Results"
 		if total > askAbove {
 			line(label, "alpheus results ls "+r.Name+ns, fmt.Sprintf("(%s: the chunks as S3 paths, to read where they are)", bytesString(total)))
+			line("", "alpheus results copy "+r.Name+ns+" --to s3://<bucket>/<prefix> --to-secret <secret>", "(keep them elsewhere)")
 			label = ""
 		} else {
 			line(label, "alpheus results get "+r.Name+ns, fmt.Sprintf("→ ./%s/  (%s)", r.Name, bytesString(total)))

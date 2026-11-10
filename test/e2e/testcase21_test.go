@@ -18,7 +18,9 @@ package e2e
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -180,6 +182,34 @@ func TestTestcase21(t *testing.T) {
 	out, stderr, code = alpheus("results", "cat", fixed.Name, first.Result, "--replica", strconv.Itoa(first.Replica), "--chunks", "1")
 	if code != 0 || int64(len(out)) != first.Bytes {
 		t.Errorf("results cat --chunks 1: exit %d, %d bytes, want %d\n%s", code, len(out), first.Bytes, stderr)
+	}
+
+	// results copy on the same endpoint: the storage copies the chunks,
+	// and run again it finds them there (GO-155).
+	prefix := "e2e-copies/" + e.ns + "/"
+	t.Cleanup(func() {
+		for key, err := range st.List(context.Background(), prefix) {
+			if err == nil {
+				_ = st.Delete(context.Background(), key)
+			}
+		}
+	})
+	to := "s3://" + fixed.Spec.Storage.Bucket + "/" + prefix
+	out, stderr, code = alpheus("results", "copy", fixed.Name, "--to", to, "--to-secret", fixed.Spec.Storage.SecretRef, "--complete")
+	if code != 0 || !strings.Contains(out, fmt.Sprintf("Copied %d chunks", len(ix.Chunks))) || !strings.Contains(out, "by the storage") {
+		t.Errorf("results copy: exit %d\n%s%s", code, out, stderr)
+	}
+	for _, c := range ix.Chunks {
+		if n, err := store.Size(t.Context(), st, prefix+c.File); err != nil || n != c.Bytes {
+			t.Errorf("copy of %s: %d bytes, %v; want %d", c.File, n, err, c.Bytes)
+		}
+	}
+	if _, err := store.Size(t.Context(), st, prefix+cli.IndexFile); err != nil {
+		t.Errorf("the copy's %s: %v", cli.IndexFile, err)
+	}
+	out, stderr, code = alpheus("results", "copy", fixed.Name, "--to", to, "--to-secret", fixed.Spec.Storage.SecretRef)
+	if code != 0 || !strings.Contains(out, fmt.Sprintf("%d were already there", len(ix.Chunks))) {
+		t.Errorf("results copy again: exit %d\n%s%s", code, out, stderr)
 	}
 
 	// The error log has merge's warnings, one per line with -o json.

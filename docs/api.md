@@ -169,8 +169,9 @@ PEM, as `alpheus-dev.org/external-ca`. The CLI uses them; controller and
 agents do not.
 
 `alpheus results ls <run> -o json` lists exactly the committed chunks of a
-run's results as `s3://<bucket>/<key>` with their size and SHA-256, and
-`alpheus results get` fetches them; the
+run's results as `s3://<bucket>/<key>` with their size and SHA-256,
+`alpheus results get` fetches them, and `alpheus results copy` copies them
+with `alpheus-results.json` to another bucket; the
 [CLI reference](/docs/cli/#alpheus-results-ls) has the shape.
 
 ## In Go

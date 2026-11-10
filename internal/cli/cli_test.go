@@ -112,6 +112,8 @@ type harness struct {
 	// the environment the commands see.
 	opened  []store.Address
 	environ map[string]string
+	// buckets are other buckets NewS3 opens, by name; any other is mem.
+	buckets map[string]*store.Memory
 }
 
 func newHarness(t *testing.T) *harness {
@@ -137,6 +139,9 @@ func (h *harness) env() *Env {
 		},
 		NewS3: func(cfg store.S3Config) (store.Store, error) {
 			h.opened = append(h.opened, store.Address{Endpoint: cfg.Endpoint, CAFile: cfg.CAFile, CAPEM: cfg.CAPEM})
+			if b, ok := h.buckets[cfg.Bucket]; ok {
+				return b, nil
+			}
 			return h.mem, nil
 		},
 		Now:    func() time.Time { return h.now },

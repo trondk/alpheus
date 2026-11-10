@@ -52,6 +52,14 @@ var details = map[string]string{
 		"so `alpheus results cat <run> <step>.<output> --chunks 1 | zcat | head` shows the start of a result.",
 	"results ls": "Lists the committed chunks as `s3://<bucket>/<key>` with their size and SHA-256, for tools that read S3 themselves, " +
 		"so they get exactly the committed chunks and not everything under the prefix.",
+	"results copy": "Copies the committed chunks of every result of the run, or of the ones named, to `--to s3://<bucket>/<prefix>` with the keys in the Secret `--to-secret`, " +
+		"laid out as `results get` lays out a folder, with `" + IndexFile + "` naming the copies. " +
+		"On the same endpoint the storage copies each chunk, so the data does not pass through here; " +
+		"when the target's keys may not read the results, or the target is on another endpoint (`--to-endpoint`), each chunk is streamed through here without touching the disk, " +
+		"and its SHA-256 checked before the upload completes. " +
+		"Run again, it skips the copies that are already there. " +
+		"It writes only to an empty prefix or one with the same run's `" + IndexFile + "`; `--force` uses another prefix, and still only writes the run's own objects. " +
+		"Incomplete results are copied and said to be incomplete, as with `results get`; `--complete` makes that an error.",
 	"results gc": "Lists the results in a bucket and deletes those whose `resultsTTL` has run out since the run finished. " +
 		"Results whose StreamRun is gone are kept until their TTL runs out, unless you pass `--orphans`; results with `resultsTTL` 0 are never deleted. " +
 		"It asks before deleting, unless you pass `--yes`.",
@@ -86,6 +94,7 @@ var shapes = map[string]string{
 		"`complete`, true when the run succeeded and every replica ended its stream; `replicas`, each with `result`, `replica`, " +
 		"`complete` (it ended its stream) and `chunks` (how many it has committed); " +
 		"and `chunks`, each with `result`, `replica`, `n`, `key`, `url`, `bytes` and `sha256`.",
+	"results copy": "The index it wrote to `" + IndexFile + "` in the target, as for `results get`, with `bucket` the target's and each chunk's `key` and `url` its copy.",
 	"results gc": "A list with one object per run in the bucket: `prefix`, `run`, `namespace`, `uid`, `finishedAt`, " +
 		"`reason` (why it is deleted or kept) and `action`: `delete`, `deleted` or `keep`.",
 	"errors": "One entry per line, compact, as in the error log: `time`, `level`, `code`, `message`, `fields`, `step`, `replica` and `chunk`. " +
@@ -101,6 +110,7 @@ var subcommands = map[string][]command{
 		{name: "results get", summary: "Fetch a run's results to a folder"},
 		{name: "results cat", summary: "Write one result to stdout"},
 		{name: "results ls", summary: "List the committed chunks of a run's results as S3 paths"},
+		{name: "results copy", summary: "Copy a run's results to another bucket or prefix"},
 		{name: "results gc", summary: "Delete results whose TTL has run out, or whose StreamRun is gone"},
 	},
 }

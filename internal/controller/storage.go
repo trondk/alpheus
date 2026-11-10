@@ -71,8 +71,12 @@ func (rc *Reconciler) readStorage(ctx context.Context, st store.Store, r *v1alph
 					es.EOS = false
 					continue
 				}
+				t, err := rc.streamTotals(ctx, st, stream, m)
+				if err != nil {
+					return err
+				}
 				es.Chunks += m.Count()
-				es.Bytes += unsealedBytes(m)
+				es.Bytes += t.bytes
 				es.EOS = es.EOS && m.EOS
 				// Every consumer replica reads all of a side input, so a
 				// chunk is acked when they all have (GO-167).
@@ -193,8 +197,13 @@ func (rc *Reconciler) results(ctx context.Context, st store.Store, r *v1alpha1.S
 		if err != nil {
 			continue
 		}
-		m, err := readManifest(ctx, st, chunk.ResultStream(r.Name, string(r.UID), s.Name, output, replica))
+		stream := chunk.ResultStream(r.Name, string(r.UID), s.Name, output, replica)
+		m, err := readManifest(ctx, st, stream)
 		if err != nil || m == nil {
+			return nil, err
+		}
+		t, err := rc.streamTotals(ctx, st, stream, m)
+		if err != nil {
 			return nil, err
 		}
 		res := byOutput[output]
@@ -220,14 +229,12 @@ func (rc *Reconciler) results(ctx context.Context, st store.Store, r *v1alpha1.S
 			order = append(order, output)
 		}
 		res.Chunks += m.Count()
-		res.Bytes += unsealedBytes(m)
-		for _, c := range m.Chunks {
-			for u, n := range c.Counts {
-				if res.Counts == nil {
-					res.Counts = map[string]int64{}
-				}
-				res.Counts[u] += n
+		res.Bytes += t.bytes
+		for u, n := range t.counts {
+			if res.Counts == nil {
+				res.Counts = map[string]int64{}
 			}
+			res.Counts[u] += n
 		}
 	}
 	var out []v1alpha1.ResultStatus
@@ -235,16 +242,6 @@ func (rc *Reconciler) results(ctx context.Context, st store.Store, r *v1alpha1.S
 		out = append(out, *byOutput[o])
 	}
 	return out, nil
-}
-
-// unsealedBytes sums the chunks a manifest lists; chunks in sealed
-// segments (GO-32) are not counted.
-func unsealedBytes(m *chunk.Manifest) int64 {
-	var n int64
-	for _, c := range m.Chunks {
-		n += c.Bytes
-	}
-	return n
 }
 
 func readManifest(ctx context.Context, st store.Store, s chunk.Stream) (*chunk.Manifest, error) {

@@ -125,6 +125,7 @@ type Reconciler struct {
 	ca     *CA
 
 	status statusLimit
+	sealed sealedTotals
 }
 
 // +kubebuilder:rbac:groups=alpheus-dev.org,resources=streamruns,verbs=get;list;watch;update;patch
@@ -693,6 +694,7 @@ func (rc *Reconciler) afterFinish(ctx context.Context, r *v1alpha1.StreamRun) (c
 // GO-78), and lets the run go.
 func (rc *Reconciler) finalize(ctx context.Context, r *v1alpha1.StreamRun) error {
 	edgeLag.DeletePartialMatch(prometheus.Labels{"namespace": r.Namespace, "run": r.Name})
+	rc.sealed.forget(string(r.UID))
 	if !controllerutil.ContainsFinalizer(r, Finalizer) {
 		return nil
 	}

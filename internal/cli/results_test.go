@@ -472,6 +472,9 @@ func TestNext(t *testing.T) {
 	if failed < 0 || kept < failed || replay < kept || results < replay {
 		t.Errorf("a failed run: the failed replica's lines first, then results ls:\n%s", out)
 	}
+	if !strings.Contains(out, "alpheus results copy meter-etl -n flows --to s3://<bucket>/<prefix> --to-secret <secret>") {
+		t.Errorf("large results: no results copy:\n%s", out)
+	}
 	if strings.Contains(out, "results get") || !strings.Contains(out, "results stay until you delete them") {
 		t.Errorf("a failed run with large results and resultsTTL 0:\n%s", out)
 	}
@@ -519,5 +522,86 @@ func TestResultsGetSpace(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
 		t.Errorf("fetched after the answer no: %d files", len(entries))
+	}
+}
+
+// results copy copies the committed chunks and the index to another
+// bucket, checks what it streams, goes on where it stopped, and keeps to
+// an empty prefix or the run's own (GO-155).
+func TestResultsCopy(t *testing.T) {
+	h := newHarness(t)
+	h.secret("alpheus-s3", nil)
+	h.secret("archive-keys", nil)
+	archive := store.NewMemory()
+	h.buckets = map[string]*store.Memory{"archive": archive}
+	h.mustRun("run", "-f", h.file("flow.yaml", flow("res", "")))
+	r := h.finish("res", v1alpha1.RunSucceeded)
+	keys := h.putResult(r, "sum", "default", 0, true, "a,1\n", "b,2\n", "c,3\n")
+	h.put(strings.Replace(keys[2], "000003", "000004", 1), "uncommitted")
+	ctx := context.Background()
+	read := func(key string) string {
+		t.Helper()
+		data, err := store.ReadAll(ctx, archive, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+
+	if code := h.run("results", "copy", "res", "--to-secret", "archive-keys"); code != 2 {
+		t.Errorf("without --to: exit %d", code)
+	}
+	out := h.mustRun("results", "copy", "res", "--to", "s3://archive/keep", "--to-secret", "archive-keys")
+	if !strings.Contains(out, "Copied 3 chunks (12 B) to s3://archive/keep/: 3 through here") {
+		t.Errorf("results copy: %q", out)
+	}
+	if got := read("keep/sum.default/0/part-000002.csv"); got != "b,2\n" {
+		t.Errorf("copy of chunk 2: %q", got)
+	}
+	if _, err := store.Size(ctx, archive, "keep/sum.default/0/part-000004.csv"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("the uncommitted chunk was copied: %v", err)
+	}
+	var ix Index
+	if err := json.Unmarshal([]byte(read("keep/"+IndexFile)), &ix); err != nil {
+		t.Fatal(err)
+	}
+	if ix.UID != string(r.UID) || ix.Bucket != "archive" || !ix.Complete || len(ix.Chunks) != 3 ||
+		ix.Chunks[0].URL != "s3://archive/keep/sum.default/0/part-000001.csv" || ix.Chunks[0].File != "sum.default/0/part-000001.csv" {
+		t.Errorf("the index in the target: %+v", ix)
+	}
+
+	// Run again, only what is missing is copied.
+	if err := archive.Delete(ctx, "keep/sum.default/0/part-000003.csv"); err != nil {
+		t.Fatal(err)
+	}
+	if out := h.mustRun("results", "copy", "res", "--to", "s3://archive/keep/", "--to-secret", "archive-keys"); !strings.Contains(out, "1 through here, 2 were already there") {
+		t.Errorf("results copy again: %q", out)
+	}
+
+	// Another run's prefix, and one with other objects.
+	h.mustRun("run", "-f", h.file("other.yaml", flow("other", "")))
+	o := h.finish("other", v1alpha1.RunSucceeded)
+	h.putResult(o, "sum", "default", 0, true, "x\n")
+	if code := h.run("results", "copy", "other", "--to", "s3://archive/keep", "--to-secret", "archive-keys"); code == 0 || !strings.Contains(h.stderr.String(), "another run, res") {
+		t.Errorf("copy over another run's: exit %d\n%s", code, h.stderr.String())
+	}
+	if err := archive.Put(ctx, "mixed/notes.txt", strings.NewReader("hi"), 2); err != nil {
+		t.Fatal(err)
+	}
+	if code := h.run("results", "copy", "res", "--to", "s3://archive/mixed", "--to-secret", "archive-keys"); code == 0 || !strings.Contains(h.stderr.String(), "not empty") {
+		t.Errorf("copy to a prefix with other objects: exit %d\n%s", code, h.stderr.String())
+	}
+	h.mustRun("results", "copy", "res", "--to", "s3://archive/mixed", "--to-secret", "archive-keys", "--force")
+	if read("mixed/notes.txt") != "hi" {
+		t.Error("--force overwrote another object")
+	}
+
+	// A chunk that does not match its manifest leaves no copy.
+	h.put(keys[1], "B,2\n")
+	if code := h.run("results", "copy", "res", "--to", "s3://archive/bad", "--to-secret", "archive-keys", "--parallel", "1"); code == 0 || !strings.Contains(h.stderr.String(), "SHA-256") {
+		t.Errorf("copy of a changed chunk: exit %d\n%s", code, h.stderr.String())
+	}
+	if _, err := store.Size(ctx, archive, "bad/sum.default/0/part-000002.csv"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("a wrong copy was left: %v", err)
 	}
 }

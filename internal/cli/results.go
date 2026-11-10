@@ -64,10 +64,12 @@ func resultsCmd(ctx context.Context, e *Env, args []string) error {
 		return resultsCat(ctx, e, args[1:])
 	case "ls":
 		return resultsLs(ctx, e, args[1:])
+	case "copy":
+		return resultsCopy(ctx, e, args[1:])
 	case "gc":
 		return resultsGC(ctx, e, args[1:])
 	}
-	return usagef("results takes a subcommand: get, cat, ls or gc")
+	return usagef("results takes a subcommand: get, cat, ls, copy or gc")
 }
 
 func resultsGC(ctx context.Context, e *Env, args []string) error {

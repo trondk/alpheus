@@ -1290,6 +1290,37 @@ func TestResultsBucket(t *testing.T) {
 	})
 }
 
+// A result's bytes and counters include the chunks in sealed segments,
+// not only those still in manifest.json (GO-32).
+func TestSealedTotals(t *testing.T) {
+	ns := namespace(t)
+	r := testcase03(ns, 1)
+	create(t, r)
+	uid := string(get(t, r).UID)
+	waitPod(t, ns, "sales-sum-0-1")
+
+	stream := chunk.ResultStream("sales", uid, "sum", "result", 0)
+	m := chunk.NewManifest("sales", uid, "sum.result", 0, 1)
+	for n := int64(1); n <= chunk.SegmentSize+2; n++ {
+		seg, err := m.Append(chunk.Chunk{N: n, Ext: "txt", Bytes: 7, SHA256: strings.Repeat("0", 64), Counts: map[string]int64{"rows": 2}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if seg != nil {
+			put(t, stream.SegmentKey(len(m.Segments)-1), seg)
+		}
+	}
+	put(t, stream.ManifestKey(), m)
+	want := int64(chunk.SegmentSize + 2)
+	eventually(t, "results status", func() string {
+		st := get(t, r).Status
+		if len(st.Results) != 1 || st.Results[0].Chunks != want || st.Results[0].Bytes != 7*want || st.Results[0].Counts["rows"] != 2*want {
+			return fmt.Sprintf("%+v", st.Results)
+		}
+		return ""
+	})
+}
+
 // A step's nodeSelector, tolerations and affinity go to its pods (GO-144).
 func TestScheduling(t *testing.T) {
 	ns := namespace(t)

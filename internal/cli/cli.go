@@ -158,7 +158,7 @@ func commands() []command {
 		{"replay", "<run> <step>", "Run a failed attempt again on its own, on its inputs, at debug level", replayCmd},
 		{"ui", "", "Open a page in the browser that shows the runs live", uiCmd},
 		{"validate", "-f flow.yaml", "Check a flow file without creating it", validateCmd},
-		{"results", "get|cat|ls|gc", "Fetch a run's results, write one to stdout, list them as S3 paths, or delete expired ones", resultsCmd},
+		{"results", "get|cat|ls|copy|gc", "Fetch a run's results, write one to stdout, list them as S3 paths, copy them to another bucket, or delete expired ones", resultsCmd},
 		{"errors", "<run> [step]", "Show the error log the components wrote", errorsCmd},
 		{"version", "", "Show the CLI, controller and CRD versions", versionCmd},
 	}

@@ -68,6 +68,20 @@ func (m *Memory) Get(ctx context.Context, key string) (io.ReadCloser, error) {
 	return io.NopCloser(bytes.NewReader(data)), nil
 }
 
+// Size is the size of key.
+func (m *Memory) Size(ctx context.Context, key string) (int64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, fmt.Errorf("stat %s: %w", key, err)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	data, ok := m.objects[key]
+	if !ok {
+		return 0, fmt.Errorf("stat %s: %w", key, ErrNotFound)
+	}
+	return int64(len(data)), nil
+}
+
 // GetRange opens key from offset, as long as its ETag, the SHA-256 of its
 // content, is etag.
 func (m *Memory) GetRange(ctx context.Context, key string, offset int64, etag string) (io.ReadCloser, string, error) {

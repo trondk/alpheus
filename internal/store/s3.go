@@ -201,6 +201,19 @@ func (s *S3) GetRange(ctx context.Context, key string, offset int64, etag string
 	return &resumingReader{ctx: ctx, retry: s.retry, open: open, etag: etag, offset: offset, body: body}, etag, nil
 }
 
+// Size is the size of key, from its metadata.
+func (s *S3) Size(ctx context.Context, key string) (int64, error) {
+	var info minio.ObjectInfo
+	err := s.retry.do(ctx, func() (err error) {
+		info, err = s.client.StatObject(ctx, s.bucket, key, minio.StatObjectOptions{})
+		return err
+	})
+	if err != nil {
+		return 0, fmt.Errorf("stat %s: %w", key, mapErr(err))
+	}
+	return info.Size, nil
+}
+
 func (s *S3) Delete(ctx context.Context, key string) error {
 	if err := s.retry.do(ctx, func() error {
 		return s.client.RemoveObject(ctx, s.bucket, key, minio.RemoveObjectOptions{})
